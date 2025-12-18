@@ -49,8 +49,14 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 - **List**: View all saved schedules with timestamps, delete old ones
 - **Benefit**: Schedules no longer lost on refresh!
 
+### 2. Input Validation (IMPLEMENTED) ✅
+- **Prevents**: Empty teams, negative pay, duplicate names, invalid holidays
+- **Feasibility checks**: Warns if too many shifts per person or too few positions
+- **Error messages**: Clear Turkish messages explaining what's wrong
+- **Warnings**: Shows alerts for edge cases (0 pay, overloaded team, underutilized team)
+- **Benefit**: No more crashes on bad data - user gets helpful feedback
+
 ### Next Steps in Pipeline:
-- Priority 2: Input validation (prevent crashes on invalid data)
 - Priority 3: Better shift editor UI (horizontal scroll, week view)
 - Priority 4: Advanced features (swap shifts, templates, preferences)
 

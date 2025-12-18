@@ -35,6 +35,52 @@ def parse_unwanted_days(text_input, max_day):
         except ValueError: continue
     return list(days)
 
+# --- VALIDATION ---
+def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk):
+    """Validate all inputs and return (is_valid, errors, warnings)"""
+    errors = []
+    warnings = []
+    
+    # Team validation
+    if not isimler or len(isimler) == 0:
+        errors.append("❌ En az 1 kişi ekleyin")
+    elif len(isimler) > 50:
+        errors.append("❌ Maksimum 50 kişi ekleyebilirsiniz")
+    
+    # Check for duplicate names
+    if len(isimler) != len(set(isimler)):
+        errors.append("❌ Aynı isimde 2 kişi olamaz")
+    
+    # Pay validation
+    if nobet_ucreti < 0:
+        errors.append("❌ Saatlik ücret negatif olamaz")
+    elif nobet_ucreti == 0:
+        warnings.append("⚠️ Saatlik ücret 0 TL")
+    
+    # Holiday validation
+    invalid_holidays = [h for h in tatil_gunleri if h < 1 or h > gun_sayisi]
+    if invalid_holidays:
+        errors.append(f"❌ Geçersiz tatil günleri: {invalid_holidays}")
+    
+    # Rest period validation
+    if min_bosluk < 0 or min_bosluk > 7:
+        errors.append("❌ Dinlenme süresi 0-7 gün arasında olmalı")
+    
+    # Feasibility warnings
+    working_days = gun_sayisi - len(tatil_gunleri)
+    total_positions_needed = working_days * 2
+    team_size = len(isimler)
+    
+    if team_size == 1:
+        errors.append(f"❌ 1 kişi için {gun_sayisi} günde 2 kişi nöbet dağıtılamaz (imkansız)")
+    elif team_size > 0 and total_positions_needed > team_size * 30:
+        avg_per_person = total_positions_needed / team_size
+        warnings.append(f"⚠️ Her kişiye ortalama {avg_per_person:.1f} nöbet düşecek (çok fazla)")
+    elif team_size > 0 and total_positions_needed < team_size:
+        warnings.append(f"⚠️ Nöbetleri dağıtmak için çok fazla kişi var ({team_size} kişi, {total_positions_needed} pozisyon)")
+    
+    return len(errors) == 0, errors, warnings
+
 def convert_df_to_png(df):
     fig, ax = plt.subplots(figsize=(8, len(df) * 0.4 + 1))
     ax.axis('off')
@@ -267,9 +313,21 @@ for i, t in input_data.items():
         if 1 <= d <= len(sutunlar): df_unwanted.at[i, sutunlar[d-1]] = True
 
 if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
-    run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk)
-    st.session_state.should_regenerate_assignments = True
-    st.rerun()
+    is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk)
+    
+    if errors:
+        st.error("🚨 Hata(lar) düzeltilmeli:")
+        for err in errors:
+            st.error(err)
+    else:
+        if warnings:
+            st.warning("⚠️ Uyarı(lar):")
+            for warn in warnings:
+                st.warning(warn)
+        
+        run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk)
+        st.session_state.should_regenerate_assignments = True
+        st.rerun()
 
 # --- ADIM 2: EDİTÖR ---
 st.divider()
