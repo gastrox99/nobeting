@@ -330,47 +330,14 @@ if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
 st.divider()
 st.subheader("📝 2. ADIM: Kontrol & Düzenleme")
 
-# --- DAY RANGE SELECTOR ---
-# Initialize session state for day range persistence
-if "selected_start_day" not in st.session_state:
-    st.session_state.selected_start_day = 1
-if "selected_end_day" not in st.session_state:
-    st.session_state.selected_end_day = min(10, gun_sayisi)
-
-col_range1, col_range2 = st.columns(2)
-with col_range1:
-    start_day = st.slider("Başlangıç Günü:", 1, gun_sayisi, st.session_state.selected_start_day, key="start_day_slider", on_change=lambda: st.session_state.update({"selected_start_day": st.session_state.start_day_slider}))
-    st.session_state.selected_start_day = start_day
-with col_range2:
-    end_day = st.slider("Bitiş Günü:", start_day, gun_sayisi, min(st.session_state.selected_end_day, gun_sayisi), key="end_day_slider", on_change=lambda: st.session_state.update({"selected_end_day": st.session_state.end_day_slider}))
-    st.session_state.selected_end_day = end_day
-
-# Filter columns for selected range
-selected_sutunlar = sutunlar[start_day-1:end_day]
-selected_sutunlar_display = sutunlar_display[start_day-1:end_day]
-
-# Show mini-stats for selected range
-selected_schedule = st.session_state.schedule_bool[selected_sutunlar]
-col_info1, col_info2, col_info3 = st.columns(3)
-with col_info1:
-    total_shifts = selected_schedule.sum().sum()
-    st.metric("Toplam Atama", int(total_shifts))
-with col_info2:
-    st.metric("Gün Aralığı", f"{end_day - start_day + 1} gün")
-with col_info3:
-    st.metric("Sütun Sayısı", len(selected_sutunlar))
-
-# Data editor with selected days only
-edited_subset = st.data_editor(
-    st.session_state.schedule_bool[selected_sutunlar].copy(),
+# Data editor with all days
+edited = st.data_editor(
+    st.session_state.schedule_bool.copy(),
     use_container_width=False, 
     key="schedule_editor",
-    column_config={c: st.column_config.CheckboxColumn(l, width="small") for c, l in zip(selected_sutunlar, selected_sutunlar_display)}
+    column_config={c: st.column_config.CheckboxColumn(l, width="small") for c, l in zip(sutunlar, sutunlar_display)}
 )
 
-# Merge edited subset back to full schedule
-edited = st.session_state.schedule_bool.copy()
-edited[selected_sutunlar] = edited_subset
 st.session_state.schedule_bool = edited
 
 # --- HATA KONTROL ---
