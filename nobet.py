@@ -331,11 +331,19 @@ st.divider()
 st.subheader("📝 2. ADIM: Kontrol & Düzenleme")
 
 # --- DAY RANGE SELECTOR ---
+# Initialize session state for day range persistence
+if "selected_start_day" not in st.session_state:
+    st.session_state.selected_start_day = 1
+if "selected_end_day" not in st.session_state:
+    st.session_state.selected_end_day = min(10, gun_sayisi)
+
 col_range1, col_range2 = st.columns(2)
 with col_range1:
-    start_day = st.slider("Başlangıç Günü:", 1, gun_sayisi, 1, key="start_day_slider")
+    start_day = st.slider("Başlangıç Günü:", 1, gun_sayisi, st.session_state.selected_start_day, key="start_day_slider", on_change=lambda: st.session_state.update({"selected_start_day": st.session_state.start_day_slider}))
+    st.session_state.selected_start_day = start_day
 with col_range2:
-    end_day = st.slider("Bitiş Günü:", start_day, gun_sayisi, min(start_day + 9, gun_sayisi), key="end_day_slider")
+    end_day = st.slider("Bitiş Günü:", start_day, gun_sayisi, min(st.session_state.selected_end_day, gun_sayisi), key="end_day_slider", on_change=lambda: st.session_state.update({"selected_end_day": st.session_state.end_day_slider}))
+    st.session_state.selected_end_day = end_day
 
 # Filter columns for selected range
 selected_sutunlar = sutunlar[start_day-1:end_day]
