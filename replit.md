@@ -34,6 +34,12 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
     - Used .copy() to prevent reference mutation issues
   - Result: Smooth manual editing experience, stable view, no double-clicks needed
 
+- **Fixed**: Arrow serialization error in pair_matrix
+  - Issue: Mixed int/string types in pair_matrix caused Arrow serialization failures
+  - Solution: Changed initialization from `pd.DataFrame(0, ...)` to `pd.DataFrame('', ..., dtype=object)`
+  - Updated increment logic to handle type conversion: `int(pair_matrix.loc[x,y] or 0) + 1`
+  - Result: No more Arrow type errors when displaying the matching matrix
+
 ## Project Structure
 - `nobet.py` - Main application file
 - `requirements.txt` - Python dependencies

@@ -285,7 +285,7 @@ df_liste = pd.DataFrame(rows_liste)
 
 stats_load = []
 stats_finance = []
-pair_matrix = pd.DataFrame(0, index=isimler, columns=isimler)
+pair_matrix = pd.DataFrame('', index=isimler, columns=isimler, dtype=object)
 
 for isim in isimler:
     toplam = edited.loc[isim].sum()
@@ -318,8 +318,8 @@ for isim in isimler:
 for col in sutunlar:
     n = edited.index[edited[col]].tolist()
     if len(n) == 2:
-        pair_matrix.loc[n[0], n[1]] += 1
-        pair_matrix.loc[n[1], n[0]] += 1
+        pair_matrix.loc[n[0], n[1]] = int(pair_matrix.loc[n[0], n[1]] or 0) + 1
+        pair_matrix.loc[n[1], n[0]] = int(pair_matrix.loc[n[1], n[0]] or 0) + 1
 for i in isimler: pair_matrix.loc[i,i] = "-" 
 
 df_stats_load = pd.DataFrame(stats_load).set_index("İsim")
