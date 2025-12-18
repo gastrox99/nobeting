@@ -71,8 +71,8 @@ def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, m
     total_positions_needed = working_days * 2
     team_size = len(isimler)
     
-    if team_size == 1:
-        errors.append(f"❌ 1 kişi için {gun_sayisi} günde 2 kişi nöbet dağıtılamaz (imkansız)")
+    if team_size < kişi_sayısı:
+        errors.append(f"❌ {kişi_sayısı} kişi nöbet için en az {kişi_sayısı} kişi gerekli")
     elif team_size > 0 and total_positions_needed > team_size * 30:
         avg_per_person = total_positions_needed / team_size
         warnings.append(f"⚠️ Her kişiye ortalama {avg_per_person:.1f} nöbet düşecek (çok fazla)")
@@ -153,17 +153,13 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
             # Adayları o anki duruma göre sırala
             adaylar.sort(key=lambda x: get_decision_score(x, is_sp))
             
-            if len(adaylar) >= 2:
-                p1 = adaylar[0]
+            if len(adaylar) >= kişi_sayısı:
+                secilenler = adaylar[:kişi_sayısı]
                 
-                # P2 seçimi (P1 ile uyumlu)
-                others = [k for k in adaylar if k != p1]
-                others.sort(key=lambda x: get_decision_score(x, is_sp, p1))
-                p2 = others[0]
-                
-                secilenler = [p1, p2]
-                pair = tuple(sorted((p1, p2)))
-                pair_history[pair] = pair_history.get(pair, 0) + 1
+                # Pair history tracking for main 2
+                if kişi_sayısı >= 2:
+                    pair = tuple(sorted((secilenler[0], secilenler[1])))
+                    pair_history[pair] = pair_history.get(pair, 0) + 1
                 
                 for k in secilenler:
                     temp_schedule.at[k, col] = True
@@ -199,13 +195,14 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
 # --- AYARLAR ---
 with st.sidebar:
     st.header("⚙️ Ayarlar")
-    isimler = [x.strip() for x in st.text_area("Ekip:", "Görkem, Eylül, Faruk, Ege, Ayça, Mizgin, Taha").split(",") if x.strip()]
+    isimler = [x.strip() for x in st.text_area("Ekip:", "").split(",") if x.strip()]
     st.divider()
     yil = st.number_input("Yıl", 2024, 2030, 2025)
     ay = st.selectbox("Ay", range(1, 13), index=0)
     gun_sayisi = calendar.monthrange(yil, ay)[1]
     tatil_gunleri = [int(x) for x in st.text_input("Tatiller:", "").split(",") if x.strip().isdigit()]
     min_bosluk = st.slider("Dinlenme", 0, 3, 1)
+    kişi_sayısı = st.slider("Nöbet Başına Kişi:", 1, 5, 2)
     nobet_ucreti = st.number_input("Saatlik FM Ücreti (TL)", value=252.59)
     
     # --- SAVE/LOAD ---
@@ -379,10 +376,10 @@ for col in sutunlar:
     gun_no = gun_detaylari[col]['day_num']
     nobetciler = edited.index[edited[col]].tolist()
     
-    if len(nobetciler) > 2:
-        max_person_msg.append(f"🔴 **{gun_no}. Gün**: {len(nobetciler)} kişi atanmış! (Max 2)")
-    elif len(nobetciler) < 2:
-        min_person_msg.append(f"🟠 **{gun_no}. Gün**: Eksik nöbetçi! ({len(nobetciler)} kişi var)")
+    if len(nobetciler) > kişi_sayısı:
+        max_person_msg.append(f"🔴 **{gun_no}. Gün**: {len(nobetciler)} kişi atanmış! (Max {kişi_sayısı})")
+    elif len(nobetciler) < kişi_sayısı:
+        min_person_msg.append(f"🟠 **{gun_no}. Gün**: Eksik nöbetçi! ({len(nobetciler)}/{kişi_sayısı} kişi)")
         
     for k in nobetciler:
         if df_unwanted.at[k, col]:
@@ -399,7 +396,7 @@ if max_person_msg or min_person_msg or conflict_msg or violations:
         for c in conflict_msg: st.error(c)
         for v in violations: st.info(v)
 else:
-    st.success("✅ Kurallar uygun (Her gün 2 kişi, çakışma yok).")
+    st.success(f"✅ Kurallar uygun (Her gün {kişi_sayısı} kişi, çakışma yok).")
 
 # --- VERİ HAZIRLIĞI ---
 # Only regenerate assignments when AI button is clicked, not on manual edits
@@ -457,7 +454,7 @@ for isim in isimler:
 
 for col in sutunlar:
     n = edited.index[edited[col]].tolist()
-    if len(n) == 2:
+    if len(n) >= 2:
         pair_matrix.loc[n[0], n[1]] = int(pair_matrix.loc[n[0], n[1]] or 0) + 1
         pair_matrix.loc[n[1], n[0]] = int(pair_matrix.loc[n[1], n[0]] or 0) + 1
 for i in isimler: pair_matrix.loc[i,i] = "-" 
