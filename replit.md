@@ -40,6 +40,21 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
   - Updated increment logic to handle type conversion: `int(pair_matrix.loc[x,y] or 0) + 1`
   - Result: No more Arrow type errors when displaying the matching matrix
 
+## Latest Improvements - Step 1 Complete ✅
+
+### 1. Database & Save/Load Functionality (IMPLEMENTED)
+- **New**: PostgreSQL database integration for schedule persistence
+- **Save**: Click "Kaydet/Yükle" → "Kaydet" tab, name your schedule, click save
+- **Load**: "Kaydet/Yükle" → "Yükle" tab, select schedule, click load
+- **List**: View all saved schedules with timestamps, delete old ones
+- **Benefit**: Schedules no longer lost on refresh!
+
+### Next Steps in Pipeline:
+- Priority 2: Input validation (prevent crashes on invalid data)
+- Priority 3: Better shift editor UI (horizontal scroll, week view)
+- Priority 4: Advanced features (swap shifts, templates, preferences)
+
 ## Project Structure
 - `nobet.py` - Main application file
+- `db.py` - Database functions (PostgreSQL backend)
 - `requirements.txt` - Python dependencies

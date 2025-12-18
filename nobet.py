@@ -7,6 +7,10 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 from datetime import date
 import numpy as np
+from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
+
+# Initialize database on app start
+init_db()
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Adil Nöbet v98 (AI Simulation)", layout="wide")
@@ -157,6 +161,57 @@ with st.sidebar:
     tatil_gunleri = [int(x) for x in st.text_input("Tatiller:", "").split(",") if x.strip().isdigit()]
     min_bosluk = st.slider("Dinlenme", 0, 3, 1)
     nobet_ucreti = st.number_input("Saatlik FM Ücreti (TL)", value=252.59)
+    
+    # --- SAVE/LOAD ---
+    st.divider()
+    st.header("💾 Kaydet/Yükle")
+    
+    tab1, tab2, tab3 = st.tabs(["Kaydet", "Yükle", "Listele"])
+    
+    with tab1:
+        save_name = st.text_input("Takvim Adı:", f"Nöbet_{yil}_{ay:02d}")
+        if st.button("💾 Kaydet", type="primary", key="save_btn"):
+            if save_schedule(save_name, yil, ay, isimler, st.session_state.schedule_bool):
+                st.success(f"✅ '{save_name}' kaydedildi!")
+            else:
+                st.error("❌ Kaydetme başarısız")
+    
+    with tab2:
+        schedules = list_schedules()
+        if schedules:
+            schedule_options = [f"{s['name']} ({s['year']}-{s['month']:02d})" for s in schedules]
+            selected = st.selectbox("Kaydedilmiş Takvim:", schedule_options)
+            
+            if st.button("📂 Yükle", key="load_btn"):
+                # Parse selection
+                selected_name = selected.split(" (")[0]
+                for s in schedules:
+                    if s['name'] == selected_name:
+                        team, df = load_schedule(s['name'], s['year'], s['month'])
+                        if df is not None:
+                            st.session_state.schedule_bool = df
+                            st.session_state.should_regenerate_assignments = True
+                            st.success(f"✅ '{s['name']}' yüklendi!")
+                            st.rerun()
+                        break
+        else:
+            st.info("Henüz kayıtlı takvim yok")
+    
+    with tab3:
+        schedules = list_schedules()
+        if schedules:
+            st.write("📋 Kayıtlı Takvimler:")
+            for s in schedules:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**{s['name']}** - {s['year']}-{s['month']:02d}")
+                    st.caption(f"Güncellendi: {s['updated_at'][:10]}")
+                with col2:
+                    if st.button("🗑️", key=f"del_{s['name']}_{s['year']}_{s['month']}"):
+                        delete_schedule(s['name'], s['year'], s['month'])
+                        st.rerun()
+        else:
+            st.info("Henüz kayıtlı takvim yok")
 
 if not isimler: st.stop()
 
