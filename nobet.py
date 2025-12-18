@@ -330,24 +330,27 @@ if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
 st.divider()
 st.subheader("📝 2. ADIM: Kontrol & Düzenleme")
 
-# Ensure clean, consistent data types for data_editor
-df_clean = st.session_state.schedule_bool.copy()
-df_clean.index = df_clean.index.astype(str)
-df_clean.columns = df_clean.columns.astype(str)
-df_clean = df_clean.astype(bool)
+# Prepare data with fresh index/columns to avoid Arrow serialization
+df_for_editor = st.session_state.schedule_bool.copy()
+df_for_editor.index.name = "İsim"
 
-# Data editor with all days
-edited = st.data_editor(
-    df_clean,
-    use_container_width=False, 
-    key="schedule_editor",
-    column_config={c: st.column_config.CheckboxColumn(l, width="small") for c, l in zip(sutunlar, sutunlar_display)},
-    hide_index=False
-)
-
-# Convert back to boolean and update session state
-edited = edited.astype(bool)
-st.session_state.schedule_bool = edited
+# Use st.form to batch edits and prevent continuous reruns
+with st.form(key="schedule_form", clear_on_submit=False):
+    edited = st.data_editor(
+        df_for_editor,
+        width='content',
+        key="schedule_data_editor",
+        column_config={col: st.column_config.CheckboxColumn(display, width="small") 
+                      for col, display in zip(sutunlar, sutunlar_display)}
+    )
+    
+    submitted = st.form_submit_button("💾 Düzenlemeleri Kayıt Et")
+    
+    if submitted:
+        # Only update on form submission
+        edited_clean = edited.astype(bool)
+        st.session_state.schedule_bool = edited_clean
+        st.success("✅ Düzenlemeler kaydedildi!")
 
 # --- HATA KONTROL ---
 violations = []
