@@ -336,9 +336,8 @@ df_for_editor.index.name = "İsim"
 
 # Use st.form to batch edits and prevent continuous reruns
 with st.form(key="schedule_form", clear_on_submit=False):
-    edited = st.data_editor(
+    form_edited = st.data_editor(
         df_for_editor,
-        width='content',
         key="schedule_data_editor",
         column_config={col: st.column_config.CheckboxColumn(display, width="small") 
                       for col, display in zip(sutunlar, sutunlar_display)}
@@ -348,9 +347,12 @@ with st.form(key="schedule_form", clear_on_submit=False):
     
     if submitted:
         # Only update on form submission
-        edited_clean = edited.astype(bool)
+        edited_clean = form_edited.astype(bool)
         st.session_state.schedule_bool = edited_clean
         st.success("✅ Düzenlemeler kaydedildi!")
+
+# Use the current schedule for all calculations (either from form or session state)
+edited = st.session_state.schedule_bool.copy()
 
 # --- HATA KONTROL ---
 violations = []
@@ -409,7 +411,7 @@ df_liste = pd.DataFrame(rows_liste)
 
 stats_load = []
 stats_finance = []
-pair_matrix = pd.DataFrame('', index=isimler, columns=isimler, dtype=object)
+pair_matrix = pd.DataFrame(0, index=isimler, columns=isimler, dtype=int)
 
 for isim in isimler:
     toplam = edited.loc[isim].sum()
@@ -442,9 +444,12 @@ for isim in isimler:
 for col in sutunlar:
     n = edited.index[edited[col]].tolist()
     if len(n) >= 2:
-        pair_matrix.loc[n[0], n[1]] = int(pair_matrix.loc[n[0], n[1]] or 0) + 1
-        pair_matrix.loc[n[1], n[0]] = int(pair_matrix.loc[n[1], n[0]] or 0) + 1
-for i in isimler: pair_matrix.loc[i,i] = "-" 
+        pair_matrix.loc[n[0], n[1]] = pair_matrix.loc[n[0], n[1]] + 1
+        pair_matrix.loc[n[1], n[0]] = pair_matrix.loc[n[1], n[0]] + 1
+
+# Convert pair_matrix to strings for clean display (self-pairs as "-")
+pair_display = pair_matrix.astype(str)
+for i in isimler: pair_display.loc[i,i] = "-" 
 
 df_stats_load = pd.DataFrame(stats_load).set_index("İsim")
 df_stats_finance = pd.DataFrame(stats_finance).set_index("İsim")
@@ -506,7 +511,7 @@ with col_right:
 
     # 3. Matris
     st.markdown("**3. Eşleşme Matrisi**")
-    st.dataframe(pair_matrix.style.background_gradient(cmap="Greys"), use_container_width=True)
+    st.dataframe(pair_display, use_container_width=True)
 
     st.divider()
 
