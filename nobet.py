@@ -188,6 +188,9 @@ zorunlu_saat = calisma_gunu * 8
 if 'schedule_bool' not in st.session_state:
     st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
 if 'inputs' not in st.session_state: st.session_state.inputs = {i: "" for i in isimler}
+if 'cached_rows_liste' not in st.session_state: st.session_state.cached_rows_liste = None
+if 'cached_ayb_counts' not in st.session_state: st.session_state.cached_ayb_counts = None
+if 'last_edited_hash' not in st.session_state: st.session_state.last_edited_hash = None
 for i in isimler: 
     if i not in st.session_state.inputs: st.session_state.inputs[i] = ""
 
@@ -256,17 +259,26 @@ else:
     st.success("✅ Kurallar uygun (Her gün 2 kişi, çakışma yok).")
 
 # --- VERİ HAZIRLIĞI ---
-rows_liste = []
-ayb_counts = {i: 0 for i in isimler}
-for col in sutunlar:
-    nobetciler = edited.index[edited[col]].tolist()
-    random.shuffle(nobetciler) 
-    nobetciler.sort(key=lambda x: ayb_counts[x]) 
-    p1, p2 = "-", "-"
-    if len(nobetciler) > 0:
-        p1 = nobetciler[0]; ayb_counts[p1] += 1
-        if len(nobetciler) > 1: p2 = nobetciler[1]
-    rows_liste.append({"Tarih": gun_detaylari[col]['full_date'], "AYB": p1, "GYB": p2})
+# Cache the rows_liste to prevent changes when selectbox changes
+current_hash = str(edited.values.tobytes())
+if st.session_state.last_edited_hash != current_hash:
+    rows_liste = []
+    ayb_counts = {i: 0 for i in isimler}
+    for col in sutunlar:
+        nobetciler = edited.index[edited[col]].tolist()
+        random.shuffle(nobetciler) 
+        nobetciler.sort(key=lambda x: ayb_counts[x]) 
+        p1, p2 = "-", "-"
+        if len(nobetciler) > 0:
+            p1 = nobetciler[0]; ayb_counts[p1] += 1
+            if len(nobetciler) > 1: p2 = nobetciler[1]
+        rows_liste.append({"Tarih": gun_detaylari[col]['full_date'], "AYB": p1, "GYB": p2})
+    st.session_state.cached_rows_liste = rows_liste
+    st.session_state.cached_ayb_counts = ayb_counts
+    st.session_state.last_edited_hash = current_hash
+else:
+    rows_liste = st.session_state.cached_rows_liste
+    ayb_counts = st.session_state.cached_ayb_counts
 df_liste = pd.DataFrame(rows_liste)
 
 stats_load = []
