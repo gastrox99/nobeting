@@ -3,3 +3,8 @@ pandas
 numpy
 tabulate
 matplotlib
+matplotlib
+numpy
+pandas
+streamlit
+tabulate
