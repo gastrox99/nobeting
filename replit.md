@@ -24,10 +24,15 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 ```
 
 ## Recent Changes
-- **Fixed**: AYB/GYB assignments now stable when switching person in personalized view
-  - Issue: Random shuffle was re-running on every selectbox change
-  - Solution: Added session state caching for rows_liste and ayb_counts
-  - Only regenerates when schedule actually changes (detected via hash)
+- **Fixed**: Data editor stability and manual shift editing
+  - Issue 1: AYB/GYB assignments were regenerating on every selectbox change
+    - Solution: Added session state caching for rows_liste and ayb_counts
+  - Issue 2: Manual edits were regenerating assignments and throwing back to first column
+    - Solution: Changed regeneration logic to only trigger on AI button click
+    - Added `should_regenerate_assignments` flag to control regeneration
+    - Data editor now maintains state with key="schedule_editor"
+    - Used .copy() to prevent reference mutation issues
+  - Result: Smooth manual editing experience, stable view, no double-clicks needed
 
 ## Project Structure
 - `nobet.py` - Main application file

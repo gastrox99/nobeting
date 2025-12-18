@@ -191,6 +191,7 @@ if 'inputs' not in st.session_state: st.session_state.inputs = {i: "" for i in i
 if 'cached_rows_liste' not in st.session_state: st.session_state.cached_rows_liste = None
 if 'cached_ayb_counts' not in st.session_state: st.session_state.cached_ayb_counts = None
 if 'last_edited_hash' not in st.session_state: st.session_state.last_edited_hash = None
+if 'should_regenerate_assignments' not in st.session_state: st.session_state.should_regenerate_assignments = False
 for i in isimler: 
     if i not in st.session_state.inputs: st.session_state.inputs[i] = ""
 
@@ -212,6 +213,7 @@ for i, t in input_data.items():
 
 if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
     run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk)
+    st.session_state.should_regenerate_assignments = True
     st.rerun()
 
 # --- ADIM 2: EDİTÖR ---
@@ -219,8 +221,9 @@ st.divider()
 st.subheader("📝 2. ADIM: Kontrol & Düzenleme")
 
 edited = st.data_editor(
-    st.session_state.schedule_bool,
+    st.session_state.schedule_bool.copy(),
     use_container_width=False, 
+    key="schedule_editor",
     column_config={c: st.column_config.CheckboxColumn(l, width="small") for c, l in zip(sutunlar, sutunlar_display)}
 )
 st.session_state.schedule_bool = edited
@@ -259,9 +262,8 @@ else:
     st.success("✅ Kurallar uygun (Her gün 2 kişi, çakışma yok).")
 
 # --- VERİ HAZIRLIĞI ---
-# Cache the rows_liste to prevent changes when selectbox changes
-current_hash = str(edited.values.tobytes())
-if st.session_state.last_edited_hash != current_hash:
+# Only regenerate assignments when AI button is clicked, not on manual edits
+if st.session_state.should_regenerate_assignments or st.session_state.cached_rows_liste is None:
     rows_liste = []
     ayb_counts = {i: 0 for i in isimler}
     for col in sutunlar:
@@ -275,7 +277,7 @@ if st.session_state.last_edited_hash != current_hash:
         rows_liste.append({"Tarih": gun_detaylari[col]['full_date'], "AYB": p1, "GYB": p2})
     st.session_state.cached_rows_liste = rows_liste
     st.session_state.cached_ayb_counts = ayb_counts
-    st.session_state.last_edited_hash = current_hash
+    st.session_state.should_regenerate_assignments = False
 else:
     rows_liste = st.session_state.cached_rows_liste
     ayb_counts = st.session_state.cached_ayb_counts
