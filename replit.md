@@ -23,22 +23,19 @@ The app runs on port 5000 via the Streamlit workflow:
 streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
 ```
 
-## Recent Changes
-- **Fixed**: Data editor stability and manual shift editing
-  - Issue 1: AYB/GYB assignments were regenerating on every selectbox change
-    - Solution: Added session state caching for rows_liste and ayb_counts
-  - Issue 2: Manual edits were regenerating assignments and throwing back to first column
-    - Solution: Changed regeneration logic to only trigger on AI button click
-    - Added `should_regenerate_assignments` flag to control regeneration
-    - Data editor now maintains state with key="schedule_editor"
-    - Used .copy() to prevent reference mutation issues
-  - Result: Smooth manual editing experience, stable view, no double-clicks needed
+## Recent Changes (Dec 2024)
 
-- **Fixed**: Arrow serialization error in pair_matrix
-  - Issue: Mixed int/string types in pair_matrix caused Arrow serialization failures
-  - Solution: Changed initialization from `pd.DataFrame(0, ...)` to `pd.DataFrame('', ..., dtype=object)`
-  - Updated increment logic to handle type conversion: `int(pair_matrix.loc[x,y] or 0) + 1`
-  - Result: No more Arrow type errors when displaying the matching matrix
+### Bug Fixes Round 2
+- **Fixed**: Forbidden pairs parsing now supports both comma and newline separators
+- **Fixed**: Session state sync - schedule now auto-adjusts when team or month changes
+- **Fixed**: Daily list now shows ALL assigned people (not just first 2) when kişi_sayısı > 2
+- **Fixed**: Personal detail view now correctly shows shifts for all roles (not just AYB/GYB)
+- **Fixed**: Validation function now properly receives kişi_sayısı parameter
+- **Fixed**: Pair matrix counts ALL pairs correctly (not just first 2 people)
+
+### Bug Fixes Round 1
+- **Fixed**: Data editor stability with form-based editing (prevents continuous reruns)
+- **Fixed**: Arrow serialization errors in pair_matrix with consistent data types
 
 ## Latest Improvements - Step 1 Complete ✅
 

@@ -231,12 +231,18 @@ with st.sidebar:
     )
     st.session_state.forbidden_pairs_text = forbidden_input
     
-    # Parse forbidden pairs
+    # Parse forbidden pairs (supports both comma and newline separators)
     forbidden_pairs = set()
     if forbidden_input.strip():
+        # First split by newlines, then by commas
+        all_pairs = []
         for line in forbidden_input.strip().split('\n'):
-            if '-' in line:
-                parts = line.split('-', 1)  # Only split on first hyphen
+            all_pairs.extend(line.split(','))
+        
+        for pair_str in all_pairs:
+            pair_str = pair_str.strip()
+            if '-' in pair_str:
+                parts = pair_str.split('-', 1)  # Only split on first hyphen
                 if len(parts) == 2:
                     p1, p2 = parts[0].strip(), parts[1].strip()
                     if p1 and p2:
@@ -325,6 +331,29 @@ zorunlu_saat = calisma_gunu * 8
 # --- SESSION ---
 if 'schedule_bool' not in st.session_state:
     st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+else:
+    # Ensure schedule matches current team and columns
+    current_schedule = st.session_state.schedule_bool
+    needs_update = False
+    
+    # Check if columns changed (month/year change)
+    if list(current_schedule.columns) != sutunlar:
+        needs_update = True
+    # Check if team changed
+    elif list(current_schedule.index) != isimler:
+        needs_update = True
+    
+    if needs_update:
+        # Preserve existing data where possible
+        new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+        for person in isimler:
+            if person in current_schedule.index:
+                for col in sutunlar:
+                    if col in current_schedule.columns:
+                        new_schedule.at[person, col] = current_schedule.at[person, col]
+        st.session_state.schedule_bool = new_schedule
+        st.session_state.cached_rows_liste = None  # Reset cache
+
 if 'inputs' not in st.session_state: st.session_state.inputs = {i: "" for i in isimler}
 if 'cached_rows_liste' not in st.session_state: st.session_state.cached_rows_liste = None
 if 'cached_ayb_counts' not in st.session_state: st.session_state.cached_ayb_counts = None
@@ -448,11 +477,31 @@ if st.session_state.should_regenerate_assignments or st.session_state.cached_row
         nobetciler = edited.index[edited[col]].tolist()
         random.shuffle(nobetciler) 
         nobetciler.sort(key=lambda x: ayb_counts[x]) 
-        p1, p2 = "-", "-"
+        
+        # Build row with all assigned people
+        row_data = {"Tarih": gun_detaylari[col]['full_date']}
+        
         if len(nobetciler) > 0:
-            p1 = nobetciler[0]; ayb_counts[p1] += 1
-            if len(nobetciler) > 1: p2 = nobetciler[1]
-        rows_liste.append({"Tarih": gun_detaylari[col]['full_date'], "AYB": p1, "GYB": p2})
+            row_data["AYB"] = nobetciler[0]
+            ayb_counts[nobetciler[0]] += 1
+        else:
+            row_data["AYB"] = "-"
+        
+        if len(nobetciler) > 1:
+            row_data["GYB"] = nobetciler[1]
+        else:
+            row_data["GYB"] = "-"
+        
+        # Add extra columns for kişi_sayısı > 2
+        if kişi_sayısı > 2:
+            for idx in range(2, kişi_sayısı):
+                col_name = f"Kişi{idx+1}"
+                if len(nobetciler) > idx:
+                    row_data[col_name] = nobetciler[idx]
+                else:
+                    row_data[col_name] = "-"
+        
+        rows_liste.append(row_data)
     st.session_state.cached_rows_liste = rows_liste
     st.session_state.cached_ayb_counts = ayb_counts
     st.session_state.should_regenerate_assignments = False
@@ -549,10 +598,39 @@ with col_right:
     kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
     kisi_rows = []
     for index, row in df_liste.iterrows():
-        if row['AYB'] == kisi_sec:
-            kisi_rows.append({"Tarih": row['Tarih'], "Partner": row['GYB'] if row['GYB'] != '-' else 'Tek', "Rol": "AYB"})
-        elif row['GYB'] == kisi_sec:
-            kisi_rows.append({"Tarih": row['Tarih'], "Partner": row['AYB'], "Rol": "GYB"})
+        # Check all columns for this person
+        partners = []
+        rol = None
+        
+        if row.get('AYB') == kisi_sec:
+            rol = "AYB"
+            if row.get('GYB') and row['GYB'] != '-': partners.append(row['GYB'])
+            for idx in range(2, kişi_sayısı):
+                col_name = f"Kişi{idx+1}"
+                if col_name in row and row[col_name] != '-': partners.append(row[col_name])
+        elif row.get('GYB') == kisi_sec:
+            rol = "GYB"
+            if row.get('AYB') and row['AYB'] != '-': partners.append(row['AYB'])
+            for idx in range(2, kişi_sayısı):
+                col_name = f"Kişi{idx+1}"
+                if col_name in row and row[col_name] != '-': partners.append(row[col_name])
+        else:
+            # Check extra columns
+            for idx in range(2, kişi_sayısı):
+                col_name = f"Kişi{idx+1}"
+                if col_name in row and row[col_name] == kisi_sec:
+                    rol = col_name
+                    if row.get('AYB') and row['AYB'] != '-': partners.append(row['AYB'])
+                    if row.get('GYB') and row['GYB'] != '-': partners.append(row['GYB'])
+                    for idx2 in range(2, kişi_sayısı):
+                        col2 = f"Kişi{idx2+1}"
+                        if col2 != col_name and col2 in row and row[col2] != '-':
+                            partners.append(row[col2])
+                    break
+        
+        if rol:
+            partner_str = ', '.join(partners) if partners else 'Tek'
+            kisi_rows.append({"Tarih": row['Tarih'], "Partner": partner_str, "Rol": rol})
     
     df_kisi = pd.DataFrame(kisi_rows)
     if not df_kisi.empty:
