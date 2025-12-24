@@ -372,6 +372,26 @@ with st.sidebar:
     min_bosluk = st.slider("Dinlenme", 0, 3, 1)
     kişi_sayısı = st.slider("Nöbet Başına Kişi:", 1, 5, 2)
     
+    # --- CUSTOM ROLE NAMES ---
+    default_roles = ", ".join([f"Rol{i+1}" for i in range(kişi_sayısı)])
+    role_names_input = st.text_input(
+        "Görev İsimleri:",
+        value=st.session_state.get("role_names_text", ""),
+        placeholder=f"Örn: AYB, GYB veya Nöbetçi1, Nöbetçi2"
+    )
+    st.session_state.role_names_text = role_names_input
+    
+    # Parse role names
+    if role_names_input.strip():
+        role_names = [r.strip() for r in role_names_input.split(",") if r.strip()]
+    else:
+        role_names = []
+    
+    # Ensure we have enough role names (pad with defaults if needed)
+    while len(role_names) < kişi_sayısı:
+        role_names.append(f"Kişi{len(role_names)+1}")
+    role_names = role_names[:kişi_sayısı]  # Trim excess
+    
     # --- FORBIDDEN PAIRS ---
     st.markdown("🚫 **Birlikte Çalışamayan Kişiler**")
     forbidden_input = st.text_area(
@@ -766,42 +786,32 @@ else:
 # Only regenerate assignments when AI button is clicked, not on manual edits
 if st.session_state.should_regenerate_assignments or st.session_state.cached_rows_liste is None:
     rows_liste = []
-    ayb_counts = {i: 0 for i in isimler}
+    first_role_counts = {i: 0 for i in isimler}
     for col in sutunlar:
         nobetciler = edited.index[edited[col]].tolist()
         random.shuffle(nobetciler) 
-        nobetciler.sort(key=lambda x: ayb_counts[x]) 
+        nobetciler.sort(key=lambda x: first_role_counts[x]) 
         
-        # Build row with all assigned people
+        # Build row with all assigned people using custom role names
         row_data = {"Tarih": gun_detaylari[col]['full_date']}
         
-        if len(nobetciler) > 0:
-            row_data["AYB"] = nobetciler[0]
-            ayb_counts[nobetciler[0]] += 1
-        else:
-            row_data["AYB"] = "-"
-        
-        if len(nobetciler) > 1:
-            row_data["GYB"] = nobetciler[1]
-        else:
-            row_data["GYB"] = "-"
-        
-        # Add extra columns for kişi_sayısı > 2
-        if kişi_sayısı > 2:
-            for idx in range(2, kişi_sayısı):
-                col_name = f"Kişi{idx+1}"
-                if len(nobetciler) > idx:
-                    row_data[col_name] = nobetciler[idx]
-                else:
-                    row_data[col_name] = "-"
+        for idx, role_name in enumerate(role_names):
+            if len(nobetciler) > idx:
+                row_data[role_name] = nobetciler[idx]
+                if idx == 0:
+                    first_role_counts[nobetciler[idx]] += 1
+            else:
+                row_data[role_name] = "-"
         
         rows_liste.append(row_data)
     st.session_state.cached_rows_liste = rows_liste
-    st.session_state.cached_ayb_counts = ayb_counts
+    st.session_state.cached_first_role_counts = first_role_counts
+    st.session_state.cached_role_names = role_names
     st.session_state.should_regenerate_assignments = False
 else:
     rows_liste = st.session_state.cached_rows_liste
-    ayb_counts = st.session_state.cached_ayb_counts
+    first_role_counts = st.session_state.get('cached_first_role_counts', {i: 0 for i in isimler})
+    role_names = st.session_state.get('cached_role_names', role_names)
 df_liste = pd.DataFrame(rows_liste)
 
 stats_load = []
@@ -826,7 +836,7 @@ for isim in isimler:
         "Toplam": int(toplam),
         "Özel": int(ozel_gun),
         "HS": int(haftasonu),
-        "AYB": ayb_counts[isim]
+        role_names[0]: first_role_counts.get(isim, 0)
     })
     stats_finance.append({
         "İsim": isim,
@@ -895,7 +905,7 @@ with col_right:
     # 1. Yük
     st.markdown("**1. Nöbet Yükü (Dengeli)**")
     st.dataframe(
-        df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam", "AYB"])
+        df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam", role_names[0]])
                            .background_gradient(cmap="Oranges", subset=["Özel", "HS"]),
         use_container_width=True
     )
@@ -906,35 +916,18 @@ with col_right:
     kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
     kisi_rows = []
     for index, row in df_liste.iterrows():
-        # Check all columns for this person
+        # Check all role columns for this person
         partners = []
         rol = None
         
-        if row.get('AYB') == kisi_sec:
-            rol = "AYB"
-            if row.get('GYB') and row['GYB'] != '-': partners.append(row['GYB'])
-            for idx in range(2, kişi_sayısı):
-                col_name = f"Kişi{idx+1}"
-                if col_name in row and row[col_name] != '-': partners.append(row[col_name])
-        elif row.get('GYB') == kisi_sec:
-            rol = "GYB"
-            if row.get('AYB') and row['AYB'] != '-': partners.append(row['AYB'])
-            for idx in range(2, kişi_sayısı):
-                col_name = f"Kişi{idx+1}"
-                if col_name in row and row[col_name] != '-': partners.append(row[col_name])
-        else:
-            # Check extra columns
-            for idx in range(2, kişi_sayısı):
-                col_name = f"Kişi{idx+1}"
-                if col_name in row and row[col_name] == kisi_sec:
-                    rol = col_name
-                    if row.get('AYB') and row['AYB'] != '-': partners.append(row['AYB'])
-                    if row.get('GYB') and row['GYB'] != '-': partners.append(row['GYB'])
-                    for idx2 in range(2, kişi_sayısı):
-                        col2 = f"Kişi{idx2+1}"
-                        if col2 != col_name and col2 in row and row[col2] != '-':
-                            partners.append(row[col2])
-                    break
+        for role_idx, role_name in enumerate(role_names):
+            if role_name in row and row.get(role_name) == kisi_sec:
+                rol = role_name
+                # Collect all other assigned people as partners
+                for other_idx, other_role in enumerate(role_names):
+                    if other_idx != role_idx and other_role in row and row.get(other_role) and row[other_role] != '-':
+                        partners.append(row[other_role])
+                break
         
         if rol:
             partner_str = ', '.join(partners) if partners else 'Tek'

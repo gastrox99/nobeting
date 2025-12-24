@@ -26,6 +26,7 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 ## Recent Changes (Dec 2024)
 
 ### New Features
+- **Custom Role Names**: Define your own shift role names (e.g., "Nöbetçi, Yardımcı" instead of default AYB/GYB)
 - **Min/Max Limits**: Set individual shift limits per person (e.g., "Ali:5-10")
 - **Weekend Balance**: Algorithm avoids assigning consecutive weekend shifts
 - **Excel Export**: Download schedule as formatted Excel file with multiple sheets
