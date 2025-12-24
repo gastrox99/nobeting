@@ -582,116 +582,122 @@ for i in isimler:
 # --- ADIM 1: KARTLI GİRİŞ ---
 st.header("⬇️ 1. ADIM: Müsaitlik ve Tercihler")
 
-# CSS for calendar styling
+# Initialize preference DataFrame if needed
+if 'pref_df' not in st.session_state:
+    st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
+else:
+    # Sync with current team/month
+    current_pref = st.session_state.pref_df
+    if list(current_pref.columns) != sutunlar or list(current_pref.index) != isimler:
+        new_pref = pd.DataFrame(0, index=isimler, columns=sutunlar)
+        for person in isimler:
+            if person in current_pref.index:
+                for col in sutunlar:
+                    if col in current_pref.columns:
+                        new_pref.at[person, col] = current_pref.at[person, col]
+        st.session_state.pref_df = new_pref
+
+# Color legend and instructions
 st.markdown("""
-<style>
-.pref-legend { display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 15px; font-size: 0.9em; padding: 10px; background: #f8f9fa; border-radius: 8px; }
-.pref-item { display: flex; align-items: center; gap: 6px; }
-.pref-box { width: 20px; height: 20px; border-radius: 4px; border: 1px solid #ddd; }
-.pref-white { background: white; }
-.pref-green { background: #c8e6c9; }
-.pref-yellow { background: #fff9c4; }
-.pref-red { background: #ffcdd2; }
-.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-top: 5px; }
-.day-header { text-align: center; font-weight: bold; font-size: 0.75em; color: #666; padding: 4px; }
-.weekend-header { color: #1976d2; }
-</style>
-<div class="pref-legend">
-    <span style="font-weight:bold;">🎨 Tercih Renkleri:</span>
-    <div class="pref-item"><div class="pref-box pref-white"></div> Nötr</div>
-    <div class="pref-item"><div class="pref-box pref-green"></div> Tercih (İstiyorum)</div>
-    <div class="pref-item"><div class="pref-box pref-yellow"></div> Kaçınmak İstiyorum</div>
-    <div class="pref-item"><div class="pref-box pref-red"></div> Müsait Değilim</div>
+<div style="display:flex;flex-wrap:wrap;gap:20px;padding:12px;background:#f8f9fa;border-radius:8px;margin-bottom:15px;">
+    <span style="font-weight:bold;">🎨 Değerler:</span>
+    <span>⬜ <b>0</b> = Nötr</span>
+    <span>🟩 <b>1</b> = Tercih</span>
+    <span>🟨 <b>2</b> = Kaçınmak</span>
+    <span>🟥 <b>3</b> = Müsait Değil</span>
 </div>
 """, unsafe_allow_html=True)
 
-st.info("📅 Her gün kutusuna tıklayarak tercih belirleyin. Her tıklama rengi değiştirir: Nötr → Tercih → Kaçın → Müsait Değil → Nötr")
+st.info("📝 Tablodaki hücrelere tıklayıp değer girin: 0=Nötr, 1=Tercih (yeşil), 2=Kaçın (sarı), 3=Müsait değil (kırmızı). Düzenleme bitince 'Nöbetleri Dağıt' butonuna basın.")
 
-def get_pref_color(status):
-    colors = {0: "#ffffff", 1: "#c8e6c9", 2: "#fff9c4", 3: "#ffcdd2"}
-    return colors.get(status, "#ffffff")
+# Create styled preference editor
+def style_pref_cell(val):
+    if val == 1:
+        return 'background-color: #c8e6c9'  # Green - preferred
+    elif val == 2:
+        return 'background-color: #fff9c4'  # Yellow - avoid
+    elif val == 3:
+        return 'background-color: #ffcdd2'  # Red - unavailable
+    return ''
 
-def get_pref_label(status):
-    labels = {0: "", 1: "✓", 2: "~", 3: "✗"}
-    return labels.get(status, "")
+# Day range selector for preference editing
+pref_col1, pref_col2 = st.columns(2)
+with pref_col1:
+    pref_start = st.slider("Başlangıç Günü:", 1, gun_sayisi, 1, key="pref_start")
+with pref_col2:
+    pref_end = st.slider("Bitiş Günü:", 1, gun_sayisi, min(gun_sayisi, pref_start + 9), key="pref_end")
 
-def render_person_calendar(person, gun_sayisi, yil, ay):
-    first_day = date(yil, ay, 1).weekday()
-    prefs = st.session_state.person_preferences.get(person, {})
-    
-    day_names = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
-    header_cols = st.columns(7)
-    for i, day_name in enumerate(day_names):
-        with header_cols[i]:
-            color = "#1976d2" if i >= 5 else "#666"
-            st.markdown(f"<div style='text-align:center;font-weight:bold;font-size:0.75em;color:{color}'>{day_name}</div>", unsafe_allow_html=True)
-    
-    current_day = 1
-    week = 0
-    while current_day <= gun_sayisi:
-        cols = st.columns(7)
-        for weekday in range(7):
-            with cols[weekday]:
-                if week == 0 and weekday < first_day:
-                    st.markdown("<div style='height:40px'></div>", unsafe_allow_html=True)
-                elif current_day <= gun_sayisi:
-                    day = current_day
-                    status = prefs.get(day, 0)
-                    bg_color = get_pref_color(status)
-                    label = get_pref_label(status)
-                    
-                    is_weekend = weekday >= 5
-                    is_holiday = day in tatil_gunleri
-                    border_color = "#1976d2" if is_weekend else ("#e53935" if is_holiday else "#ccc")
-                    border_width = "2px" if (is_weekend or is_holiday) else "1px"
-                    text_color = "#333"
-                    
-                    btn_key = f"cal_{person}_{day}"
-                    
-                    st.markdown(f"""
-                    <div style="background:{bg_color};border:{border_width} solid {border_color};border-radius:6px;padding:2px;margin-bottom:2px;">
-                        <div style="text-align:center;font-size:0.7em;color:{text_color};font-weight:bold;">{day}</div>
-                        <div style="text-align:center;font-size:0.9em;">{label if label else "·"}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    if st.button("◉", key=btn_key, use_container_width=True):
-                        new_status = (status + 1) % 4
-                        st.session_state.person_preferences[person][day] = new_status
-                        st.rerun()
-                    
-                    current_day += 1
-                else:
-                    st.markdown("<div style='height:40px'></div>", unsafe_allow_html=True)
-        week += 1
+if pref_end < pref_start:
+    pref_end = pref_start
 
-person_cols = st.columns(2)
-for idx, person in enumerate(isimler):
-    with person_cols[idx % 2]:
-        pref_count = len([d for d, s in st.session_state.person_preferences.get(person, {}).items() if s > 0])
-        with st.expander(f"👤 {person}" + (f" ({pref_count} tercih)" if pref_count > 0 else ""), expanded=False):
-            render_person_calendar(person, gun_sayisi, yil, ay)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🔄 Sıfırla", key=f"reset_{person}", use_container_width=True):
-                    st.session_state.person_preferences[person] = {}
-                    st.rerun()
-            with col2:
-                prefs = st.session_state.person_preferences.get(person, {})
-                unavail = len([d for d, s in prefs.items() if s == 3])
-                preferred = len([d for d, s in prefs.items() if s == 1])
-                avoid = len([d for d, s in prefs.items() if s == 2])
-                st.caption(f"✓{preferred} ~{avoid} ✗{unavail}")
+# Filter columns for selected range
+pref_cols_filtered = [col for col in sutunlar if pref_start <= gun_detaylari[col]['day_num'] <= pref_end]
+pref_df_view = st.session_state.pref_df[pref_cols_filtered].copy()
 
+# Rename columns for display (show day number and weekday)
+pref_display_cols = {}
+for col in pref_cols_filtered:
+    info = gun_detaylari[col]
+    day_num = info['day_num']
+    is_we = info['weekend']
+    is_hol = info['holiday']
+    if is_hol:
+        pref_display_cols[col] = f"🚨{day_num}"
+    elif is_we:
+        pref_display_cols[col] = f"🏖️{day_num}"
+    else:
+        pref_display_cols[col] = str(day_num)
+
+pref_df_display = pref_df_view.rename(columns=pref_display_cols)
+
+# Show styled dataframe with editable values
+st.caption(f"Gün {pref_start} - {pref_end} arası gösteriliyor ({len(pref_cols_filtered)} gün)")
+
+edited_pref = st.data_editor(
+    pref_df_display,
+    use_container_width=True,
+    height=min(400, len(isimler) * 40 + 50),
+    key="pref_editor"
+)
+
+# Map back to original columns and update session state
+reverse_map = {v: k for k, v in pref_display_cols.items()}
+for disp_col in edited_pref.columns:
+    orig_col = reverse_map.get(disp_col, disp_col)
+    if orig_col in st.session_state.pref_df.columns:
+        for person in isimler:
+            val = edited_pref.at[person, disp_col]
+            # Clamp to 0-3
+            val = max(0, min(3, int(val) if pd.notna(val) else 0))
+            st.session_state.pref_df.at[person, orig_col] = val
+
+# Quick fill buttons
+st.markdown("**Hızlı Doldurma:**")
+qf_cols = st.columns(5)
+with qf_cols[0]:
+    if st.button("🔄 Tümünü Sıfırla", use_container_width=True):
+        st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
+        st.rerun()
+with qf_cols[1]:
+    if st.button("🏖️ HS=Kaçın", use_container_width=True, help="Tüm hafta sonlarını 'Kaçınmak' olarak işaretle"):
+        for col in sutunlar:
+            if gun_detaylari[col]['weekend']:
+                st.session_state.pref_df[col] = 2
+        st.rerun()
+with qf_cols[2]:
+    if st.button("🏖️ HS=Müsait Değil", use_container_width=True, help="Tüm hafta sonlarını 'Müsait Değil' olarak işaretle"):
+        for col in sutunlar:
+            if gun_detaylari[col]['weekend']:
+                st.session_state.pref_df[col] = 3
+        st.rerun()
+
+# Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
 df_preferred = pd.DataFrame(0, index=isimler, columns=sutunlar)
 
 for person in isimler:
-    prefs = st.session_state.person_preferences.get(person, {})
     for col in sutunlar:
-        day = gun_detaylari[col]['day_num']
-        status = prefs.get(day, 0)
+        status = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index and col in st.session_state.pref_df.columns else 0
         if status == 3:
             df_unwanted.at[person, col] = True
         if status == 1:
