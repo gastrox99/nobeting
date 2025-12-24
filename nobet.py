@@ -5,9 +5,18 @@ import random
 import calendar
 import matplotlib.pyplot as plt
 from io import BytesIO
-from datetime import date
+from datetime import date, datetime
 import numpy as np
+import time
+import json
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
+
+# Excel export
+try:
+    import xlsxwriter
+    EXCEL_AVAILABLE = True
+except ImportError:
+    EXCEL_AVAILABLE = False
 
 # Initialize database on app start
 init_db()
@@ -104,8 +113,91 @@ def convert_df_to_png(df):
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
     return buf.getvalue()
 
+def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance):
+    """Convert dataframes to Excel with multiple sheets"""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_liste.to_excel(writer, sheet_name='Günlük Liste', index=False)
+        df_stats_load.to_excel(writer, sheet_name='Nöbet Yükü')
+        df_stats_finance.to_excel(writer, sheet_name='Ücret Özeti')
+        
+        # Format worksheets
+        workbook = writer.book
+        for sheet_name in writer.sheets:
+            worksheet = writer.sheets[sheet_name]
+            worksheet.set_column('A:Z', 15)
+    
+    return output.getvalue()
+
+def create_print_html(df_liste, df_stats_load, yil, ay):
+    """Create print-friendly HTML"""
+    ay_isimleri = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran",
+                   7:"Temmuz", 8:"Ağustos", 9:"Eylül", 10:"Ekim", 11:"Kasım", 12:"Aralık"}
+    
+    html = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Nöbet Listesi - {ay_isimleri[ay]} {yil}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 20px; }}
+            h1 {{ text-align: center; color: #333; }}
+            table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
+            th {{ background-color: #4CAF50; color: white; }}
+            tr:nth-child(even) {{ background-color: #f2f2f2; }}
+            .weekend {{ background-color: #e3f2fd !important; }}
+            @media print {{
+                body {{ margin: 0; }}
+                button {{ display: none; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Nöbet Listesi - {ay_isimleri[ay]} {yil}</h1>
+        <table>
+            <tr>{''.join(f'<th>{col}</th>' for col in df_liste.columns)}</tr>
+    """
+    
+    for _, row in df_liste.iterrows():
+        css_class = 'weekend' if 'Cmt' in str(row.get('Tarih', '')) or 'Paz' in str(row.get('Tarih', '')) else ''
+        html += f"<tr class='{css_class}'>{''.join(f'<td>{val}</td>' for val in row)}</tr>"
+    
+    html += """
+        </table>
+        <h2>Nöbet Yükü Özeti</h2>
+        <table>
+            <tr><th>İsim</th>""" + ''.join(f'<th>{col}</th>' for col in df_stats_load.columns) + "</tr>"
+    
+    for idx, row in df_stats_load.iterrows():
+        html += f"<tr><td><strong>{idx}</strong></td>{''.join(f'<td>{val}</td>' for val in row)}</tr>"
+    
+    html += """
+        </table>
+        <p style="text-align: center; color: #666; margin-top: 30px;">
+            Oluşturulma: """ + datetime.now().strftime("%d.%m.%Y %H:%M") + """
+        </p>
+    </body>
+    </html>
+    """
+    return html
+
+def save_undo_state(schedule_df):
+    """Save current state for undo"""
+    if 'undo_history' not in st.session_state:
+        st.session_state.undo_history = []
+    if 'redo_history' not in st.session_state:
+        st.session_state.redo_history = []
+    
+    # Limit history to 10 states
+    if len(st.session_state.undo_history) >= 10:
+        st.session_state.undo_history.pop(0)
+    
+    st.session_state.undo_history.append(schedule_df.copy())
+    st.session_state.redo_history = []  # Clear redo on new action
+
 # --- ANA ALGORİTMA (V98: BEST-OF-N SIMULATION) ---
-def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, forbidden_pairs=None):
+def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, forbidden_pairs=None, person_limits=None, df_preferred=None):
     
     best_schedule = None
     best_score = float('inf') # Daha düşük puan daha iyi (Ceza puanı mantığı)
@@ -122,36 +214,75 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
         # --- TEKİL DENEME BAŞLANGICI ---
         stat_total = {i: 0 for i in isimler}
         stat_special = {i: 0 for i in isimler} 
+        stat_consecutive_weekend = {i: 0 for i in isimler}  # Weekend balance
+        last_weekend_shift = {i: -10 for i in isimler}  # Track last weekend
         pair_history = {} 
         last_shift_day = {i: -10 for i in isimler}
         
         temp_schedule = pd.DataFrame({col: [False]*len(isimler) for col in sutunlar}, index=isimler)
         
         # Score Calculation (Local decision)
-        def get_decision_score(p, is_sp, p1=None):
+        def get_decision_score(p, is_sp, col, p1=None):
             total = stat_total[p] + (random.random() * 0.5) # Küçük rastgelelik tie-breaker
             sp_count = stat_special[p]
             penalty = pair_history.get(tuple(sorted((p1, p))) if p1 else None, 0)
             
+            # Weekend balance penalty - avoid consecutive weekends
+            consecutive_penalty = stat_consecutive_weekend[p] * 200
+            
+            # Preference bonus (negative = preferred, positive = avoid)
+            pref_bonus = 0
+            if df_preferred is not None and p in df_preferred.index and col in df_preferred.columns:
+                pref_val = df_preferred.at[p, col]
+                if pref_val == 1:  # Preferred
+                    pref_bonus = -50
+                elif pref_val == 2:  # Avoid
+                    pref_bonus = 100
+            
+            # Min/max limits penalty
+            limit_penalty = 0
+            if person_limits and p in person_limits:
+                max_limit = person_limits[p].get('max', 999)
+                if stat_total[p] >= max_limit:
+                    limit_penalty = 50000  # Very high to prevent assignment
+            
             # Hafta sonuysa, önce hafta sonu dengesine bak
             if is_sp:
-                return (sp_count * 100) + (total * 10) + penalty
+                return (sp_count * 100) + (total * 10) + penalty + consecutive_penalty + pref_bonus + limit_penalty
             else:
-                return (total * 10) + (sp_count * 1) + penalty
+                return (total * 10) + (sp_count * 1) + penalty + pref_bonus + limit_penalty
 
         # Lineer İşleme (1..30) - Dağılım dengesi için şart
         empty_shifts = 0
+        limit_violations = 0
+        
         for col in sutunlar:
             info = gun_detaylari[col]
             gun_no = info['day_num']
             is_sp = info['weekend'] or info['holiday']
+            is_weekend = info['weekend']
             
-            # Adayları bul
-            adaylar = [k for k in isimler if not df_unwanted_bool.at[k, col] and (gun_no - last_shift_day[k]) > min_bosluk]
+            # Calculate which weekend number this is (for consecutive tracking)
+            weekend_num = (gun_no - 1) // 7
+            
+            # Adayları bul - also check max limits
+            adaylar = []
+            for k in isimler:
+                if df_unwanted_bool.at[k, col]:
+                    continue
+                if (gun_no - last_shift_day[k]) <= min_bosluk:
+                    continue
+                # Check max limit
+                if person_limits and k in person_limits:
+                    max_limit = person_limits[k].get('max', 999)
+                    if stat_total[k] >= max_limit:
+                        continue
+                adaylar.append(k)
+            
             random.shuffle(adaylar) # Şans faktörü
             
             # Adayları o anki duruma göre sırala
-            adaylar.sort(key=lambda x: get_decision_score(x, is_sp))
+            adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col))
             
             if len(adaylar) >= kişi_sayısı:
                 # Check for forbidden pairs and skip if found
@@ -180,25 +311,46 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
                         stat_total[k] += 1
                         if is_sp: stat_special[k] += 1
                         last_shift_day[k] = gun_no
+                        
+                        # Track consecutive weekends
+                        if is_weekend:
+                            if last_weekend_shift[k] >= 0 and weekend_num == last_weekend_shift[k] + 1:
+                                stat_consecutive_weekend[k] += 1
+                            elif last_weekend_shift[k] >= 0 and weekend_num > last_weekend_shift[k] + 1:
+                                # Gap in weekends - reset consecutive counter
+                                stat_consecutive_weekend[k] = 0
+                            last_weekend_shift[k] = weekend_num
                 else:
                     empty_shifts += 1
             else:
                 empty_shifts += 1 # Ceza: Yetersiz aday
 
+        # Check min limits violations
+        if person_limits:
+            for p, limits in person_limits.items():
+                min_limit = limits.get('min', 0)
+                if stat_total.get(p, 0) < min_limit:
+                    limit_violations += 1
+
         # --- DENEME SONUCU PUANLAMA (GLOBAL SCORE) ---
         # Amaç: Standart sapmayı (farkları) minimize etmek
         totals = list(stat_total.values())
         specials = list(stat_special.values())
+        consecutive_weekends = sum(stat_consecutive_weekend.values())
         
         std_dev_total = np.std(totals)
         std_dev_special = np.std(specials)
         range_total = max(totals) - min(totals)
         
         # Puan Fonksiyonu: Ne kadar düşükse o kadar iyi
-        # Öncelik 1: Boş gün olmasın (empty_shifts * 1000)
-        # Öncelik 2: Toplam nöbet farkı az olsun (range_total * 50)
-        # Öncelik 3: Standart sapma düşük olsun
-        current_sim_score = (empty_shifts * 10000) + (range_total * 100) + (std_dev_total * 10) + (std_dev_special * 5)
+        current_sim_score = (
+            (empty_shifts * 10000) + 
+            (limit_violations * 5000) +
+            (consecutive_weekends * 500) +  # Weekend balance
+            (range_total * 100) + 
+            (std_dev_total * 10) + 
+            (std_dev_special * 5)
+        )
         
         if current_sim_score < best_score:
             best_score = current_sim_score
@@ -248,6 +400,40 @@ with st.sidebar:
                     if p1 and p2:
                         forbidden_pairs.add(tuple(sorted((p1, p2))))
     st.session_state.forbidden_pairs = forbidden_pairs
+    
+    # --- MIN/MAX LIMITS ---
+    st.divider()
+    st.markdown("📊 **Kişisel Limitler**")
+    with st.expander("Min/Max Nöbet Sayısı Ayarla"):
+        if 'person_limits' not in st.session_state:
+            st.session_state.person_limits = {}
+        
+        limits_text = st.text_area(
+            "Her satıra: İsim:min-max",
+            value=st.session_state.get("limits_text", ""),
+            height=80,
+            placeholder="Örn:\nAli:5-10\nAyşe:3-8",
+            key="limits_input"
+        )
+        st.session_state.limits_text = limits_text
+        
+        # Parse limits
+        person_limits = {}
+        if limits_text.strip():
+            for line in limits_text.strip().split('\n'):
+                if ':' in line:
+                    parts = line.split(':')
+                    name = parts[0].strip()
+                    if len(parts) == 2 and '-' in parts[1]:
+                        try:
+                            min_val, max_val = map(int, parts[1].split('-'))
+                            person_limits[name] = {'min': min_val, 'max': max_val}
+                        except ValueError:
+                            pass
+        st.session_state.person_limits = person_limits
+        
+        if person_limits:
+            st.caption(f"Aktif limitler: {len(person_limits)} kişi")
     
     nobet_ucreti = st.number_input("Saatlik FM Ücreti (TL)", value=252.59)
     
@@ -361,12 +547,33 @@ if 'last_edited_hash' not in st.session_state: st.session_state.last_edited_hash
 if 'should_regenerate_assignments' not in st.session_state: st.session_state.should_regenerate_assignments = False
 if 'forbidden_pairs_text' not in st.session_state: st.session_state.forbidden_pairs_text = ""
 if 'forbidden_pairs' not in st.session_state: st.session_state.forbidden_pairs = set()
+if 'undo_history' not in st.session_state: st.session_state.undo_history = []
+if 'redo_history' not in st.session_state: st.session_state.redo_history = []
+if 'last_auto_save' not in st.session_state: st.session_state.last_auto_save = time.time()
+if 'preferences' not in st.session_state: st.session_state.preferences = {}
 for i in isimler: 
     if i not in st.session_state.inputs: st.session_state.inputs[i] = ""
 
 # --- ADIM 1: KARTLI GİRİŞ ---
-st.header("⬇️ 1. ADIM: Müsaitlik")
-st.info("Müsait olunmayan günleri yazın (Örn: `3-5, 12`).")
+st.header("⬇️ 1. ADIM: Müsaitlik ve Tercihler")
+
+# Preference legend
+st.markdown("""
+<style>
+.pref-legend { display: flex; gap: 15px; margin-bottom: 10px; font-size: 0.85em; }
+.pref-item { display: flex; align-items: center; gap: 5px; }
+.pref-red { width: 12px; height: 12px; background: #ffcdd2; border-radius: 3px; }
+.pref-green { width: 12px; height: 12px; background: #c8e6c9; border-radius: 3px; }
+.pref-yellow { width: 12px; height: 12px; background: #fff9c4; border-radius: 3px; }
+</style>
+<div class="pref-legend">
+    <div class="pref-item"><div class="pref-red"></div> Müsait Değil (3-5, 12)</div>
+    <div class="pref-item"><div class="pref-green"></div> Tercih (+1, +5)</div>
+    <div class="pref-item"><div class="pref-yellow"></div> Kaçınmak İster (~7, ~8)</div>
+</div>
+""", unsafe_allow_html=True)
+
+st.info("Müsait değil: `3-5, 12` | Tercih: `+1, +5` | Kaçın: `~7, ~8`")
 cols = st.columns(3)
 input_data = {}
 for i, isim in enumerate(isimler):
@@ -376,9 +583,35 @@ for i, isim in enumerate(isimler):
         input_data[isim] = val
 
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
-for i, t in input_data.items():
-    for d in parse_unwanted_days(t, gun_sayisi):
-        if 1 <= d <= len(sutunlar): df_unwanted.at[i, sutunlar[d-1]] = True
+df_preferred = pd.DataFrame(0, index=isimler, columns=sutunlar)  # 0=neutral, 1=preferred, 2=avoid
+
+for isim, text in input_data.items():
+    if not text:
+        continue
+    parts = str(text).split(',')
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            if part.startswith('+'):  # Preferred days
+                day = int(part[1:])
+                if 1 <= day <= gun_sayisi:
+                    df_preferred.at[isim, sutunlar[day-1]] = 1
+            elif part.startswith('~'):  # Avoid days
+                day = int(part[1:])
+                if 1 <= day <= gun_sayisi:
+                    df_preferred.at[isim, sutunlar[day-1]] = 2
+            elif '-' in part:  # Range of unwanted days
+                start, end = map(int, part.split('-'))
+                for d in range(max(1, start), min(gun_sayisi, end) + 1):
+                    df_unwanted.at[isim, sutunlar[d-1]] = True
+            else:  # Single unwanted day
+                day = int(part)
+                if 1 <= day <= gun_sayisi:
+                    df_unwanted.at[isim, sutunlar[day-1]] = True
+        except ValueError:
+            continue
 
 if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
     is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kişi_sayısı)
@@ -393,13 +626,72 @@ if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
             for warn in warnings:
                 st.warning(warn)
         
-        run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk, st.session_state.forbidden_pairs)
+        # Save undo state before generating new schedule
+        save_undo_state(st.session_state.schedule_bool)
+        
+        run_scheduling_algorithm_v98(
+            isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk, 
+            st.session_state.forbidden_pairs,
+            st.session_state.get('person_limits', {}),
+            df_preferred
+        )
         st.session_state.should_regenerate_assignments = True
         st.rerun()
 
 # --- ADIM 2: EDİTÖR ---
 st.divider()
 st.subheader("📝 2. ADIM: Kontrol & Düzenleme")
+
+# Undo/Redo buttons
+undo_col, redo_col, auto_col = st.columns([1, 1, 2])
+with undo_col:
+    undo_disabled = len(st.session_state.undo_history) == 0
+    if st.button("↩️ Geri Al", disabled=undo_disabled, key="undo_btn"):
+        if st.session_state.undo_history:
+            # Save current state to redo
+            st.session_state.redo_history.append(st.session_state.schedule_bool.copy())
+            # Restore previous state
+            st.session_state.schedule_bool = st.session_state.undo_history.pop()
+            st.session_state.cached_rows_liste = None
+            st.rerun()
+
+with redo_col:
+    redo_disabled = len(st.session_state.redo_history) == 0
+    if st.button("↪️ Yinele", disabled=redo_disabled, key="redo_btn"):
+        if st.session_state.redo_history:
+            # Save current state to undo
+            st.session_state.undo_history.append(st.session_state.schedule_bool.copy())
+            # Restore redo state
+            st.session_state.schedule_bool = st.session_state.redo_history.pop()
+            st.session_state.cached_rows_liste = None
+            st.rerun()
+
+with auto_col:
+    # Auto-save indicator with auto-refresh
+    elapsed = time.time() - st.session_state.last_auto_save
+    if elapsed >= 30:
+        # Auto-save to database
+        auto_name = f"Otomatik_{yil}_{ay:02d}"
+        try:
+            if save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool):
+                st.session_state.last_auto_save = time.time()
+                st.caption("💾 Otomatik kaydedildi")
+            else:
+                st.caption("⚠️ Kayıt başarısız")
+        except Exception:
+            st.caption("⚠️ Kayıt hatası")
+    else:
+        remaining = int(30 - elapsed)
+        st.caption(f"⏱️ Sonraki kayıt: {remaining}s")
+    
+    # Auto-refresh trigger using JavaScript (refreshes every 30 seconds)
+    st.markdown("""
+    <script>
+    setTimeout(function() {
+        window.parent.postMessage({type: 'streamlit:rerun'}, '*');
+    }, 30000);
+    </script>
+    """, unsafe_allow_html=True)
 
 # Prepare data with fresh index/columns to avoid Arrow serialization
 df_for_editor = st.session_state.schedule_bool.copy()
@@ -417,7 +709,9 @@ with st.form(key="schedule_form", clear_on_submit=False):
     submitted = st.form_submit_button("💾 Düzenlemeleri Kayıt Et")
     
     if submitted:
-        # Only update on form submission
+        # Save undo state before editing
+        save_undo_state(st.session_state.schedule_bool)
+        # Update schedule
         edited_clean = form_edited.astype(bool)
         st.session_state.schedule_bool = edited_clean
         st.success("✅ Düzenlemeler kaydedildi!")
@@ -565,12 +859,26 @@ col_left, col_right = st.columns([1.3, 1])
 with col_left:
     st.subheader("📅 Günlük Liste")
     
+    # Export buttons row 1
     c1, c2, c3 = st.columns(3)
     with c1: st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv", type="primary")
     with c2: st.download_button("🖼️ PNG", convert_df_to_png(df_liste), "liste.png", "image/png")
     with c3: 
+        if EXCEL_AVAILABLE:
+            excel_data = convert_df_to_excel(df_liste, df_stats_load, df_stats_finance)
+            st.download_button("📊 Excel", excel_data, f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else:
+            st.caption("Excel yok")
+    
+    # Export buttons row 2
+    c4, c5, c6 = st.columns(3)
+    with c4:
         with st.popover("💬 Metin"):
             st.text_area("Kopyala:", value=df_liste.to_markdown(index=False), height=200)
+    with c5:
+        # Print-friendly HTML
+        print_html = create_print_html(df_liste, df_stats_load, yil, ay)
+        st.download_button("🖨️ Yazdır", print_html.encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html")
 
     def highlight_list(row):
         c = "white"

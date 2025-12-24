@@ -25,6 +25,15 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 
 ## Recent Changes (Dec 2024)
 
+### New Features
+- **Min/Max Limits**: Set individual shift limits per person (e.g., "Ali:5-10")
+- **Weekend Balance**: Algorithm avoids assigning consecutive weekend shifts
+- **Excel Export**: Download schedule as formatted Excel file with multiple sheets
+- **Auto-Save**: Automatically saves to database every 30 seconds
+- **Shift Preferences**: Mark preferred (+N) or avoid (~N) days in input
+- **Print-Friendly View**: Download HTML file optimized for printing
+- **Undo/Redo**: Revert manual edits with history (up to 10 states)
+
 ### Bug Fixes Round 2
 - **Fixed**: Forbidden pairs parsing now supports both comma and newline separators
 - **Fixed**: Session state sync - schedule now auto-adjusts when team or month changes

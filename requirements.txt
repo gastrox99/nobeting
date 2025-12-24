@@ -9,3 +9,5 @@ pandas
 streamlit
 tabulate
 psycopg2-binary
+openpyxl
+xlsxwriter
