@@ -36,7 +36,7 @@ def parse_unwanted_days(text_input, max_day):
     return list(days)
 
 # --- VALIDATION ---
-def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk):
+def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kisi_sayisi=2):
     """Validate all inputs and return (is_valid, errors, warnings)"""
     errors = []
     warnings = []
@@ -68,11 +68,11 @@ def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, m
     
     # Feasibility warnings
     working_days = gun_sayisi - len(tatil_gunleri)
-    total_positions_needed = working_days * 2
+    total_positions_needed = working_days * kisi_sayisi
     team_size = len(isimler)
     
-    if team_size < kişi_sayısı:
-        errors.append(f"❌ {kişi_sayısı} kişi nöbet için en az {kişi_sayısı} kişi gerekli")
+    if team_size < kisi_sayisi:
+        errors.append(f"❌ {kisi_sayisi} kişi nöbet için en az {kisi_sayisi} kişi gerekli")
     elif team_size > 0 and total_positions_needed > team_size * 30:
         avg_per_person = total_positions_needed / team_size
         warnings.append(f"⚠️ Her kişiye ortalama {avg_per_person:.1f} nöbet düşecek (çok fazla)")
@@ -236,10 +236,11 @@ with st.sidebar:
     if forbidden_input.strip():
         for line in forbidden_input.strip().split('\n'):
             if '-' in line:
-                p1, p2 = line.split('-')
-                p1, p2 = p1.strip(), p2.strip()
-                if p1 and p2:
-                    forbidden_pairs.add(tuple(sorted((p1, p2))))
+                parts = line.split('-', 1)  # Only split on first hyphen
+                if len(parts) == 2:
+                    p1, p2 = parts[0].strip(), parts[1].strip()
+                    if p1 and p2:
+                        forbidden_pairs.add(tuple(sorted((p1, p2))))
     st.session_state.forbidden_pairs = forbidden_pairs
     
     nobet_ucreti = st.number_input("Saatlik FM Ücreti (TL)", value=252.59)
@@ -351,7 +352,7 @@ for i, t in input_data.items():
         if 1 <= d <= len(sutunlar): df_unwanted.at[i, sutunlar[d-1]] = True
 
 if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
-    is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk)
+    is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kişi_sayısı)
     
     if errors:
         st.error("🚨 Hata(lar) düzeltilmeli:")
@@ -472,7 +473,7 @@ for isim in isimler:
         if edited.at[isim, col]:
             if gun_detaylari[col]['weekend']: haftasonu += 1
             if gun_detaylari[col]['weekend'] or gun_detaylari[col]['holiday']: ozel_gun += 1
-            
+    
     saat = toplam * 24
     fm_saat = max(0, saat - zorunlu_saat)
     ucret = fm_saat * nobet_ucreti
@@ -495,8 +496,10 @@ for isim in isimler:
 for col in sutunlar:
     n = edited.index[edited[col]].tolist()
     if len(n) >= 2:
-        pair_matrix.loc[n[0], n[1]] = pair_matrix.loc[n[0], n[1]] + 1
-        pair_matrix.loc[n[1], n[0]] = pair_matrix.loc[n[1], n[0]] + 1
+        for i in range(len(n)):
+            for j in range(i+1, len(n)):
+                pair_matrix.loc[n[i], n[j]] = pair_matrix.loc[n[i], n[j]] + 1
+                pair_matrix.loc[n[j], n[i]] = pair_matrix.loc[n[j], n[i]] + 1
 
 # Convert pair_matrix to strings for clean display (self-pairs as "-")
 pair_display = pair_matrix.astype(str)
