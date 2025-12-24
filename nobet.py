@@ -597,98 +597,117 @@ else:
                         new_pref.at[person, col] = current_pref.at[person, col]
         st.session_state.pref_df = new_pref
 
-# Color legend and instructions
-st.markdown("""
-<div style="display:flex;flex-wrap:wrap;gap:20px;padding:12px;background:#f8f9fa;border-radius:8px;margin-bottom:15px;">
-    <span style="font-weight:bold;">🎨 Değerler:</span>
-    <span>⬜ <b>0</b> = Nötr</span>
-    <span>🟩 <b>1</b> = Tercih</span>
-    <span>🟨 <b>2</b> = Kaçınmak</span>
-    <span>🟥 <b>3</b> = Müsait Değil</span>
-</div>
-""", unsafe_allow_html=True)
+# Initialize paint color
+if 'paint_color' not in st.session_state:
+    st.session_state.paint_color = 0
 
-st.info("📝 Tablodaki hücrelere tıklayıp değer girin: 0=Nötr, 1=Tercih (yeşil), 2=Kaçın (sarı), 3=Müsait değil (kırmızı). Düzenleme bitince 'Nöbetleri Dağıt' butonuna basın.")
+# Color palette - click to select paint color
+st.markdown("### 🎨 Renk Seç (tıkla)")
+color_cols = st.columns(4)
+color_info = [
+    (0, "⬜ Nötr", "#ffffff", "#666"),
+    (1, "🟩 Tercih", "#c8e6c9", "#2e7d32"),
+    (2, "🟨 Kaçın", "#fff9c4", "#f57f17"),
+    (3, "🟥 Müsait Değil", "#ffcdd2", "#c62828")
+]
 
-# Create styled preference editor
-def style_pref_cell(val):
-    if val == 1:
-        return 'background-color: #c8e6c9'  # Green - preferred
-    elif val == 2:
-        return 'background-color: #fff9c4'  # Yellow - avoid
-    elif val == 3:
-        return 'background-color: #ffcdd2'  # Red - unavailable
-    return ''
+for i, (val, label, bg, border) in enumerate(color_info):
+    with color_cols[i]:
+        is_selected = st.session_state.paint_color == val
+        border_style = f"3px solid {border}" if is_selected else "1px solid #ccc"
+        if st.button(label, key=f"color_{val}", use_container_width=True):
+            st.session_state.paint_color = val
+            st.rerun()
 
-# Day range selector for preference editing
-pref_col1, pref_col2 = st.columns(2)
+selected_label = color_info[st.session_state.paint_color][1]
+st.success(f"✏️ Seçili renk: **{selected_label}** - Şimdi aşağıdaki hücrelere tıklayın!")
+
+# Day range selector
+st.markdown("---")
+pref_col1, pref_col2, pref_col3 = st.columns([2, 2, 1])
 with pref_col1:
-    pref_start = st.slider("Başlangıç Günü:", 1, gun_sayisi, 1, key="pref_start")
+    pref_start = st.slider("Başlangıç:", 1, gun_sayisi, 1, key="pref_start")
 with pref_col2:
-    pref_end = st.slider("Bitiş Günü:", 1, gun_sayisi, min(gun_sayisi, pref_start + 9), key="pref_end")
+    pref_end = st.slider("Bitiş:", 1, gun_sayisi, min(gun_sayisi, pref_start + 13), key="pref_end")
+with pref_col3:
+    if st.button("🔄 Sıfırla", use_container_width=True):
+        st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
+        st.rerun()
 
 if pref_end < pref_start:
     pref_end = pref_start
 
 # Filter columns for selected range
 pref_cols_filtered = [col for col in sutunlar if pref_start <= gun_detaylari[col]['day_num'] <= pref_end]
-pref_df_view = st.session_state.pref_df[pref_cols_filtered].copy()
 
-# Rename columns for display (show day number and weekday)
-pref_display_cols = {}
-for col in pref_cols_filtered:
-    info = gun_detaylari[col]
-    day_num = info['day_num']
-    is_we = info['weekend']
-    is_hol = info['holiday']
-    if is_hol:
-        pref_display_cols[col] = f"🚨{day_num}"
-    elif is_we:
-        pref_display_cols[col] = f"🏖️{day_num}"
-    else:
-        pref_display_cols[col] = str(day_num)
+# Color mapping
+def get_cell_style(val):
+    colors = {0: "#ffffff", 1: "#c8e6c9", 2: "#fff9c4", 3: "#ffcdd2"}
+    symbols = {0: "·", 1: "✓", 2: "~", 3: "✗"}
+    return colors.get(val, "#ffffff"), symbols.get(val, "·")
 
-pref_df_display = pref_df_view.rename(columns=pref_display_cols)
+# Header row with day numbers
+st.markdown(f"**Gün {pref_start} - {pref_end}** ({len(pref_cols_filtered)} gün)")
 
-# Show styled dataframe with editable values
-st.caption(f"Gün {pref_start} - {pref_end} arası gösteriliyor ({len(pref_cols_filtered)} gün)")
+# Create header
+header_cols = st.columns([1.5] + [1] * len(pref_cols_filtered))
+with header_cols[0]:
+    st.markdown("**İsim**")
+for i, col in enumerate(pref_cols_filtered):
+    with header_cols[i + 1]:
+        info = gun_detaylari[col]
+        day_num = info['day_num']
+        is_we = info['weekend']
+        is_hol = info['holiday']
+        if is_hol:
+            st.markdown(f"<div style='text-align:center;color:#c62828;font-weight:bold;'>{day_num}</div>", unsafe_allow_html=True)
+        elif is_we:
+            st.markdown(f"<div style='text-align:center;color:#1565c0;font-weight:bold;'>{day_num}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='text-align:center;'>{day_num}</div>", unsafe_allow_html=True)
 
-edited_pref = st.data_editor(
-    pref_df_display,
-    use_container_width=True,
-    height=min(400, len(isimler) * 40 + 50),
-    key="pref_editor"
-)
-
-# Map back to original columns and update session state
-reverse_map = {v: k for k, v in pref_display_cols.items()}
-for disp_col in edited_pref.columns:
-    orig_col = reverse_map.get(disp_col, disp_col)
-    if orig_col in st.session_state.pref_df.columns:
-        for person in isimler:
-            val = edited_pref.at[person, disp_col]
-            # Clamp to 0-3
-            val = max(0, min(3, int(val) if pd.notna(val) else 0))
-            st.session_state.pref_df.at[person, orig_col] = val
+# Grid rows for each person
+for person in isimler:
+    row_cols = st.columns([1.5] + [1] * len(pref_cols_filtered))
+    with row_cols[0]:
+        st.markdown(f"<div style='padding:8px 0;font-weight:bold;'>{person}</div>", unsafe_allow_html=True)
+    
+    for i, col in enumerate(pref_cols_filtered):
+        with row_cols[i + 1]:
+            val = st.session_state.pref_df.at[person, col]
+            bg_color, symbol = get_cell_style(val)
+            
+            # Show colored box with clickable button
+            st.markdown(f"""
+            <div style="background:{bg_color};border:1px solid #ccc;border-radius:4px;text-align:center;padding:4px;margin-bottom:2px;font-size:1.1em;">
+                {symbol}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("◉", key=f"cell_{person}_{col}", use_container_width=True):
+                st.session_state.pref_df.at[person, col] = st.session_state.paint_color
+                st.rerun()
 
 # Quick fill buttons
+st.markdown("---")
 st.markdown("**Hızlı Doldurma:**")
-qf_cols = st.columns(5)
+qf_cols = st.columns(4)
 with qf_cols[0]:
-    if st.button("🔄 Tümünü Sıfırla", use_container_width=True):
-        st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
-        st.rerun()
-with qf_cols[1]:
-    if st.button("🏖️ HS=Kaçın", use_container_width=True, help="Tüm hafta sonlarını 'Kaçınmak' olarak işaretle"):
+    if st.button("🏖️ HS → Kaçın", use_container_width=True):
         for col in sutunlar:
             if gun_detaylari[col]['weekend']:
                 st.session_state.pref_df[col] = 2
         st.rerun()
-with qf_cols[2]:
-    if st.button("🏖️ HS=Müsait Değil", use_container_width=True, help="Tüm hafta sonlarını 'Müsait Değil' olarak işaretle"):
+with qf_cols[1]:
+    if st.button("🏖️ HS → Müsait Değil", use_container_width=True):
         for col in sutunlar:
             if gun_detaylari[col]['weekend']:
                 st.session_state.pref_df[col] = 3
+        st.rerun()
+with qf_cols[2]:
+    if st.button("📅 Tüm Gün → Seçili Renk", use_container_width=True):
+        for col in pref_cols_filtered:
+            st.session_state.pref_df[col] = st.session_state.paint_color
         st.rerun()
 
 # Build algorithm inputs from pref_df
