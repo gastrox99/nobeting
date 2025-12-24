@@ -646,45 +646,54 @@ def get_cell_style(val):
     symbols = {0: "·", 1: "✓", 2: "~", 3: "✗"}
     return colors.get(val, "#ffffff"), symbols.get(val, "·")
 
-# Header row with day numbers
+# Build the grid as HTML table for clean horizontal layout
 st.markdown(f"**Gün {pref_start} - {pref_end}** ({len(pref_cols_filtered)} gün)")
 
-# Create header
-header_cols = st.columns([1.5] + [1] * len(pref_cols_filtered))
-with header_cols[0]:
-    st.markdown("**İsim**")
-for i, col in enumerate(pref_cols_filtered):
-    with header_cols[i + 1]:
-        info = gun_detaylari[col]
-        day_num = info['day_num']
-        is_we = info['weekend']
-        is_hol = info['holiday']
-        if is_hol:
-            st.markdown(f"<div style='text-align:center;color:#c62828;font-weight:bold;'>{day_num}</div>", unsafe_allow_html=True)
-        elif is_we:
-            st.markdown(f"<div style='text-align:center;color:#1565c0;font-weight:bold;'>{day_num}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div style='text-align:center;'>{day_num}</div>", unsafe_allow_html=True)
+# Create HTML table header
+header_html = "<tr><th style='text-align:left;padding:6px;border:1px solid #ddd;background:#f5f5f5;'>İsim</th>"
+for col in pref_cols_filtered:
+    info = gun_detaylari[col]
+    day_num = info['day_num']
+    is_we = info['weekend']
+    is_hol = info['holiday']
+    if is_hol:
+        header_html += f"<th style='text-align:center;padding:6px;border:1px solid #ddd;background:#ffebee;color:#c62828;'>{day_num}</th>"
+    elif is_we:
+        header_html += f"<th style='text-align:center;padding:6px;border:1px solid #ddd;background:#e3f2fd;color:#1565c0;'>{day_num}</th>"
+    else:
+        header_html += f"<th style='text-align:center;padding:6px;border:1px solid #ddd;background:#f5f5f5;'>{day_num}</th>"
+header_html += "</tr>"
 
-# Grid rows for each person
+# Create HTML table body showing current state
+body_html = ""
 for person in isimler:
-    row_cols = st.columns([1.5] + [1] * len(pref_cols_filtered))
-    with row_cols[0]:
-        st.markdown(f"<div style='padding:8px 0;font-weight:bold;'>{person}</div>", unsafe_allow_html=True)
-    
+    body_html += f"<tr><td style='padding:6px;border:1px solid #ddd;font-weight:bold;'>{person}</td>"
+    for col in pref_cols_filtered:
+        val = st.session_state.pref_df.at[person, col]
+        bg_color, symbol = get_cell_style(val)
+        body_html += f"<td style='text-align:center;padding:8px;border:1px solid #ddd;background:{bg_color};font-size:1.2em;'>{symbol}</td>"
+    body_html += "</tr>"
+
+# Display the visual table
+st.markdown(f"""
+<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">
+{header_html}
+{body_html}
+</table>
+""", unsafe_allow_html=True)
+
+# Now create clickable buttons below for each cell
+st.caption("👆 Yukarıda mevcut durumu görün. Aşağıdan hücrelere tıklayarak değiştirin:")
+
+for person in isimler:
+    cols = st.columns([2] + [1] * len(pref_cols_filtered))
+    with cols[0]:
+        st.write(f"**{person}**")
     for i, col in enumerate(pref_cols_filtered):
-        with row_cols[i + 1]:
+        with cols[i + 1]:
             val = st.session_state.pref_df.at[person, col]
             bg_color, symbol = get_cell_style(val)
-            
-            # Show colored box with clickable button
-            st.markdown(f"""
-            <div style="background:{bg_color};border:1px solid #ccc;border-radius:4px;text-align:center;padding:4px;margin-bottom:2px;font-size:1.1em;">
-                {symbol}
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button("◉", key=f"cell_{person}_{col}", use_container_width=True):
+            if st.button(symbol if symbol != "·" else "○", key=f"cell_{person}_{col}", use_container_width=True):
                 st.session_state.pref_df.at[person, col] = st.session_state.paint_color
                 st.rerun()
 
