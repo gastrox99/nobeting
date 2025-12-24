@@ -500,7 +500,8 @@ with st.sidebar:
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     st.write(f"**{s['name']}** - {s['year']}-{s['month']:02d}")
-                    st.caption(f"Güncellendi: {s['updated_at'][:10]}")
+                    updated = s['updated_at'].strftime('%Y-%m-%d') if hasattr(s['updated_at'], 'strftime') else str(s['updated_at'])[:10]
+                    st.caption(f"Güncellendi: {updated}")
                 with col2:
                     if st.button("🗑️", key=f"del_{s['name']}_{s['year']}_{s['month']}"):
                         delete_schedule(s['name'], s['year'], s['month'])
