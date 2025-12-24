@@ -646,54 +646,57 @@ def get_cell_style(val):
     symbols = {0: "·", 1: "✓", 2: "~", 3: "✗"}
     return colors.get(val, "#ffffff"), symbols.get(val, "·")
 
-# Build the grid as HTML table for clean horizontal layout
-st.markdown(f"**Gün {pref_start} - {pref_end}** ({len(pref_cols_filtered)} gün)")
+# Single horizontal editable grid
+st.markdown(f"**Gün {pref_start} - {pref_end}** ({len(pref_cols_filtered)} gün) - Hücrelere tıklayarak seçili rengi uygulayın")
 
-# Create HTML table header
-header_html = "<tr><th style='text-align:left;padding:6px;border:1px solid #ddd;background:#f5f5f5;'>İsim</th>"
-for col in pref_cols_filtered:
-    info = gun_detaylari[col]
-    day_num = info['day_num']
-    is_we = info['weekend']
-    is_hol = info['holiday']
-    if is_hol:
-        header_html += f"<th style='text-align:center;padding:6px;border:1px solid #ddd;background:#ffebee;color:#c62828;'>{day_num}</th>"
-    elif is_we:
-        header_html += f"<th style='text-align:center;padding:6px;border:1px solid #ddd;background:#e3f2fd;color:#1565c0;'>{day_num}</th>"
-    else:
-        header_html += f"<th style='text-align:center;padding:6px;border:1px solid #ddd;background:#f5f5f5;'>{day_num}</th>"
-header_html += "</tr>"
+# Inject CSS to style buttons based on their data attribute
+css_styles = """
+<style>
+.pref-grid { display: grid; gap: 2px; margin: 10px 0; }
+.pref-cell { 
+    padding: 8px 4px; 
+    text-align: center; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-weight: bold;
+    border: 1px solid #ccc;
+}
+.pref-header { background: #f0f0f0; font-weight: bold; padding: 6px; text-align: center; }
+.pref-name { background: #f8f8f8; font-weight: bold; text-align: left; padding: 8px; }
+.weekend-header { background: #e3f2fd; color: #1565c0; }
+.holiday-header { background: #ffebee; color: #c62828; }
+</style>
+"""
+st.markdown(css_styles, unsafe_allow_html=True)
 
-# Create HTML table body showing current state
-body_html = ""
-for person in isimler:
-    body_html += f"<tr><td style='padding:6px;border:1px solid #ddd;font-weight:bold;'>{person}</td>"
-    for col in pref_cols_filtered:
-        val = st.session_state.pref_df.at[person, col]
-        bg_color, symbol = get_cell_style(val)
-        body_html += f"<td style='text-align:center;padding:8px;border:1px solid #ddd;background:{bg_color};font-size:1.2em;'>{symbol}</td>"
-    body_html += "</tr>"
+# Header row with day numbers
+header_cols = st.columns([2] + [1] * len(pref_cols_filtered))
+with header_cols[0]:
+    st.markdown("**İsim**")
+for i, col in enumerate(pref_cols_filtered):
+    with header_cols[i + 1]:
+        info = gun_detaylari[col]
+        day_num = info['day_num']
+        is_we = info['weekend']
+        is_hol = info['holiday']
+        style = "color:#c62828;font-weight:bold;" if is_hol else ("color:#1565c0;font-weight:bold;" if is_we else "")
+        st.markdown(f"<div style='text-align:center;{style}'>{day_num}</div>", unsafe_allow_html=True)
 
-# Display the visual table
-st.markdown(f"""
-<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">
-{header_html}
-{body_html}
-</table>
-""", unsafe_allow_html=True)
-
-# Now create clickable buttons below for each cell
-st.caption("👆 Yukarıda mevcut durumu görün. Aşağıdan hücrelere tıklayarak değiştirin:")
-
+# Data rows - each cell is a colored clickable button
 for person in isimler:
     cols = st.columns([2] + [1] * len(pref_cols_filtered))
     with cols[0]:
-        st.write(f"**{person}**")
+        st.markdown(f"<div style='padding:5px;font-weight:bold;'>{person}</div>", unsafe_allow_html=True)
+    
     for i, col in enumerate(pref_cols_filtered):
         with cols[i + 1]:
             val = st.session_state.pref_df.at[person, col]
             bg_color, symbol = get_cell_style(val)
-            if st.button(symbol if symbol != "·" else "○", key=f"cell_{person}_{col}", use_container_width=True):
+            
+            # Create colored button using markdown + button combo
+            st.markdown(f"<div style='background:{bg_color};border-radius:4px;padding:2px;margin:-5px 0;'></div>", unsafe_allow_html=True)
+            btn_label = "🟩" if val == 1 else ("🟨" if val == 2 else ("🟥" if val == 3 else "⬜"))
+            if st.button(btn_label, key=f"cell_{person}_{col}", use_container_width=True):
                 st.session_state.pref_df.at[person, col] = st.session_state.paint_color
                 st.rerun()
 
