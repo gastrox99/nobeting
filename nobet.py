@@ -105,7 +105,7 @@ def convert_df_to_png(df):
     return buf.getvalue()
 
 # --- ANA ALGORİTMA (V98: BEST-OF-N SIMULATION) ---
-def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk):
+def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, forbidden_pairs=None):
     
     best_schedule = None
     best_score = float('inf') # Daha düşük puan daha iyi (Ceza puanı mantığı)
@@ -154,18 +154,34 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
             adaylar.sort(key=lambda x: get_decision_score(x, is_sp))
             
             if len(adaylar) >= kişi_sayısı:
-                secilenler = adaylar[:kişi_sayısı]
+                # Check for forbidden pairs and skip if found
+                secilenler = []
+                for p in adaylar:
+                    valid = True
+                    if forbidden_pairs:
+                        for selected in secilenler:
+                            pair = tuple(sorted((p, selected)))
+                            if pair in forbidden_pairs:
+                                valid = False
+                                break
+                    if valid:
+                        secilenler.append(p)
+                        if len(secilenler) >= kişi_sayısı:
+                            break
                 
-                # Pair history tracking for main 2
-                if kişi_sayısı >= 2:
-                    pair = tuple(sorted((secilenler[0], secilenler[1])))
-                    pair_history[pair] = pair_history.get(pair, 0) + 1
-                
-                for k in secilenler:
-                    temp_schedule.at[k, col] = True
-                    stat_total[k] += 1
-                    if is_sp: stat_special[k] += 1
-                    last_shift_day[k] = gun_no
+                if len(secilenler) >= kişi_sayısı:
+                    # Pair history tracking for main 2
+                    if kişi_sayısı >= 2:
+                        pair = tuple(sorted((secilenler[0], secilenler[1])))
+                        pair_history[pair] = pair_history.get(pair, 0) + 1
+                    
+                    for k in secilenler:
+                        temp_schedule.at[k, col] = True
+                        stat_total[k] += 1
+                        if is_sp: stat_special[k] += 1
+                        last_shift_day[k] = gun_no
+                else:
+                    empty_shifts += 1
             else:
                 empty_shifts += 1 # Ceza: Yetersiz aday
 
@@ -203,6 +219,29 @@ with st.sidebar:
     tatil_gunleri = [int(x) for x in st.text_input("Tatiller:", "").split(",") if x.strip().isdigit()]
     min_bosluk = st.slider("Dinlenme", 0, 3, 1)
     kişi_sayısı = st.slider("Nöbet Başına Kişi:", 1, 5, 2)
+    
+    # --- FORBIDDEN PAIRS ---
+    st.markdown("🚫 **Birlikte Çalışamayan Kişiler**")
+    forbidden_input = st.text_area(
+        "Kimin kimin ile çalışamayacağını yazın:",
+        value=st.session_state.get("forbidden_pairs_text", ""),
+        height=80,
+        placeholder="Örn: Ali-Ayşe, Mehmet-Fatma\n(virgülü ve tire kullanın)",
+        key="forbidden_pairs_input"
+    )
+    st.session_state.forbidden_pairs_text = forbidden_input
+    
+    # Parse forbidden pairs
+    forbidden_pairs = set()
+    if forbidden_input.strip():
+        for line in forbidden_input.strip().split('\n'):
+            if '-' in line:
+                p1, p2 = line.split('-')
+                p1, p2 = p1.strip(), p2.strip()
+                if p1 and p2:
+                    forbidden_pairs.add(tuple(sorted((p1, p2))))
+    st.session_state.forbidden_pairs = forbidden_pairs
+    
     nobet_ucreti = st.number_input("Saatlik FM Ücreti (TL)", value=252.59)
     
     # --- SAVE/LOAD ---
@@ -290,6 +329,8 @@ if 'cached_rows_liste' not in st.session_state: st.session_state.cached_rows_lis
 if 'cached_ayb_counts' not in st.session_state: st.session_state.cached_ayb_counts = None
 if 'last_edited_hash' not in st.session_state: st.session_state.last_edited_hash = None
 if 'should_regenerate_assignments' not in st.session_state: st.session_state.should_regenerate_assignments = False
+if 'forbidden_pairs_text' not in st.session_state: st.session_state.forbidden_pairs_text = ""
+if 'forbidden_pairs' not in st.session_state: st.session_state.forbidden_pairs = set()
 for i in isimler: 
     if i not in st.session_state.inputs: st.session_state.inputs[i] = ""
 
@@ -322,7 +363,7 @@ if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
             for warn in warnings:
                 st.warning(warn)
         
-        run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk)
+        run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk, st.session_state.forbidden_pairs)
         st.session_state.should_regenerate_assignments = True
         st.rerun()
 
@@ -357,6 +398,7 @@ edited = st.session_state.schedule_bool.copy()
 # --- HATA KONTROL ---
 violations = []
 conflict_msg = []
+forbidden_msg = []
 max_person_msg = []
 min_person_msg = []
 last_shift_check = {i: -10 for i in isimler}
@@ -377,12 +419,21 @@ for col in sutunlar:
         if (gun_no - last_shift_check[k]) <= min_bosluk:
             violations.append(f"⚠️ **{k}**: {gun_no}. gün dinlenme kuralına uymuyor.")
         last_shift_check[k] = gun_no
+    
+    # Check for forbidden pairs
+    if st.session_state.forbidden_pairs and len(nobetciler) >= 2:
+        for i in range(len(nobetciler)):
+            for j in range(i+1, len(nobetciler)):
+                pair = tuple(sorted((nobetciler[i], nobetciler[j])))
+                if pair in st.session_state.forbidden_pairs:
+                    forbidden_msg.append(f"🚫 **{gun_no}. Gün**: {nobetciler[i]} ve {nobetciler[j]} birlikte çalışamaz!")
 
-if max_person_msg or min_person_msg or conflict_msg or violations:
+if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violations:
     with st.expander("🚨 HATA RAPORU (Tıklayıp Açın)", expanded=True):
         for m in max_person_msg: st.error(m)
         for m in min_person_msg: st.warning(m)
         for c in conflict_msg: st.error(c)
+        for f in forbidden_msg: st.error(f)
         for v in violations: st.info(v)
 else:
     st.success(f"✅ Kurallar uygun (Her gün {kişi_sayısı} kişi, çakışma yok).")
