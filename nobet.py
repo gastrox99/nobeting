@@ -11,7 +11,6 @@ import time
 import json
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
-from solver import solve_schedule, SolverResult
 
 # Excel export
 try:
@@ -702,19 +701,16 @@ with mode_cols[1]:
         st.info("Tıklayarak nöbet ekle/kaldır ✓")
 
 # Quick actions row
-action_cols = st.columns(4)
+action_cols = st.columns(3)
 with action_cols[0]:
-    if st.button("⚡ Simülasyon", use_container_width=True):
+    if st.button("⚡ Simülasyon", type="primary", use_container_width=True):
         st.session_state.run_simulation = True
 with action_cols[1]:
-    if st.button("🧠 Optimizasyon", type="primary", use_container_width=True):
-        st.session_state.run_optimization = True
-with action_cols[2]:
     if st.button("🔄 Sıfırla", use_container_width=True):
         st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
         st.rerun()
-with action_cols[3]:
+with action_cols[2]:
     if st.button("↩️ Geri", use_container_width=True, disabled=len(st.session_state.undo_history)==0):
         if st.session_state.undo_history:
             st.session_state.redo_history.append(st.session_state.schedule_bool.copy())
@@ -803,11 +799,9 @@ for person in isimler:
         elif status == 2:
             df_preferred.at[person, col] = 2
 
-# Handle simulation/optimization triggers
+# Handle simulation trigger
 sim_clicked = st.session_state.get('run_simulation', False)
-opt_clicked = st.session_state.get('run_optimization', False)
 st.session_state.run_simulation = False
-st.session_state.run_optimization = False
 
 if sim_clicked:
     is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kişi_sayısı)
@@ -832,84 +826,6 @@ if sim_clicked:
         )
         st.session_state.should_regenerate_assignments = True
         st.rerun()
-
-if opt_clicked:
-    is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kişi_sayısı)
-    
-    if errors:
-        st.error("🚨 Hata(lar) düzeltilmeli:")
-        for err in errors:
-            st.error(err)
-    else:
-        if warnings:
-            st.warning("⚠️ Uyarı(lar):")
-            for warn in warnings:
-                st.warning(warn)
-        
-        limits_dict = st.session_state.get('person_limits', {})
-        limits_tuples = {}
-        for name, lim in limits_dict.items():
-            if isinstance(lim, dict):
-                limits_tuples[name] = (lim.get('min', 0), lim.get('max', 999))
-            elif isinstance(lim, tuple):
-                limits_tuples[name] = lim
-        
-        pref_for_solver = df_preferred.copy()
-        for person in pref_for_solver.index:
-            for col in pref_for_solver.columns:
-                val = pref_for_solver.at[person, col]
-                if val == 1:
-                    pref_for_solver.at[person, col] = 10
-                elif val == 2:
-                    pref_for_solver.at[person, col] = -10
-                else:
-                    pref_for_solver.at[person, col] = 0
-        
-        with st.spinner("🧠 OR-Tools optimizasyonu çalışıyor... (max 30s)"):
-            result = solve_schedule(
-                isimler=isimler,
-                sutunlar=sutunlar,
-                gun_detaylari=gun_detaylari,
-                kisi_sayisi=kişi_sayısı,
-                min_bosluk=min_bosluk,
-                df_unwanted=df_unwanted,
-                df_preferred=pref_for_solver,
-                forbidden_pairs=st.session_state.forbidden_pairs,
-                person_limits=limits_tuples,
-                rol_isimleri=st.session_state.get('rol_isimleri', ['AYB', 'GYB', 'Rol3', 'Rol4', 'Rol5'][:kişi_sayısı]),
-                timeout_seconds=30
-            )
-        
-        st.markdown(result.message)
-        
-        if result.success:
-            save_undo_state(st.session_state.schedule_bool)
-            
-            new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
-            for day in sutunlar:
-                if day in result.schedule.columns:
-                    assigned = result.schedule[day].tolist()
-                    for person in assigned:
-                        if person in isimler:
-                            new_schedule.at[person, day] = True
-            
-            st.session_state.schedule_bool = new_schedule
-            st.session_state.should_regenerate_assignments = True
-            
-            if 'stats' in result.stats:
-                with st.expander("📊 Optimizasyon Detayları"):
-                    st.write(f"**Çözüm tipi:** {result.stats.get('status', 'N/A')}")
-                    st.write(f"**Süre:** {result.solve_time:.2f}s")
-                    st.write(f"**Dağılım farkı:** {result.stats.get('spread', 'N/A')}")
-                    st.write(f"**Standart sapma:** {result.stats.get('std_dev', 0):.2f}")
-                    if 'shift_counts' in result.stats:
-                        st.write("**Kişi başı nöbet:**")
-                        for person, count in result.stats['shift_counts'].items():
-                            st.write(f"  - {person}: {count}")
-            
-            st.rerun()
-        else:
-            st.warning("💡 Simülasyon yöntemini deneyin veya kısıtları gevşetin.")
 
 # Auto-save functionality
 elapsed = time.time() - st.session_state.last_auto_save

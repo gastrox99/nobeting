@@ -3,13 +3,7 @@ pandas
 numpy
 tabulate
 matplotlib
-matplotlib
-numpy
-pandas
-streamlit
-tabulate
 psycopg2-binary
 openpyxl
 xlsxwriter
 streamlit-aggrid
-ortools
