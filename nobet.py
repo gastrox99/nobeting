@@ -1127,7 +1127,6 @@ with col_right:
     
     df_pref_stats = pd.DataFrame(pref_stats).set_index("İsim")
     st.dataframe(df_pref_stats, use_container_width=True)
-    st.caption("🟢 İstek: Yeşil günlerde nöbet alma %, 🟡 Kaçınma: Sarı günlerden kaçınma %, 🔴 İstenmeyen: Kırmızı engel başarısı %")
     
     st.divider()
 
