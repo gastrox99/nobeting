@@ -10,6 +10,7 @@ import numpy as np
 import time
 import json
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 # Excel export
 try:
@@ -602,125 +603,125 @@ if 'paint_color' not in st.session_state:
     st.session_state.paint_color = 0
 
 # Color palette - click to select paint color
-st.markdown("### 🎨 Renk Seç (tıkla)")
+st.markdown("### 🎨 Renk Seç (tıkla), sonra tabloda hücrelere tıklayarak boya")
 color_cols = st.columns(4)
 color_info = [
-    (0, "⬜ Nötr", "#ffffff", "#666"),
-    (1, "🟩 Tercih", "#c8e6c9", "#2e7d32"),
-    (2, "🟨 Kaçın", "#fff9c4", "#f57f17"),
-    (3, "🟥 Müsait Değil", "#ffcdd2", "#c62828")
+    (0, "⬜ Nötr", "#ffffff"),
+    (1, "🟩 Tercih", "#c8e6c9"),
+    (2, "🟨 Kaçın", "#fff9c4"),
+    (3, "🟥 Müsait Değil", "#ffcdd2")
 ]
 
-for i, (val, label, bg, border) in enumerate(color_info):
+for i, (val, label, bg) in enumerate(color_info):
     with color_cols[i]:
-        is_selected = st.session_state.paint_color == val
-        border_style = f"3px solid {border}" if is_selected else "1px solid #ccc"
-        if st.button(label, key=f"color_{val}", use_container_width=True):
+        btn_type = "primary" if st.session_state.paint_color == val else "secondary"
+        if st.button(label, key=f"color_{val}", use_container_width=True, type=btn_type):
             st.session_state.paint_color = val
             st.rerun()
 
 selected_label = color_info[st.session_state.paint_color][1]
-st.success(f"✏️ Seçili renk: **{selected_label}** - Şimdi aşağıdaki hücrelere tıklayın!")
-
-# Day range selector
-st.markdown("---")
-pref_col1, pref_col2, pref_col3 = st.columns([2, 2, 1])
-with pref_col1:
-    pref_start = st.slider("Başlangıç:", 1, gun_sayisi, 1, key="pref_start")
-with pref_col2:
-    pref_end = st.slider("Bitiş:", 1, gun_sayisi, min(gun_sayisi, pref_start + 13), key="pref_end")
-with pref_col3:
-    if st.button("🔄 Sıfırla", use_container_width=True):
-        st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
-        st.rerun()
-
-if pref_end < pref_start:
-    pref_end = pref_start
-
-# Filter columns for selected range
-pref_cols_filtered = [col for col in sutunlar if pref_start <= gun_detaylari[col]['day_num'] <= pref_end]
-
-# Color mapping
-def get_cell_style(val):
-    colors = {0: "#ffffff", 1: "#c8e6c9", 2: "#fff9c4", 3: "#ffcdd2"}
-    symbols = {0: "·", 1: "✓", 2: "~", 3: "✗"}
-    return colors.get(val, "#ffffff"), symbols.get(val, "·")
-
-# Single horizontal editable grid
-st.markdown(f"**Gün {pref_start} - {pref_end}** ({len(pref_cols_filtered)} gün) - Hücrelere tıklayarak seçili rengi uygulayın")
-
-# Inject CSS to style buttons based on their data attribute
-css_styles = """
-<style>
-.pref-grid { display: grid; gap: 2px; margin: 10px 0; }
-.pref-cell { 
-    padding: 8px 4px; 
-    text-align: center; 
-    border-radius: 4px; 
-    cursor: pointer; 
-    font-weight: bold;
-    border: 1px solid #ccc;
-}
-.pref-header { background: #f0f0f0; font-weight: bold; padding: 6px; text-align: center; }
-.pref-name { background: #f8f8f8; font-weight: bold; text-align: left; padding: 8px; }
-.weekend-header { background: #e3f2fd; color: #1565c0; }
-.holiday-header { background: #ffebee; color: #c62828; }
-</style>
-"""
-st.markdown(css_styles, unsafe_allow_html=True)
-
-# Header row with day numbers
-header_cols = st.columns([2] + [1] * len(pref_cols_filtered))
-with header_cols[0]:
-    st.markdown("**İsim**")
-for i, col in enumerate(pref_cols_filtered):
-    with header_cols[i + 1]:
-        info = gun_detaylari[col]
-        day_num = info['day_num']
-        is_we = info['weekend']
-        is_hol = info['holiday']
-        style = "color:#c62828;font-weight:bold;" if is_hol else ("color:#1565c0;font-weight:bold;" if is_we else "")
-        st.markdown(f"<div style='text-align:center;{style}'>{day_num}</div>", unsafe_allow_html=True)
-
-# Data rows - each cell is a colored clickable button
-for person in isimler:
-    cols = st.columns([2] + [1] * len(pref_cols_filtered))
-    with cols[0]:
-        st.markdown(f"<div style='padding:5px;font-weight:bold;'>{person}</div>", unsafe_allow_html=True)
-    
-    for i, col in enumerate(pref_cols_filtered):
-        with cols[i + 1]:
-            val = st.session_state.pref_df.at[person, col]
-            bg_color, symbol = get_cell_style(val)
-            
-            # Create colored button using markdown + button combo
-            st.markdown(f"<div style='background:{bg_color};border-radius:4px;padding:2px;margin:-5px 0;'></div>", unsafe_allow_html=True)
-            btn_label = "🟩" if val == 1 else ("🟨" if val == 2 else ("🟥" if val == 3 else "⬜"))
-            if st.button(btn_label, key=f"cell_{person}_{col}", use_container_width=True):
-                st.session_state.pref_df.at[person, col] = st.session_state.paint_color
-                st.rerun()
+st.info(f"✏️ Seçili: **{selected_label}** - Tablodaki hücrelere çift tıklayıp 0-3 arası değer girin veya direkt düzenleyin")
 
 # Quick fill buttons
-st.markdown("---")
-st.markdown("**Hızlı Doldurma:**")
 qf_cols = st.columns(4)
 with qf_cols[0]:
+    if st.button("🔄 Tümünü Sıfırla", use_container_width=True):
+        st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
+        st.rerun()
+with qf_cols[1]:
     if st.button("🏖️ HS → Kaçın", use_container_width=True):
         for col in sutunlar:
             if gun_detaylari[col]['weekend']:
                 st.session_state.pref_df[col] = 2
         st.rerun()
-with qf_cols[1]:
+with qf_cols[2]:
     if st.button("🏖️ HS → Müsait Değil", use_container_width=True):
         for col in sutunlar:
             if gun_detaylari[col]['weekend']:
                 st.session_state.pref_df[col] = 3
         st.rerun()
-with qf_cols[2]:
-    if st.button("📅 Tüm Gün → Seçili Renk", use_container_width=True):
-        for col in pref_cols_filtered:
-            st.session_state.pref_df[col] = st.session_state.paint_color
+with qf_cols[3]:
+    if st.button(f"📅 Tümü → {selected_label}", use_container_width=True):
+        st.session_state.pref_df[:] = st.session_state.paint_color
         st.rerun()
+
+# Prepare DataFrame for AgGrid (names as column, days as rows for horizontal layout)
+# Actually we want names on rows, so we transpose display
+grid_df = st.session_state.pref_df.copy()
+grid_df.insert(0, 'İsim', grid_df.index)
+grid_df = grid_df.reset_index(drop=True)
+
+# Rename columns to show just day numbers
+col_rename = {'İsim': 'İsim'}
+for col in sutunlar:
+    day_num = gun_detaylari[col]['day_num']
+    is_we = gun_detaylari[col]['weekend']
+    is_hol = gun_detaylari[col]['holiday']
+    if is_hol:
+        col_rename[col] = f"🚨{day_num}"
+    elif is_we:
+        col_rename[col] = f"🏖{day_num}"
+    else:
+        col_rename[col] = str(day_num)
+
+grid_df = grid_df.rename(columns=col_rename)
+
+# Build AgGrid options
+gb = GridOptionsBuilder.from_dataframe(grid_df)
+gb.configure_default_column(editable=True, minWidth=40, maxWidth=60)
+gb.configure_column('İsim', editable=False, pinned='left', minWidth=100, maxWidth=150)
+
+# Cell style based on value (0-3)
+cell_style_jscode = JsCode("""
+function(params) {
+    if (params.colDef.field === 'İsim') return {};
+    var val = params.value;
+    if (val === 1) return {'backgroundColor': '#c8e6c9'};
+    if (val === 2) return {'backgroundColor': '#fff9c4'};
+    if (val === 3) return {'backgroundColor': '#ffcdd2'};
+    return {'backgroundColor': '#ffffff'};
+}
+""")
+
+# Apply cell style to all data columns
+for col in grid_df.columns:
+    if col != 'İsim':
+        gb.configure_column(col, cellStyle=cell_style_jscode)
+
+grid_options = gb.build()
+grid_options['rowHeight'] = 35
+
+# Display AgGrid
+st.markdown("**📅 Tercih Tablosu** (0=Nötr, 1=Tercih, 2=Kaçın, 3=Müsait Değil)")
+grid_response = AgGrid(
+    grid_df,
+    gridOptions=grid_options,
+    update_mode=GridUpdateMode.VALUE_CHANGED,
+    fit_columns_on_grid_load=True,
+    height=min(400, len(isimler) * 40 + 60),
+    allow_unsafe_jscode=True,
+    theme='streamlit'
+)
+
+# Update session state from grid edits
+if grid_response['data'] is not None:
+    updated_df = pd.DataFrame(grid_response['data'])
+    # Map back to original column names and update pref_df
+    reverse_rename = {v: k for k, v in col_rename.items()}
+    for disp_col in updated_df.columns:
+        if disp_col == 'İsim':
+            continue
+        orig_col = reverse_rename.get(disp_col, disp_col)
+        if orig_col in st.session_state.pref_df.columns:
+            for idx, row in updated_df.iterrows():
+                person = row['İsim']
+                if person in st.session_state.pref_df.index:
+                    val = row[disp_col]
+                    try:
+                        val = max(0, min(3, int(val)))
+                    except:
+                        val = 0
+                    st.session_state.pref_df.at[person, orig_col] = val
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
