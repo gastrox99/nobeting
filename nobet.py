@@ -1114,15 +1114,15 @@ with col_right:
                 if not is_assigned:
                     red_blocked += 1
         
-        green_pct = round(green_assigned / green_total * 100) if green_total > 0 else "-"
-        yellow_pct = round(yellow_avoided / yellow_total * 100) if yellow_total > 0 else "-"
-        red_pct = round(red_blocked / red_total * 100) if red_total > 0 else "-"
+        green_pct = f"{round(green_assigned / green_total * 100)}%" if green_total > 0 else "-"
+        yellow_pct = f"{round(yellow_avoided / yellow_total * 100)}%" if yellow_total > 0 else "-"
+        red_pct = f"{round(red_blocked / red_total * 100)}%" if red_total > 0 else "-"
         
         pref_stats.append({
             "İsim": isim,
-            "🟢 İstek": green_pct,
-            "🟡 Kaçınma": yellow_pct,
-            "🔴 İstenmeyen": red_pct
+            "🟢 İstek": str(green_pct),
+            "🟡 Kaçınma": str(yellow_pct),
+            "🔴 İstenmeyen": str(red_pct)
         })
     
     df_pref_stats = pd.DataFrame(pref_stats).set_index("İsim")
