@@ -362,83 +362,89 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
     st.session_state.schedule_bool = best_schedule
     st.toast(f"100 Simülasyon yapıldı. En adil sonuç seçildi!", icon="🧠")
 
-# --- AYARLAR ---
-with st.sidebar:
-    st.header("⚙️ Ayarlar")
-    isimler = [x.strip() for x in st.text_area("Ekip:", "").split(",") if x.strip()]
-    st.divider()
-    yil = st.number_input("Yıl", 2024, 2030, 2025)
-    ay = st.selectbox("Ay", range(1, 13), index=0)
-    gun_sayisi = calendar.monthrange(yil, ay)[1]
-    tatil_gunleri = [int(x) for x in st.text_input("Tatiller:", "").split(",") if x.strip().isdigit()]
-    min_bosluk = st.slider("Dinlenme", 0, 3, 1)
-    kişi_sayısı = st.slider("Nöbet Başına Kişi:", 1, 5, 2)
+# --- AYARLAR (Ana Sayfada Açılır Panel) ---
+# Check if team exists to determine if settings should be expanded
+prev_isimler = st.session_state.get('isimler_cache', [])
+settings_expanded = len(prev_isimler) == 0
+
+with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
+    set_col1, set_col2, set_col3 = st.columns([2, 1, 1])
     
-    # --- CUSTOM ROLE NAMES ---
-    default_roles = ", ".join([f"Rol{i+1}" for i in range(kişi_sayısı)])
-    role_names_input = st.text_input(
-        "Görev İsimleri:",
-        value=st.session_state.get("role_names_text", ""),
-        placeholder=f"Örn: AYB, GYB veya Nöbetçi1, Nöbetçi2"
-    )
-    st.session_state.role_names_text = role_names_input
-    
-    # Parse role names
-    if role_names_input.strip():
-        role_names = [r.strip() for r in role_names_input.split(",") if r.strip()]
-    else:
-        role_names = []
-    
-    # Ensure we have enough role names (pad with defaults if needed)
-    while len(role_names) < kişi_sayısı:
-        role_names.append(f"Kişi{len(role_names)+1}")
-    role_names = role_names[:kişi_sayısı]  # Trim excess
-    st.session_state.rol_isimleri = role_names  # Store for solver
-    
-    # --- FORBIDDEN PAIRS ---
-    st.markdown("🚫 **Birlikte Çalışamayan Kişiler**")
-    forbidden_input = st.text_area(
-        "Kimin kimin ile çalışamayacağını yazın:",
-        value=st.session_state.get("forbidden_pairs_text", ""),
-        height=80,
-        placeholder="Örn: Ali-Ayşe, Mehmet-Fatma\n(virgülü ve tire kullanın)",
-        key="forbidden_pairs_input"
-    )
-    st.session_state.forbidden_pairs_text = forbidden_input
-    
-    # Parse forbidden pairs (supports both comma and newline separators)
-    forbidden_pairs = set()
-    if forbidden_input.strip():
-        # First split by newlines, then by commas
-        all_pairs = []
-        for line in forbidden_input.strip().split('\n'):
-            all_pairs.extend(line.split(','))
-        
-        for pair_str in all_pairs:
-            pair_str = pair_str.strip()
-            if '-' in pair_str:
-                parts = pair_str.split('-', 1)  # Only split on first hyphen
-                if len(parts) == 2:
-                    p1, p2 = parts[0].strip(), parts[1].strip()
-                    if p1 and p2:
-                        forbidden_pairs.add(tuple(sorted((p1, p2))))
-    st.session_state.forbidden_pairs = forbidden_pairs
-    
-    # --- MIN/MAX LIMITS ---
-    st.divider()
-    st.markdown("📊 **Kişisel Limitler**")
-    with st.expander("Min/Max Nöbet Sayısı Ayarla"):
-        if 'person_limits' not in st.session_state:
-            st.session_state.person_limits = {}
-        
-        limits_text = st.text_area(
-            "Her satıra: İsim:min-max",
-            value=st.session_state.get("limits_text", ""),
-            height=80,
-            placeholder="Örn:\nAli:5-10\nAyşe:3-8",
-            key="limits_input"
+    with set_col1:
+        isimler_input = st.text_area(
+            "👥 Ekip (virgülle ayırın):",
+            value=st.session_state.get("isimler_text", ""),
+            height=100,
+            placeholder="Ali, Ayşe, Mehmet, Fatma"
         )
-        st.session_state.limits_text = limits_text
+        st.session_state.isimler_text = isimler_input
+        isimler = [x.strip() for x in isimler_input.split(",") if x.strip()]
+        st.session_state.isimler_cache = isimler
+    
+    with set_col2:
+        yil = st.number_input("📅 Yıl", 2024, 2030, 2025)
+        ay = st.selectbox("📆 Ay", range(1, 13), index=0)
+        gun_sayisi = calendar.monthrange(yil, ay)[1]
+        kişi_sayısı = st.slider("👤 Nöbet Başına Kişi:", 1, 5, 2)
+    
+    with set_col3:
+        min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, 1)
+        tatil_gunleri = [int(x) for x in st.text_input("🎉 Tatiller:", placeholder="1,2,23").split(",") if x.strip().isdigit()]
+        nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", value=252.59)
+    
+    # Advanced settings in sub-expander
+    with st.expander("🔧 Gelişmiş Ayarlar"):
+        adv_col1, adv_col2 = st.columns(2)
+        
+        with adv_col1:
+            role_names_input = st.text_input(
+                "Görev İsimleri:",
+                value=st.session_state.get("role_names_text", ""),
+                placeholder=f"Örn: AYB, GYB"
+            )
+            st.session_state.role_names_text = role_names_input
+            
+            if role_names_input.strip():
+                role_names = [r.strip() for r in role_names_input.split(",") if r.strip()]
+            else:
+                role_names = []
+            while len(role_names) < kişi_sayısı:
+                role_names.append(f"Kişi{len(role_names)+1}")
+            role_names = role_names[:kişi_sayısı]
+            st.session_state.rol_isimleri = role_names
+            
+            forbidden_input = st.text_area(
+                "🚫 Birlikte Çalışamayan:",
+                value=st.session_state.get("forbidden_pairs_text", ""),
+                height=60,
+                placeholder="Ali-Ayşe, Mehmet-Fatma"
+            )
+            st.session_state.forbidden_pairs_text = forbidden_input
+        
+        with adv_col2:
+            limits_text = st.text_area(
+                "📊 Kişisel Limitler (İsim:min-max):",
+                value=st.session_state.get("limits_text", ""),
+                height=60,
+                placeholder="Ali:5-10\nAyşe:3-8"
+            )
+            st.session_state.limits_text = limits_text
+        
+        # Parse forbidden pairs
+        forbidden_pairs = set()
+        if forbidden_input.strip():
+            all_pairs = []
+            for line in forbidden_input.strip().split('\n'):
+                all_pairs.extend(line.split(','))
+            for pair_str in all_pairs:
+                pair_str = pair_str.strip()
+                if '-' in pair_str:
+                    parts = pair_str.split('-', 1)
+                    if len(parts) == 2:
+                        p1, p2 = parts[0].strip(), parts[1].strip()
+                        if p1 and p2:
+                            forbidden_pairs.add(tuple(sorted((p1, p2))))
+        st.session_state.forbidden_pairs = forbidden_pairs
         
         # Parse limits
         person_limits = {}
@@ -454,11 +460,6 @@ with st.sidebar:
                         except ValueError:
                             pass
         st.session_state.person_limits = person_limits
-        
-        if person_limits:
-            st.caption(f"Aktif limitler: {len(person_limits)} kişi")
-    
-    nobet_ucreti = st.number_input("Saatlik FM Ücreti (TL)", value=252.59)
     
     # --- SAVE/LOAD ---
     st.divider()
