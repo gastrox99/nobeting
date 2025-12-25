@@ -25,6 +25,69 @@ init_db()
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Adil Nöbet v98 (AI Simulation)", layout="wide")
+
+# --- GLOBAL RESPONSIVE CSS ---
+st.markdown("""
+<style>
+/* Schedule grid wrapper - horizontal scroll on mobile */
+.schedule-grid-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 8px;
+}
+
+@media (max-width: 768px) {
+    /* Settings panel columns - stack vertically */
+    [data-testid="stExpander"] [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+    }
+    [data-testid="stExpander"] [data-testid="column"] {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+    }
+    
+    /* Grid wrapper - enable scroll */
+    .schedule-grid-wrapper {
+        max-width: 100vw;
+        overflow-x: scroll !important;
+    }
+    .schedule-grid-wrapper [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        min-width: max-content;
+    }
+    .schedule-grid-wrapper [data-testid="column"] {
+        flex-shrink: 0 !important;
+        min-width: 32px !important;
+    }
+    
+    /* Make buttons smaller on mobile */
+    .stButton > button {
+        padding: 2px 4px !important;
+        min-height: 24px !important;
+        font-size: 9px !important;
+    }
+    
+    /* Reduce text sizes */
+    h1 { font-size: 1.4rem !important; }
+    h2 { font-size: 1.1rem !important; }
+    h3 { font-size: 0.95rem !important; }
+    
+    /* Make expander title smaller */
+    [data-testid="stExpander"] summary {
+        font-size: 13px !important;
+    }
+}
+
+/* Tablet adjustments */
+@media (max-width: 1024px) and (min-width: 769px) {
+    [data-testid="stExpander"] [data-testid="column"] {
+        flex: 1 1 45% !important;
+        min-width: 45% !important;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("🤝 Nöbet Yönetimi")
 
 # --- YARDIMCI FONKSİYONLAR ---
@@ -658,13 +721,16 @@ with action_cols[3]:
             st.session_state.schedule_bool = st.session_state.undo_history.pop()
             st.rerun()
 
-# Compact CSS for smaller buttons
+# Compact CSS for grid
 st.markdown("""
 <style>
 div[data-testid="column"] { padding: 0 1px !important; }
 .stButton > button { padding: 1px 3px !important; min-height: 26px !important; font-size: 11px !important; }
 </style>
 """, unsafe_allow_html=True)
+
+# Grid wrapper with horizontal scroll for mobile
+st.markdown('<div class="schedule-grid-wrapper">', unsafe_allow_html=True)
 
 # Full month grid - header row
 header_cols = st.columns([2] + [1] * len(sutunlar))
@@ -718,6 +784,10 @@ for person in isimler:
                     current = st.session_state.schedule_bool.at[person, col]
                     st.session_state.schedule_bool.at[person, col] = not current
                 st.rerun()
+
+# Close grid wrapper
+st.markdown('</div>', unsafe_allow_html=True)
+st.caption("📱 Mobilde yana kaydırın →")
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
