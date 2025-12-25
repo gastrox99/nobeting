@@ -637,7 +637,7 @@ with mode_cols[1]:
         st.info("Tıklayarak nöbet ekle/kaldır ✓")
 
 # Quick actions row
-action_cols = st.columns(5)
+action_cols = st.columns(4)
 with action_cols[0]:
     if st.button("⚡ Simülasyon", use_container_width=True):
         st.session_state.run_simulation = True
@@ -650,93 +650,72 @@ with action_cols[2]:
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
         st.rerun()
 with action_cols[3]:
-    if st.button("🏖️ HS→Kaçın", use_container_width=True):
-        for col in sutunlar:
-            if gun_detaylari[col]['weekend']:
-                st.session_state.pref_df[col] = 2
-        st.rerun()
-with action_cols[4]:
     if st.button("↩️ Geri", use_container_width=True, disabled=len(st.session_state.undo_history)==0):
         if st.session_state.undo_history:
             st.session_state.redo_history.append(st.session_state.schedule_bool.copy())
             st.session_state.schedule_bool = st.session_state.undo_history.pop()
             st.rerun()
 
-# Compact CSS
+# Compact CSS for smaller buttons
 st.markdown("""
 <style>
-.mini-btn button { padding: 1px 2px !important; min-height: 24px !important; font-size: 10px !important; margin: 0 !important; }
 div[data-testid="column"] { padding: 0 1px !important; }
+.stButton > button { padding: 1px 3px !important; min-height: 26px !important; font-size: 11px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# Split month into 2 halves for better display
-half = (gun_sayisi + 1) // 2
-tab1, tab2 = st.tabs([f"📆 Gün 1-{half}", f"📆 Gün {half+1}-{gun_sayisi}"])
+# Full month grid - header row
+header_cols = st.columns([2] + [1] * len(sutunlar))
+with header_cols[0]:
+    st.markdown("**İsim**")
+for i, col in enumerate(sutunlar):
+    with header_cols[i + 1]:
+        day_num = gun_detaylari[col]['day_num']
+        is_we = gun_detaylari[col]['weekend']
+        is_hol = gun_detaylari[col]['holiday']
+        style = "color:#c62828;" if is_hol else ("color:#1565c0;" if is_we else "")
+        icon = "🚨" if is_hol else ("🏖" if is_we else "")
+        st.markdown(f"<div style='text-align:center;{style}font-size:9px;'>{icon}{day_num}</div>", unsafe_allow_html=True)
 
-def render_grid(cols_range, tab_key):
-    visible_cols = [col for col in sutunlar if cols_range[0] <= gun_detaylari[col]['day_num'] <= cols_range[1]]
+# Data rows - each person on one row
+for person in isimler:
+    row_cols = st.columns([2] + [1] * len(sutunlar))
+    with row_cols[0]:
+        count = st.session_state.schedule_bool.loc[person].sum() if person in st.session_state.schedule_bool.index else 0
+        st.markdown(f"<div style='font-size:10px;white-space:nowrap;'><b>{person}</b>({count})</div>", unsafe_allow_html=True)
     
-    # Header row
-    header_cols = st.columns([3] + [1] * len(visible_cols))
-    with header_cols[0]:
-        st.markdown("**İsim**")
-    for i, col in enumerate(visible_cols):
-        with header_cols[i + 1]:
-            day_num = gun_detaylari[col]['day_num']
-            is_we = gun_detaylari[col]['weekend']
-            is_hol = gun_detaylari[col]['holiday']
-            style = "color:#c62828;" if is_hol else ("color:#1565c0;" if is_we else "")
-            icon = "🚨" if is_hol else ("🏖" if is_we else "")
-            st.markdown(f"<div style='text-align:center;{style}font-size:10px;'>{icon}{day_num}</div>", unsafe_allow_html=True)
-    
-    # Data rows
-    for person in isimler:
-        row_cols = st.columns([3] + [1] * len(visible_cols))
-        with row_cols[0]:
-            # Count assignments for this person
-            count = st.session_state.schedule_bool.loc[person].sum() if person in st.session_state.schedule_bool.index else 0
-            st.markdown(f"<div style='font-size:11px;'><b>{person}</b> ({count})</div>", unsafe_allow_html=True)
-        
-        for i, col in enumerate(visible_cols):
-            with row_cols[i + 1]:
-                pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
-                is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
-                
-                # Build button label: show assignment status + preference color
-                if is_assigned:
-                    if pref_val == 1:
-                        label = "🟢"  # Assigned + preferred
-                    elif pref_val == 2:
-                        label = "🟡"  # Assigned + avoid
-                    elif pref_val == 3:
-                        label = "🔴"  # Assigned + unavailable (problem!)
-                    else:
-                        label = "✓"   # Assigned + neutral
+    for i, col in enumerate(sutunlar):
+        with row_cols[i + 1]:
+            pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
+            is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
+            
+            if is_assigned:
+                if pref_val == 1:
+                    label = "🟢"
+                elif pref_val == 2:
+                    label = "🟡"
+                elif pref_val == 3:
+                    label = "🔴"
                 else:
-                    if pref_val == 1:
-                        label = "🟩"
-                    elif pref_val == 2:
-                        label = "🟨"
-                    elif pref_val == 3:
-                        label = "🟥"
-                    else:
-                        label = "·"
-                
-                if st.button(label, key=f"{tab_key}_{person}_{col}", use_container_width=True):
-                    if st.session_state.edit_mode == "tercih":
-                        st.session_state.pref_df.at[person, col] = st.session_state.paint_color
-                    else:
-                        save_undo_state(st.session_state.schedule_bool)
-                        current = st.session_state.schedule_bool.at[person, col]
-                        st.session_state.schedule_bool.at[person, col] = not current
-                    st.rerun()
-
-with tab1:
-    render_grid((1, half), "t1")
-
-with tab2:
-    render_grid((half + 1, gun_sayisi), "t2")
+                    label = "✓"
+            else:
+                if pref_val == 1:
+                    label = "🟩"
+                elif pref_val == 2:
+                    label = "🟨"
+                elif pref_val == 3:
+                    label = "🟥"
+                else:
+                    label = "·"
+            
+            if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
+                if st.session_state.edit_mode == "tercih":
+                    st.session_state.pref_df.at[person, col] = st.session_state.paint_color
+                else:
+                    save_undo_state(st.session_state.schedule_bool)
+                    current = st.session_state.schedule_bool.at[person, col]
+                    st.session_state.schedule_bool.at[person, col] = not current
+                st.rerun()
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
