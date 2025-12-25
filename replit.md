@@ -37,6 +37,11 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 - **Print-Friendly View**: Download HTML file optimized for printing
 - **Undo/Redo**: Revert manual edits with history (up to 10 states)
 
+### Bug Fixes Round 5 (Dec 25, 2024)
+- **Fixed**: Excel download 404 error - now uses hash-based caching to keep data fresh and prevent 404 errors on page reload
+- **Improved**: Forbidden pairs validation for 3+ person shifts - added retry logic with shuffled candidates when first selection fails
+- **Fixed**: Arrow serialization fully optimized - all preference stats use consistent string types
+
 ### Bug Fixes Round 4 (Dec 25, 2024)
 - **New**: Browser localStorage persistence for team list - team members saved locally and restored on reload
 - **New**: Current date defaults - year and month now default to current date instead of hardcoded 2025/January
