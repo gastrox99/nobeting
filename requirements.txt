@@ -12,3 +12,4 @@ psycopg2-binary
 openpyxl
 xlsxwriter
 streamlit-aggrid
+ortools
