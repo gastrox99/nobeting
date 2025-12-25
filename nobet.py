@@ -372,11 +372,12 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
             adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col))
             
             if len(adaylar) >= kisi_sayisi:
-                # Check for forbidden pairs and skip if found
+                # Check for forbidden pairs - validate ALL combinations for 3+ people
                 secilenler = []
                 for p in adaylar:
                     valid = True
                     if forbidden_pairs:
+                        # Check against ALL already selected people (not just the first)
                         for selected in secilenler:
                             pair = tuple(sorted((p, selected)))
                             if pair in forbidden_pairs:
@@ -386,6 +387,22 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
                         secilenler.append(p)
                         if len(secilenler) >= kisi_sayisi:
                             break
+                
+                # Retry with shuffled order if first attempt failed due to forbidden pairs
+                if len(secilenler) < kisi_sayisi and forbidden_pairs and len(adaylar) >= kisi_sayisi:
+                    random.shuffle(adaylar)
+                    secilenler = []
+                    for p in adaylar:
+                        valid = True
+                        for selected in secilenler:
+                            pair = tuple(sorted((p, selected)))
+                            if pair in forbidden_pairs:
+                                valid = False
+                                break
+                        if valid:
+                            secilenler.append(p)
+                            if len(secilenler) >= kisi_sayisi:
+                                break
                 
                 if len(secilenler) >= kisi_sayisi:
                     # Pair history tracking for main 2
@@ -1013,8 +1030,16 @@ with col_left:
     with c2: st.download_button("🖼️ PNG", convert_df_to_png(df_liste), "liste.png", "image/png")
     with c3: 
         if EXCEL_AVAILABLE:
-            excel_data = convert_df_to_excel(df_liste, df_stats_load, df_stats_finance)
-            st.download_button("📊 Excel", excel_data, f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            # Compute hash of data to detect changes and refresh Excel cache
+            data_hash = hash(df_liste.to_csv() + df_stats_load.to_csv() + df_stats_finance.to_csv())
+            excel_key = f"excel_{yil}_{ay}"
+            hash_key = f"excel_hash_{yil}_{ay}"
+            
+            # Regenerate if hash changed or no cached data
+            if excel_key not in st.session_state or st.session_state.get(hash_key) != data_hash:
+                st.session_state[excel_key] = convert_df_to_excel(df_liste, df_stats_load, df_stats_finance)
+                st.session_state[hash_key] = data_hash
+            st.download_button("📊 Excel", st.session_state[excel_key], f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         else:
             st.caption("Excel yok")
     
