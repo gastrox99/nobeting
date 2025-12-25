@@ -392,74 +392,75 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         tatil_gunleri = [int(x) for x in st.text_input("🎉 Tatiller:", placeholder="1,2,23").split(",") if x.strip().isdigit()]
         nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", value=252.59)
     
-    # Advanced settings in sub-expander
-    with st.expander("🔧 Gelişmiş Ayarlar"):
-        adv_col1, adv_col2 = st.columns(2)
+    # Additional settings row
+    st.divider()
+    adv_col1, adv_col2, adv_col3 = st.columns(3)
+    
+    with adv_col1:
+        role_names_input = st.text_input(
+            "🏷️ Görev İsimleri:",
+            value=st.session_state.get("role_names_text", ""),
+            placeholder=f"Örn: AYB, GYB"
+        )
+        st.session_state.role_names_text = role_names_input
         
-        with adv_col1:
-            role_names_input = st.text_input(
-                "Görev İsimleri:",
-                value=st.session_state.get("role_names_text", ""),
-                placeholder=f"Örn: AYB, GYB"
-            )
-            st.session_state.role_names_text = role_names_input
-            
-            if role_names_input.strip():
-                role_names = [r.strip() for r in role_names_input.split(",") if r.strip()]
-            else:
-                role_names = []
-            while len(role_names) < kişi_sayısı:
-                role_names.append(f"Kişi{len(role_names)+1}")
-            role_names = role_names[:kişi_sayısı]
-            st.session_state.rol_isimleri = role_names
-            
-            forbidden_input = st.text_area(
-                "🚫 Birlikte Çalışamayan:",
-                value=st.session_state.get("forbidden_pairs_text", ""),
-                height=60,
-                placeholder="Ali-Ayşe, Mehmet-Fatma"
-            )
-            st.session_state.forbidden_pairs_text = forbidden_input
-        
-        with adv_col2:
-            limits_text = st.text_area(
-                "📊 Kişisel Limitler (İsim:min-max):",
-                value=st.session_state.get("limits_text", ""),
-                height=60,
-                placeholder="Ali:5-10\nAyşe:3-8"
-            )
-            st.session_state.limits_text = limits_text
-        
-        # Parse forbidden pairs
-        forbidden_pairs = set()
-        if forbidden_input.strip():
-            all_pairs = []
-            for line in forbidden_input.strip().split('\n'):
-                all_pairs.extend(line.split(','))
-            for pair_str in all_pairs:
-                pair_str = pair_str.strip()
-                if '-' in pair_str:
-                    parts = pair_str.split('-', 1)
-                    if len(parts) == 2:
-                        p1, p2 = parts[0].strip(), parts[1].strip()
-                        if p1 and p2:
-                            forbidden_pairs.add(tuple(sorted((p1, p2))))
-        st.session_state.forbidden_pairs = forbidden_pairs
-        
-        # Parse limits
-        person_limits = {}
-        if limits_text.strip():
-            for line in limits_text.strip().split('\n'):
-                if ':' in line:
-                    parts = line.split(':')
-                    name = parts[0].strip()
-                    if len(parts) == 2 and '-' in parts[1]:
-                        try:
-                            min_val, max_val = map(int, parts[1].split('-'))
-                            person_limits[name] = {'min': min_val, 'max': max_val}
-                        except ValueError:
-                            pass
-        st.session_state.person_limits = person_limits
+        if role_names_input.strip():
+            role_names = [r.strip() for r in role_names_input.split(",") if r.strip()]
+        else:
+            role_names = []
+        while len(role_names) < kişi_sayısı:
+            role_names.append(f"Kişi{len(role_names)+1}")
+        role_names = role_names[:kişi_sayısı]
+        st.session_state.rol_isimleri = role_names
+    
+    with adv_col2:
+        forbidden_input = st.text_area(
+            "🚫 Birlikte Çalışamayan:",
+            value=st.session_state.get("forbidden_pairs_text", ""),
+            height=68,
+            placeholder="Ali-Ayşe, Mehmet-Fatma"
+        )
+        st.session_state.forbidden_pairs_text = forbidden_input
+    
+    with adv_col3:
+        limits_text = st.text_area(
+            "📊 Kişisel Limitler:",
+            value=st.session_state.get("limits_text", ""),
+            height=68,
+            placeholder="Ali:5-10\nAyşe:3-8"
+        )
+        st.session_state.limits_text = limits_text
+    
+    # Parse forbidden pairs
+    forbidden_pairs = set()
+    if forbidden_input.strip():
+        all_pairs = []
+        for line in forbidden_input.strip().split('\n'):
+            all_pairs.extend(line.split(','))
+        for pair_str in all_pairs:
+            pair_str = pair_str.strip()
+            if '-' in pair_str:
+                parts = pair_str.split('-', 1)
+                if len(parts) == 2:
+                    p1, p2 = parts[0].strip(), parts[1].strip()
+                    if p1 and p2:
+                        forbidden_pairs.add(tuple(sorted((p1, p2))))
+    st.session_state.forbidden_pairs = forbidden_pairs
+    
+    # Parse limits
+    person_limits = {}
+    if limits_text.strip():
+        for line in limits_text.strip().split('\n'):
+            if ':' in line:
+                parts = line.split(':')
+                name = parts[0].strip()
+                if len(parts) == 2 and '-' in parts[1]:
+                    try:
+                        min_val, max_val = map(int, parts[1].split('-'))
+                        person_limits[name] = {'min': min_val, 'max': max_val}
+                    except ValueError:
+                        pass
+    st.session_state.person_limits = person_limits
     
     # --- SAVE/LOAD ---
     st.divider()
