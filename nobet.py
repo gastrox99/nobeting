@@ -10,7 +10,6 @@ import numpy as np
 import time
 import json
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 # Excel export
 try:
@@ -35,7 +34,17 @@ st.markdown("""
     padding-bottom: 8px;
 }
 
+/* Mobile hint - hidden on desktop by default */
+.mobile-hint {
+    display: none;
+}
+
 @media (max-width: 768px) {
+    /* Show mobile hint only on mobile */
+    .mobile-hint {
+        display: block !important;
+    }
+    
     /* Settings panel columns - stack vertically */
     [data-testid="stExpander"] [data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
@@ -261,7 +270,7 @@ def save_undo_state(schedule_df):
     st.session_state.redo_history = []  # Clear redo on new action
 
 # --- ANA ALGORİTMA (V98: BEST-OF-N SIMULATION) ---
-def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, forbidden_pairs=None, person_limits=None, df_preferred=None):
+def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None):
     
     best_schedule = None
     best_score = float('inf') # Daha düşük puan daha iyi (Ceza puanı mantığı)
@@ -348,7 +357,7 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
             # Adayları o anki duruma göre sırala
             adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col))
             
-            if len(adaylar) >= kişi_sayısı:
+            if len(adaylar) >= kisi_sayisi:
                 # Check for forbidden pairs and skip if found
                 secilenler = []
                 for p in adaylar:
@@ -361,12 +370,12 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
                                 break
                     if valid:
                         secilenler.append(p)
-                        if len(secilenler) >= kişi_sayısı:
+                        if len(secilenler) >= kisi_sayisi:
                             break
                 
-                if len(secilenler) >= kişi_sayısı:
+                if len(secilenler) >= kisi_sayisi:
                     # Pair history tracking for main 2
-                    if kişi_sayısı >= 2:
+                    if kisi_sayisi >= 2:
                         pair = tuple(sorted((secilenler[0], secilenler[1])))
                         pair_history[pair] = pair_history.get(pair, 0) + 1
                     
@@ -471,7 +480,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         else:
             role_names = []
         while len(role_names) < kişi_sayısı:
-            role_names.append(f"Kişi{len(role_names)+1}")
+            role_names.append(f"Görev{len(role_names)+1}")
         role_names = role_names[:kişi_sayısı]
         st.session_state.rol_isimleri = role_names
     
@@ -551,8 +560,16 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                     if s['name'] == selected_name:
                         team, df = load_schedule(s['name'], s['year'], s['month'])
                         if df is not None:
+                            # Check for team mismatch
+                            loaded_people = list(df.index)
+                            missing = [p for p in loaded_people if p not in isimler]
+                            extra = [p for p in isimler if p not in loaded_people]
+                            
                             st.session_state.schedule_bool = df
                             st.session_state.should_regenerate_assignments = True
+                            
+                            if missing or extra:
+                                st.warning(f"⚠️ Ekip uyumsuzluğu! Kaydedilen: {loaded_people}, Şu anki: {isimler}")
                             st.success(f"✅ '{s['name']}' yüklendi!")
                             st.rerun()
                         break
@@ -783,7 +800,8 @@ for person in isimler:
 
 # Close grid wrapper
 st.markdown('</div>', unsafe_allow_html=True)
-st.caption("📱 Mobilde yana kaydırın →")
+# Mobile scroll hint (hidden on desktop via CSS)
+st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -820,6 +838,7 @@ if sim_clicked:
         
         run_scheduling_algorithm_v98(
             isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk, 
+            kişi_sayısı,
             st.session_state.forbidden_pairs,
             st.session_state.get('person_limits', {}),
             df_preferred
@@ -936,7 +955,6 @@ for isim in isimler:
         "İsim": isim,
         "Toplam": int(toplam),
         "Özel": int(ozel_gun),
-        "HS": int(haftasonu),
         role_names[0]: first_role_counts.get(isim, 0)
     })
     stats_finance.append({
@@ -1007,7 +1025,7 @@ with col_right:
     st.markdown("**1. Nöbet Yükü (Dengeli)**")
     st.dataframe(
         df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam", role_names[0]])
-                           .background_gradient(cmap="Oranges", subset=["Özel", "HS"]),
+                           .background_gradient(cmap="Oranges", subset=["Özel"]),
         use_container_width=True
     )
     st.divider()

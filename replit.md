@@ -15,7 +15,7 @@ A Streamlit-based shift/duty scheduling application (Turkish: "Nöbet Yönetimi"
 ## Tech Stack
 - **Language**: Python 3.11
 - **Framework**: Streamlit
-- **Dependencies**: pandas, numpy, matplotlib, tabulate, streamlit-aggrid
+- **Dependencies**: pandas, numpy, matplotlib, tabulate
 
 ## Running the App
 The app runs on port 5000 via the Streamlit workflow:
@@ -36,6 +36,14 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 - **Visual Calendar Preferences**: Click-to-select color-coded calendar for each person (green=preferred, yellow=avoid, red=unavailable)
 - **Print-Friendly View**: Download HTML file optimized for printing
 - **Undo/Redo**: Revert manual edits with history (up to 10 states)
+
+### Bug Fixes Round 3 (Dec 25, 2024)
+- **Fixed**: Removed unused st_aggrid import (faster loading)
+- **Fixed**: kişi_sayısı now passed as parameter to scheduling function (no global scope dependency)
+- **Fixed**: Team mismatch warning when loading saved schedules with different people
+- **Fixed**: Mobile scroll hint now hidden on desktop (CSS media query)
+- **Changed**: Default role names from "Kişi1, Kişi2" to "Görev1, Görev2"
+- **Removed**: "HS" (hafta sonu) column from workload analysis table
 
 ### Bug Fixes Round 2
 - **Fixed**: Forbidden pairs parsing now supports both comma and newline separators
