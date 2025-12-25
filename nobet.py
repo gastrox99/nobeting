@@ -10,6 +10,7 @@ import numpy as np
 import time
 import json
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
+from streamlit_local_storage import LocalStorage
 
 # Excel export
 try:
@@ -23,6 +24,16 @@ init_db()
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Adil Nöbet v98 (AI Simulation)", layout="wide")
+
+# --- localStorage for team list persistence ---
+local_storage = LocalStorage()
+
+# Load saved team from localStorage on first run
+if 'localStorage_loaded' not in st.session_state:
+    st.session_state.localStorage_loaded = False
+    saved_team = local_storage.getItem("nobet_team")
+    if saved_team:
+        st.session_state.isimler_text = saved_team
 
 # --- GLOBAL RESPONSIVE CSS ---
 st.markdown("""
@@ -451,10 +462,15 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         st.session_state.isimler_text = isimler_input
         isimler = [x.strip() for x in isimler_input.split(",") if x.strip()]
         st.session_state.isimler_cache = isimler
+        
+        # Save team to localStorage (always sync, even when cleared)
+        local_storage.setItem("nobet_team", isimler_input)
     
     with set_col2:
-        yil = st.number_input("📅 Yıl", 2024, 2030, 2025)
-        ay = st.selectbox("📆 Ay", range(1, 13), index=0)
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        yil = st.number_input("📅 Yıl", 2024, 2030, current_year)
+        ay = st.selectbox("📆 Ay", range(1, 13), index=current_month - 1)
         gun_sayisi = calendar.monthrange(yil, ay)[1]
         kişi_sayısı = st.slider("👤 Nöbet Başına Kişi:", 1, 5, 2)
     

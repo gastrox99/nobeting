@@ -37,6 +37,12 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 - **Print-Friendly View**: Download HTML file optimized for printing
 - **Undo/Redo**: Revert manual edits with history (up to 10 states)
 
+### Bug Fixes Round 4 (Dec 25, 2024)
+- **New**: Browser localStorage persistence for team list - team members saved locally and restored on reload
+- **New**: Current date defaults - year and month now default to current date instead of hardcoded 2025/January
+- **Changed**: Main title now centered, larger, and without emoji
+- **Changed**: Default hourly rate changed to 1.0 TL
+
 ### Bug Fixes Round 3 (Dec 25, 2024)
 - **Fixed**: Removed unused st_aggrid import (faster loading)
 - **Fixed**: kişi_sayısı now passed as parameter to scheduling function (no global scope dependency)

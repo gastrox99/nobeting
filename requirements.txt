@@ -7,3 +7,4 @@ psycopg2-binary
 openpyxl
 xlsxwriter
 streamlit-aggrid
+streamlit-local-storage
