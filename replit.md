@@ -42,6 +42,10 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 - **New**: Current date defaults - year and month now default to current date instead of hardcoded 2025/January
 - **Changed**: Main title now centered, larger, and without emoji
 - **Changed**: Default hourly rate changed to 1.0 TL
+- **Improved**: Preference weighting system significantly strengthened:
+  - Green (Yeşil/1): -500 bonus - STRONG PRIORITY, assigned first
+  - Yellow (Sarı/2): +300 penalty - AVOID, assigned last if no other option
+  - Red (Kırmızı/3): Hard block - NEVER assigned (unchanged)
 
 ### Bug Fixes Round 3 (Dec 25, 2024)
 - **Fixed**: Removed unused st_aggrid import (faster loading)

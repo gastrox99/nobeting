@@ -315,13 +315,16 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
             consecutive_penalty = stat_consecutive_weekend[p] * 200
             
             # Preference bonus (negative = preferred, positive = avoid)
+            # Yeşil (1): Öncelikli - çok güçlü bonus (-500)
+            # Sarı (2): Kaçınılmalı - yüksek ceza (+300)
+            # Kırmızı (3): df_unwanted_bool ile tamamen engelli
             pref_bonus = 0
             if df_preferred is not None and p in df_preferred.index and col in df_preferred.columns:
                 pref_val = df_preferred.at[p, col]
-                if pref_val == 1:  # Preferred
-                    pref_bonus = -50
-                elif pref_val == 2:  # Avoid
-                    pref_bonus = 100
+                if pref_val == 1:  # Green/Preferred - STRONG PRIORITY
+                    pref_bonus = -500
+                elif pref_val == 2:  # Yellow/Avoid - HIGH PENALTY
+                    pref_bonus = 300
             
             # Min/max limits penalty
             limit_penalty = 0
