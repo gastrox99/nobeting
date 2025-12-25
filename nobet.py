@@ -96,7 +96,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🤝 Nöbet Yönetimi")
+st.markdown("<h1 style='text-align: center; font-size: 2.5rem;'>Nöbet Yönetimi</h1>", unsafe_allow_html=True)
 
 # --- YARDIMCI FONKSİYONLAR ---
 def parse_unwanted_days(text_input, max_day):
@@ -461,7 +461,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     with set_col3:
         min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, 1)
         tatil_gunleri = [int(x) for x in st.text_input("🎉 Tatiller:", placeholder="1,2,23").split(",") if x.strip().isdigit()]
-        nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", value=252.59)
+        nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", value=1.0)
     
     # Additional settings row
     st.divider()
