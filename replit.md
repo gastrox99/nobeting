@@ -15,7 +15,7 @@ A Streamlit-based shift/duty scheduling application (Turkish: "Nöbet Yönetimi"
 ## Tech Stack
 - **Language**: Python 3.11
 - **Framework**: Streamlit
-- **Dependencies**: pandas, numpy, matplotlib, tabulate
+- **Dependencies**: pandas, numpy, matplotlib, tabulate, ortools, streamlit-aggrid
 
 ## Running the App
 The app runs on port 5000 via the Streamlit workflow:
@@ -26,6 +26,8 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 ## Recent Changes (Dec 2024)
 
 ### New Features
+- **OR-Tools Optimization**: New "AI Optimizasyon" button uses Google OR-Tools CP-SAT solver for mathematically optimal scheduling instead of random simulation
+- **streamlit-aggrid Preference Grid**: Interactive colored grid for preference input (click cells to edit, color-coded display)
 - **Custom Role Names**: Define your own shift role names (e.g., "Nöbetçi, Yardımcı" instead of default AYB/GYB)
 - **Min/Max Limits**: Set individual shift limits per person (e.g., "Ali:5-10")
 - **Weekend Balance**: Algorithm avoids assigning consecutive weekend shifts
@@ -74,5 +76,6 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
 
 ## Project Structure
 - `nobet.py` - Main application file
+- `solver.py` - OR-Tools CP-SAT solver for optimal scheduling
 - `db.py` - Database functions (PostgreSQL backend)
 - `requirements.txt` - Python dependencies

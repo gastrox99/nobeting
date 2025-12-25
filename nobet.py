@@ -11,6 +11,7 @@ import time
 import json
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
+from solver import solve_schedule, SolverResult
 
 # Excel export
 try:
@@ -392,6 +393,7 @@ with st.sidebar:
     while len(role_names) < kişi_sayısı:
         role_names.append(f"Kişi{len(role_names)+1}")
     role_names = role_names[:kişi_sayısı]  # Trim excess
+    st.session_state.rol_isimleri = role_names  # Store for solver
     
     # --- FORBIDDEN PAIRS ---
     st.markdown("🚫 **Birlikte Çalışamayan Kişiler**")
@@ -737,7 +739,16 @@ for person in isimler:
         elif status == 2:
             df_preferred.at[person, col] = 2
 
-if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
+st.markdown("### 🎯 Nöbet Dağıtımı")
+btn_col1, btn_col2 = st.columns(2)
+
+with btn_col1:
+    sim_clicked = st.button("⚡ AI Simülasyon (100 deneme)", type="secondary", use_container_width=True)
+
+with btn_col2:
+    opt_clicked = st.button("🧠 AI Optimizasyon (OR-Tools)", type="primary", use_container_width=True)
+
+if sim_clicked:
     is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kişi_sayısı)
     
     if errors:
@@ -750,7 +761,6 @@ if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
             for warn in warnings:
                 st.warning(warn)
         
-        # Save undo state before generating new schedule
         save_undo_state(st.session_state.schedule_bool)
         
         run_scheduling_algorithm_v98(
@@ -761,6 +771,84 @@ if st.button("⚡ Nöbetleri Dağıt (AI Simülasyon)", type="primary"):
         )
         st.session_state.should_regenerate_assignments = True
         st.rerun()
+
+if opt_clicked:
+    is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kişi_sayısı)
+    
+    if errors:
+        st.error("🚨 Hata(lar) düzeltilmeli:")
+        for err in errors:
+            st.error(err)
+    else:
+        if warnings:
+            st.warning("⚠️ Uyarı(lar):")
+            for warn in warnings:
+                st.warning(warn)
+        
+        limits_dict = st.session_state.get('person_limits', {})
+        limits_tuples = {}
+        for name, lim in limits_dict.items():
+            if isinstance(lim, dict):
+                limits_tuples[name] = (lim.get('min', 0), lim.get('max', 999))
+            elif isinstance(lim, tuple):
+                limits_tuples[name] = lim
+        
+        pref_for_solver = df_preferred.copy()
+        for person in pref_for_solver.index:
+            for col in pref_for_solver.columns:
+                val = pref_for_solver.at[person, col]
+                if val == 1:
+                    pref_for_solver.at[person, col] = 10
+                elif val == 2:
+                    pref_for_solver.at[person, col] = -10
+                else:
+                    pref_for_solver.at[person, col] = 0
+        
+        with st.spinner("🧠 OR-Tools optimizasyonu çalışıyor... (max 30s)"):
+            result = solve_schedule(
+                isimler=isimler,
+                sutunlar=sutunlar,
+                gun_detaylari=gun_detaylari,
+                kisi_sayisi=kişi_sayısı,
+                min_bosluk=min_bosluk,
+                df_unwanted=df_unwanted,
+                df_preferred=pref_for_solver,
+                forbidden_pairs=st.session_state.forbidden_pairs,
+                person_limits=limits_tuples,
+                rol_isimleri=st.session_state.get('rol_isimleri', ['AYB', 'GYB', 'Rol3', 'Rol4', 'Rol5'][:kişi_sayısı]),
+                timeout_seconds=30
+            )
+        
+        st.markdown(result.message)
+        
+        if result.success:
+            save_undo_state(st.session_state.schedule_bool)
+            
+            new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+            for day in sutunlar:
+                if day in result.schedule.columns:
+                    assigned = result.schedule[day].tolist()
+                    for person in assigned:
+                        if person in isimler:
+                            new_schedule.at[person, day] = True
+            
+            st.session_state.schedule_bool = new_schedule
+            st.session_state.should_regenerate_assignments = True
+            
+            if 'stats' in result.stats:
+                with st.expander("📊 Optimizasyon Detayları"):
+                    st.write(f"**Çözüm tipi:** {result.stats.get('status', 'N/A')}")
+                    st.write(f"**Süre:** {result.solve_time:.2f}s")
+                    st.write(f"**Dağılım farkı:** {result.stats.get('spread', 'N/A')}")
+                    st.write(f"**Standart sapma:** {result.stats.get('std_dev', 0):.2f}")
+                    if 'shift_counts' in result.stats:
+                        st.write("**Kişi başı nöbet:**")
+                        for person, count in result.stats['shift_counts'].items():
+                            st.write(f"  - {person}: {count}")
+            
+            st.rerun()
+        else:
+            st.warning("💡 Simülasyon yöntemini deneyin veya kısıtları gevşetin.")
 
 # --- ADIM 2: EDİTÖR ---
 st.divider()
