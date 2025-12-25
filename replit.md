@@ -46,6 +46,7 @@ streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.head
   - Green (Yeşil/1): -500 bonus - STRONG PRIORITY, assigned first
   - Yellow (Sarı/2): +300 penalty - AVOID, assigned last if no other option
   - Red (Kırmızı/3): Hard block - NEVER assigned (unchanged)
+- **New**: Tercih Başarısı tablosu - Her kişi için yeşil/sarı/kırmızı tercihlerin ne oranda gerçekleştirildiğini yüzdesel olarak gösterir
 
 ### Bug Fixes Round 3 (Dec 25, 2024)
 - **Fixed**: Removed unused st_aggrid import (faster loading)

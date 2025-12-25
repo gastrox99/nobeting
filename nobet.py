@@ -1086,8 +1086,53 @@ with col_right:
 
     st.divider()
 
-    # 4. Ücret
-    st.markdown("**4. Ücret Özeti**")
+    # 4. Tercih Başarısı
+    st.markdown("**4. Tercih Başarısı (%)**")
+    pref_stats = []
+    for isim in isimler:
+        green_total = 0
+        green_assigned = 0
+        yellow_total = 0
+        yellow_avoided = 0
+        red_total = 0
+        red_blocked = 0
+        
+        for col in sutunlar:
+            pref_val = st.session_state.pref_df.at[isim, col] if isim in st.session_state.pref_df.index and col in st.session_state.pref_df.columns else 0
+            is_assigned = edited.at[isim, col] if isim in edited.index and col in edited.columns else False
+            
+            if pref_val == 1:  # Green - İstek
+                green_total += 1
+                if is_assigned:
+                    green_assigned += 1
+            elif pref_val == 2:  # Yellow - Kaçınma
+                yellow_total += 1
+                if not is_assigned:
+                    yellow_avoided += 1
+            elif pref_val == 3:  # Red - İstenmeyen
+                red_total += 1
+                if not is_assigned:
+                    red_blocked += 1
+        
+        green_pct = round(green_assigned / green_total * 100) if green_total > 0 else "-"
+        yellow_pct = round(yellow_avoided / yellow_total * 100) if yellow_total > 0 else "-"
+        red_pct = round(red_blocked / red_total * 100) if red_total > 0 else "-"
+        
+        pref_stats.append({
+            "İsim": isim,
+            "🟢 İstek": green_pct,
+            "🟡 Kaçınma": yellow_pct,
+            "🔴 İstenmeyen": red_pct
+        })
+    
+    df_pref_stats = pd.DataFrame(pref_stats).set_index("İsim")
+    st.dataframe(df_pref_stats, use_container_width=True)
+    st.caption("🟢 İstek: Yeşil günlerde nöbet alma %, 🟡 Kaçınma: Sarı günlerden kaçınma %, 🔴 İstenmeyen: Kırmızı engel başarısı %")
+    
+    st.divider()
+
+    # 5. Ücret
+    st.markdown("**5. Ücret Özeti**")
     st.dataframe(
         df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
                               .format({"Ücret (TL)": "₺ {:,.2f}"}),
