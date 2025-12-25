@@ -647,133 +647,67 @@ with qf_cols[3]:
         st.session_state.pref_df[:] = st.session_state.paint_color
         st.rerun()
 
-# Prepare DataFrame for AgGrid
-grid_df = st.session_state.pref_df.copy()
-grid_df.insert(0, 'İsim', grid_df.index)
-grid_df = grid_df.reset_index(drop=True)
+# Compact CSS for mini buttons
+st.markdown("""
+<style>
+.pref-grid-container { overflow-x: auto; }
+.stButton > button { padding: 2px 4px !important; min-height: 28px !important; font-size: 12px !important; }
+</style>
+""", unsafe_allow_html=True)
 
-# Rename columns to show just day numbers
-col_rename = {'İsim': 'İsim'}
-for col in sutunlar:
-    day_num = gun_detaylari[col]['day_num']
-    is_we = gun_detaylari[col]['weekend']
-    is_hol = gun_detaylari[col]['holiday']
-    if is_hol:
-        col_rename[col] = f"🚨{day_num}"
-    elif is_we:
-        col_rename[col] = f"🏖{day_num}"
-    else:
-        col_rename[col] = str(day_num)
-
-grid_df = grid_df.rename(columns=col_rename)
-
-# Build AgGrid options with cell selection
-gb = GridOptionsBuilder.from_dataframe(grid_df)
-gb.configure_default_column(editable=False, minWidth=40, maxWidth=55)
-gb.configure_column('İsim', pinned='left', minWidth=100, maxWidth=150)
-
-# Cell style based on value (0-3)
-cell_style_jscode = JsCode("""
-function(params) {
-    if (params.colDef.field === 'İsim') return {'fontWeight': 'bold'};
-    var val = params.value;
-    var style = {'cursor': 'pointer', 'textAlign': 'center'};
-    if (val === 1) { style['backgroundColor'] = '#c8e6c9'; }
-    else if (val === 2) { style['backgroundColor'] = '#fff9c4'; }
-    else if (val === 3) { style['backgroundColor'] = '#ffcdd2'; }
-    else { style['backgroundColor'] = '#ffffff'; }
-    return style;
-}
-""")
-
-# Cell renderer to show emoji
-cell_renderer = JsCode("""
-function(params) {
-    if (params.colDef.field === 'İsim') return params.value;
-    var val = params.value;
-    if (val === 1) return '✓';
-    if (val === 2) return '~';
-    if (val === 3) return '✗';
-    return '·';
-}
-""")
-
-# Apply cell style to all data columns
-for col in grid_df.columns:
-    if col != 'İsim':
-        gb.configure_column(col, cellStyle=cell_style_jscode, cellRenderer=cell_renderer)
-
-# Enable cell selection
-gb.configure_selection(selection_mode='single', use_checkbox=False)
-gb.configure_grid_options(
-    suppressRowClickSelection=True,
-    enableRangeSelection=True,
-    suppressCellSelection=False
-)
-
-grid_options = gb.build()
-grid_options['rowHeight'] = 35
-
-# Display AgGrid with selection tracking
 st.markdown(f"**📅 Tercih Tablosu** - Hücreye tıklayın → **{selected_label}** uygulanır")
-grid_response = AgGrid(
-    grid_df,
-    gridOptions=grid_options,
-    update_mode=GridUpdateMode.SELECTION_CHANGED,
-    fit_columns_on_grid_load=True,
-    height=min(400, len(isimler) * 40 + 60),
-    allow_unsafe_jscode=True,
-    theme='streamlit',
-    enable_enterprise_modules=False
-)
 
-# Person selector for painting
-st.markdown("---")
-paint_cols = st.columns([2, 3])
-with paint_cols[0]:
-    selected_person = st.selectbox("👤 Kişi Seç:", isimler, key="paint_person")
-with paint_cols[1]:
-    st.markdown(f"**Seçili renk:** {selected_label}")
+# Day range selector for large months
+day_range_cols = st.columns([1, 1, 2])
+with day_range_cols[0]:
+    day_start = st.number_input("Başlangıç gün:", 1, gun_sayisi, 1, key="pref_day_start")
+with day_range_cols[1]:
+    day_end = st.number_input("Bitiş gün:", 1, gun_sayisi, min(gun_sayisi, day_start + 14), key="pref_day_end")
+with day_range_cols[2]:
+    st.caption(f"Gösterilen: Gün {day_start}-{day_end} ({day_end - day_start + 1} gün)")
 
-# Day buttons for selected person - single click to paint
-if selected_person:
-    st.markdown(f"**{selected_person}** için günlere tıklayın:")
+# Filter columns for selected range
+visible_cols = [col for col in sutunlar if day_start <= gun_detaylari[col]['day_num'] <= day_end]
+
+# Header row with day numbers
+header_cols = st.columns([2] + [1] * len(visible_cols))
+with header_cols[0]:
+    st.markdown("**İsim**")
+for i, col in enumerate(visible_cols):
+    with header_cols[i + 1]:
+        day_num = gun_detaylari[col]['day_num']
+        is_we = gun_detaylari[col]['weekend']
+        is_hol = gun_detaylari[col]['holiday']
+        if is_hol:
+            st.markdown(f"<div style='text-align:center;color:#c62828;font-size:11px;'>🚨<br>{day_num}</div>", unsafe_allow_html=True)
+        elif is_we:
+            st.markdown(f"<div style='text-align:center;color:#1565c0;font-size:11px;'>🏖<br>{day_num}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='text-align:center;font-size:11px;'>{day_num}</div>", unsafe_allow_html=True)
+
+# Grid rows - each person on one row with clickable buttons
+for person in isimler:
+    row_cols = st.columns([2] + [1] * len(visible_cols))
+    with row_cols[0]:
+        st.markdown(f"<div style='padding:4px;font-weight:bold;font-size:12px;'>{person}</div>", unsafe_allow_html=True)
     
-    # Display in rows of 10 days
-    days_per_row = 10
-    for row_start in range(0, len(sutunlar), days_per_row):
-        row_cols = sutunlar[row_start:row_start + days_per_row]
-        cols = st.columns(len(row_cols))
-        for i, col in enumerate(row_cols):
-            with cols[i]:
-                val = st.session_state.pref_df.at[selected_person, col]
-                day_num = gun_detaylari[col]['day_num']
-                is_we = gun_detaylari[col]['weekend']
-                is_hol = gun_detaylari[col]['holiday']
-                
-                # Choose emoji based on value
-                if val == 1:
-                    emoji = "🟩"
-                elif val == 2:
-                    emoji = "🟨"
-                elif val == 3:
-                    emoji = "🟥"
-                else:
-                    emoji = "⬜"
-                
-                # Add weekend/holiday indicator
-                day_label = f"{emoji}{day_num}"
-                if is_hol:
-                    day_label = f"🚨{day_num}"
-                elif is_we:
-                    day_label = f"🏖{day_num}"
-                else:
-                    day_label = f"{day_num}"
-                
-                btn_label = f"{emoji}"
-                if st.button(btn_label, key=f"day_{selected_person}_{col}", use_container_width=True, help=f"Gün {day_num}"):
-                    st.session_state.pref_df.at[selected_person, col] = st.session_state.paint_color
-                    st.rerun()
+    for i, col in enumerate(visible_cols):
+        with row_cols[i + 1]:
+            val = st.session_state.pref_df.at[person, col]
+            
+            # Choose emoji based on value
+            if val == 1:
+                emoji = "🟩"
+            elif val == 2:
+                emoji = "🟨"
+            elif val == 3:
+                emoji = "🟥"
+            else:
+                emoji = "⬜"
+            
+            if st.button(emoji, key=f"cell_{person}_{col}", use_container_width=True):
+                st.session_state.pref_df.at[person, col] = st.session_state.paint_color
+                st.rerun()
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
