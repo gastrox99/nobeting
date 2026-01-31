@@ -1019,129 +1019,9 @@ else:
     role_names = st.session_state.get('cached_role_names', role_names)
 
 # Display and allow manual editing of ROLES (swapping people)
-st.subheader("📝 Liste Düzenle (Görevli Değiştir)")
-df_liste_editable = pd.DataFrame(rows_liste)
+# REMOVED: Manual list editing as requested. Using autonomous redistribution instead.
 
-# Swap function logic
-if 'swap_day_idx' not in st.session_state:
-    st.session_state.swap_day_idx = 0
-
-with st.expander("🔄 Hızlı Gün İçi Takas", expanded=False):
-    c_swap1, c_swap2 = st.columns([3, 1])
-    with c_swap1:
-        day_options = [f"{r['Tarih']}" for r in rows_liste]
-        selected_day_label = st.selectbox("Takas Yapılacak Gün:", day_options, index=st.session_state.swap_day_idx)
-        day_idx = day_options.index(selected_day_label)
-        st.session_state.swap_day_idx = day_idx
-    with c_swap2:
-        if st.button("🔄 Yer Değiştir", use_container_width=True):
-            # Only makes sense if there are at least 2 people
-            if len(role_names) >= 2:
-                row = rows_liste[day_idx]
-                # Simple swap of first two roles
-                r1, r2 = role_names[0], role_names[1]
-                p1, p2 = row[r1], row[r2]
-                
-                # Update rows_liste
-                rows_liste[day_idx][r1] = p2
-                rows_liste[day_idx][r2] = p1
-                
-                # Update main schedule_bool
-                if p1 in isimler: st.session_state.schedule_bool.at[p1, sutunlar[day_idx]] = True
-                if p2 in isimler: st.session_state.schedule_bool.at[p2, sutunlar[day_idx]] = True
-                
-                st.session_state.cached_rows_liste = rows_liste
-                st.session_state.excel_needs_refresh = True
-                st.toast(f"{selected_day_label} için görevliler takas edildi!", icon="🔄")
-                st.rerun()
-            else:
-                st.warning("Takas için en az 2 görevli gerekli.")
-
-# Use selectbox for role names to make editing easier and less error-prone
-column_config = {
-    role_name: st.column_config.SelectboxColumn(
-        role_name,
-        options=["-"] + isimler,
-        width="medium"
-    ) for role_name in role_names
-}
-
-# Add a form for list editing to prevent reruns on every change
-with st.form("list_edit_form"):
-    edited_liste = st.data_editor(
-        df_liste_editable,
-        use_container_width=True,
-        disabled=["Tarih"],
-        column_config=column_config,
-        key="list_editor_form_field"
-    )
-    submit_changes = st.form_submit_button("✅ Değişiklikleri Onayla", type="primary", use_container_width=True)
-
-# Separate button for Autonomous Re-distribution (outside the form)
-if st.button("🤖 Görev Yerlerini Yeniden Dağıt (Otomatik)", use_container_width=True, help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
-    if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
-        rows_liste = st.session_state.cached_rows_liste
-        first_role_counts = {i: 0 for i in isimler}
-        new_rows_liste = []
-        
-        # We need a stable shuffle to explore different options but still be deterministic for the counts
-        # Actually, let's just use a random shuffle of people assigned to each day to explore different orderings
-        for row in rows_liste:
-            # Extract names currently assigned to this day
-            nobetciler = []
-            for role_name in role_names:
-                p = row.get(role_name, "-")
-                if p != "-" and p in isimler: nobetciler.append(p)
-            
-            # Shuffle current day's people to try a different order than before
-            random.shuffle(nobetciler)
-            
-            # Now sort by first_role_counts to keep it fair
-            nobetciler.sort(key=lambda x: first_role_counts.get(x, 0))
-            
-            new_row = {"Tarih": row["Tarih"]}
-            for idx, role_name in enumerate(role_names):
-                if len(nobetciler) > idx:
-                    p = nobetciler[idx]
-                    new_row[role_name] = p
-                    if idx == 0:
-                        first_role_counts[p] = first_role_counts.get(p, 0) + 1
-                else:
-                    new_row[role_name] = "-"
-            new_rows_liste.append(new_row)
-        
-        st.session_state.cached_rows_liste = new_rows_liste
-        st.session_state.cached_first_role_counts = first_role_counts
-        
-        # Update schedule_bool to match the new assignments (though they shouldn't change, it's safer)
-        new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
-        for i, col in enumerate(sutunlar):
-            row = new_rows_liste[i]
-            for role_name in role_names:
-                p = row.get(role_name)
-                if p in isimler:
-                    new_schedule.at[p, col] = True
-        st.session_state.schedule_bool = new_schedule
-        
-        st.session_state.excel_needs_refresh = True
-        st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
-        st.rerun()
-
-# If list editor changes and form is submitted, we sync back to the main boolean dataframe
-if submit_changes and not edited_liste.equals(df_liste_editable):
-    # Update st.session_state.schedule_bool based on edited_liste
-    new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
-    for i, col in enumerate(sutunlar):
-        row = edited_liste.iloc[i]
-        for role_name in role_names:
-            p = row.get(role_name)
-            if p in isimler:
-                new_schedule.at[p, col] = True
-    
-    st.session_state.schedule_bool = new_schedule
-    st.session_state.cached_rows_liste = edited_liste.to_dict('records')
-    st.session_state.excel_needs_refresh = True
-    st.rerun()
+# Re-distribution logic moved to Analiz section as requested.
 
 df_liste = pd.DataFrame(rows_liste)
 
@@ -1247,6 +1127,51 @@ with col_right:
                            .background_gradient(cmap="Oranges", subset=["Özel"]),
         use_container_width=True
     )
+    
+    # Autonomous Redistribution Button
+    if st.button("🤖 Görev Yerlerini Otomatik Dağıt", use_container_width=True, help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
+        if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
+            rows_liste_to_redist = st.session_state.cached_rows_liste
+            first_role_counts_to_redist = {i: 0 for i in isimler}
+            new_rows_liste = []
+            
+            for row in rows_liste_to_redist:
+                nobetciler = []
+                for rn in role_names:
+                    p = row.get(rn, "-")
+                    if p != "-" and p in isimler: nobetciler.append(p)
+                
+                random.shuffle(nobetciler)
+                nobetciler.sort(key=lambda x: first_role_counts_to_redist.get(x, 0))
+                
+                new_row = {"Tarih": row["Tarih"]}
+                for idx, rn in enumerate(role_names):
+                    if len(nobetciler) > idx:
+                        p = nobetciler[idx]
+                        new_row[rn] = p
+                        if idx == 0:
+                            first_role_counts_to_redist[p] = first_role_counts_to_redist.get(p, 0) + 1
+                    else:
+                        new_row[rn] = "-"
+                new_rows_liste.append(new_row)
+            
+            st.session_state.cached_rows_liste = new_rows_liste
+            st.session_state.cached_first_role_counts = first_role_counts_to_redist
+            
+            # Update schedule_bool to match
+            new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+            for i, col in enumerate(sutunlar):
+                row = new_rows_liste[i]
+                for rn in role_names:
+                    p = row.get(rn)
+                    if p in isimler:
+                        new_schedule.at[p, col] = True
+            st.session_state.schedule_bool = new_schedule
+            
+            st.session_state.excel_needs_refresh = True
+            st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
+            st.rerun()
+
     st.divider()
 
     # 2. Kişisel Detay
