@@ -1022,6 +1022,41 @@ else:
 st.subheader("📝 Liste Düzenle (Görevli Değiştir)")
 df_liste_editable = pd.DataFrame(rows_liste)
 
+# Swap function logic
+if 'swap_day_idx' not in st.session_state:
+    st.session_state.swap_day_idx = 0
+
+with st.expander("🔄 Hızlı Gün İçi Takas", expanded=False):
+    c_swap1, c_swap2 = st.columns([3, 1])
+    with c_swap1:
+        day_options = [f"{r['Tarih']}" for r in rows_liste]
+        selected_day_label = st.selectbox("Takas Yapılacak Gün:", day_options, index=st.session_state.swap_day_idx)
+        day_idx = day_options.index(selected_day_label)
+        st.session_state.swap_day_idx = day_idx
+    with c_swap2:
+        if st.button("🔄 Yer Değiştir", use_container_width=True):
+            # Only makes sense if there are at least 2 people
+            if len(role_names) >= 2:
+                row = rows_liste[day_idx]
+                # Simple swap of first two roles
+                r1, r2 = role_names[0], role_names[1]
+                p1, p2 = row[r1], row[r2]
+                
+                # Update rows_liste
+                rows_liste[day_idx][r1] = p2
+                rows_liste[day_idx][r2] = p1
+                
+                # Update main schedule_bool
+                if p1 in isimler: st.session_state.schedule_bool.at[p1, sutunlar[day_idx]] = True
+                if p2 in isimler: st.session_state.schedule_bool.at[p2, sutunlar[day_idx]] = True
+                
+                st.session_state.cached_rows_liste = rows_liste
+                st.session_state.excel_needs_refresh = True
+                st.toast(f"{selected_day_label} için görevliler takas edildi!", icon="🔄")
+                st.rerun()
+            else:
+                st.warning("Takas için en az 2 görevli gerekli.")
+
 # Use selectbox for role names to make editing easier and less error-prone
 column_config = {
     role_name: st.column_config.SelectboxColumn(
