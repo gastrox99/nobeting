@@ -1031,16 +1031,19 @@ column_config = {
     ) for role_name in role_names
 }
 
-edited_liste = st.data_editor(
-    df_liste_editable,
-    use_container_width=True,
-    disabled=["Tarih"],
-    column_config=column_config,
-    key="list_editor"
-)
+# Add a form for list editing to prevent reruns on every change
+with st.form("list_edit_form"):
+    edited_liste = st.data_editor(
+        df_liste_editable,
+        use_container_width=True,
+        disabled=["Tarih"],
+        column_config=column_config,
+        key="list_editor_form_field"
+    )
+    submit_changes = st.form_submit_button("✅ Değişiklikleri Onayla", type="primary", use_container_width=True)
 
-# If list editor changes, we sync back to the main boolean dataframe
-if not edited_liste.equals(df_liste_editable):
+# If list editor changes and form is submitted, we sync back to the main boolean dataframe
+if submit_changes and not edited_liste.equals(df_liste_editable):
     # Update st.session_state.schedule_bool based on edited_liste
     new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
     for i, col in enumerate(sutunlar):
