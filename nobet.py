@@ -1077,6 +1077,39 @@ with st.form("list_edit_form"):
     )
     submit_changes = st.form_submit_button("✅ Değişiklikleri Onayla", type="primary", use_container_width=True)
 
+# Separate button for Autonomous Re-distribution (outside the form)
+if st.button("🤖 Görev Yerlerini Yeniden Dağıt (Otomatik)", use_container_width=True, help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
+    if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
+        rows_liste = st.session_state.cached_rows_liste
+        first_role_counts = {i: 0 for i in isimler}
+        new_rows_liste = []
+        
+        for row in rows_liste:
+            # Extract names currently assigned to this day
+            nobetciler = []
+            for role_name in role_names:
+                p = row.get(role_name, "-")
+                if p != "-": nobetciler.append(p)
+            
+            # Sort by who has served in the first role the least
+            nobetciler.sort(key=lambda x: first_role_counts.get(x, 0))
+            
+            new_row = {"Tarih": row["Tarih"]}
+            for idx, role_name in enumerate(role_names):
+                if len(nobetciler) > idx:
+                    p = nobetciler[idx]
+                    new_row[role_name] = p
+                    if idx == 0:
+                        first_role_counts[p] = first_role_counts.get(p, 0) + 1
+                else:
+                    new_row[role_name] = "-"
+            new_rows_liste.append(new_row)
+        
+        st.session_state.cached_rows_liste = new_rows_liste
+        st.session_state.cached_first_role_counts = first_role_counts
+        st.toast("Görev yerleri otomatik olarak dengelendi!", icon="🤖")
+        st.rerun()
+
 # If list editor changes and form is submitted, we sync back to the main boolean dataframe
 if submit_changes and not edited_liste.equals(df_liste_editable):
     # Update st.session_state.schedule_bool based on edited_liste
