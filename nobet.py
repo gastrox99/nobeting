@@ -87,9 +87,14 @@ st.markdown("""
     }
     
     /* Reduce text sizes */
-    h1 { font-size: 1.4rem !important; }
-    h2 { font-size: 1.1rem !important; }
-    h3 { font-size: 0.95rem !important; }
+    h1 { font-size: 1.8rem !important; }
+    h2 { font-size: 1.4rem !important; }
+    h3 { font-size: 1.2rem !important; }
+    
+    /* Make editor rows larger for better touch/readability */
+    [data-testid="stDataEditor"] div {
+        font-size: 14px !important;
+    }
     
     /* Make expander title smaller */
     [data-testid="stExpander"] summary {
@@ -894,20 +899,7 @@ if elapsed >= 30:
 
 # Use the current schedule for all calculations
 # In Fast Mode, we allow direct editing of the main grid
-st.subheader("📅 Nöbet Çizelgesi (Müsaitlik)")
-edited_bool = st.data_editor(
-    st.session_state.schedule_bool,
-    use_container_width=True,
-    column_config={col: st.column_config.CheckboxColumn(col) for col in sutunlar},
-    key="main_bool_editor",
-    on_change=lambda: save_undo_state(st.session_state.schedule_bool)
-)
-
-if not edited_bool.equals(st.session_state.schedule_bool):
-    st.session_state.schedule_bool = edited_bool.copy()
-    st.session_state.excel_needs_refresh = True
-    st.rerun()
-
+# REMOVED: Redundant Müsaitlik editor as requested
 edited = st.session_state.schedule_bool.copy()
 
 # --- HATA KONTROL ---
@@ -1029,10 +1021,21 @@ else:
 # Display and allow manual editing of ROLES (swapping people)
 st.subheader("📝 Liste Düzenle (Görevli Değiştir)")
 df_liste_editable = pd.DataFrame(rows_liste)
+
+# Use selectbox for role names to make editing easier and less error-prone
+column_config = {
+    role_name: st.column_config.SelectboxColumn(
+        role_name,
+        options=["-"] + isimler,
+        width="medium"
+    ) for role_name in role_names
+}
+
 edited_liste = st.data_editor(
     df_liste_editable,
     use_container_width=True,
     disabled=["Tarih"],
+    column_config=column_config,
     key="list_editor"
 )
 
