@@ -893,6 +893,21 @@ if elapsed >= 30:
         pass
 
 # Use the current schedule for all calculations
+# In Fast Mode, we allow direct editing of the main grid
+st.subheader("📅 Nöbet Çizelgesi (Müsaitlik)")
+edited_bool = st.data_editor(
+    st.session_state.schedule_bool,
+    use_container_width=True,
+    column_config={col: st.column_config.CheckboxColumn(col) for col in sutunlar},
+    key="main_bool_editor",
+    on_change=lambda: save_undo_state(st.session_state.schedule_bool)
+)
+
+if not edited_bool.equals(st.session_state.schedule_bool):
+    st.session_state.schedule_bool = edited_bool.copy()
+    st.session_state.excel_needs_refresh = True
+    st.rerun()
+
 edited = st.session_state.schedule_bool.copy()
 
 # --- HATA KONTROL ---
@@ -965,9 +980,78 @@ if st.session_state.should_regenerate_assignments or st.session_state.cached_row
     st.session_state.cached_role_names = role_names
     st.session_state.should_regenerate_assignments = False
 else:
+    # If we are not regenerating (manual edits happened), we need to SYNC rows_liste from the edited dataframe
+    # to allow editing roles (swapping people between Görev1, Görev2, etc.)
     rows_liste = st.session_state.cached_rows_liste
-    first_role_counts = st.session_state.get('cached_first_role_counts', {i: 0 for i in isimler})
+    first_role_counts = {i: 0 for i in isimler}
+    
+    # We update rows_liste based on current edited state, but keep the role structure
+    new_rows_liste = []
+    for i, col in enumerate(sutunlar):
+        current_row = rows_liste[i]
+        nobetciler_in_df = edited.index[edited[col]].tolist()
+        
+        # Update names in the row based on what's in the boolean dataframe
+        # If someone was removed, they should be '-' in all role columns
+        # If someone was added, they should be in the first available '-' slot
+        new_row = {"Tarih": current_row["Tarih"]}
+        
+        # Track who is already in the row to avoid duplicates
+        people_already_assigned = []
+        for role_name in role_names:
+            p = current_row.get(role_name, "-")
+            if p in nobetciler_in_df and p != "-":
+                new_row[role_name] = p
+                people_already_assigned.append(p)
+                if role_name == role_names[0]:
+                    first_role_counts[p] += 1
+            else:
+                new_row[role_name] = "-"
+        
+        # Add people who are in nobetciler_in_df but not yet in new_row
+        for p in nobetciler_in_df:
+            if p not in people_already_assigned:
+                # Find first '-' slot
+                for role_name in role_names:
+                    if new_row[role_name] == "-":
+                        new_row[role_name] = p
+                        if role_name == role_names[0]:
+                            first_role_counts[p] += 1
+                        break
+        
+        new_rows_liste.append(new_row)
+    
+    rows_liste = new_rows_liste
+    st.session_state.cached_rows_liste = rows_liste
+    st.session_state.cached_first_role_counts = first_role_counts
     role_names = st.session_state.get('cached_role_names', role_names)
+
+# Display and allow manual editing of ROLES (swapping people)
+st.subheader("📝 Liste Düzenle (Görevli Değiştir)")
+df_liste_editable = pd.DataFrame(rows_liste)
+edited_liste = st.data_editor(
+    df_liste_editable,
+    use_container_width=True,
+    disabled=["Tarih"],
+    key="list_editor"
+)
+
+# If list editor changes, we sync back to the main boolean dataframe
+if not edited_liste.equals(df_liste_editable):
+    # Update st.session_state.schedule_bool based on edited_liste
+    new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+    for i, col in enumerate(sutunlar):
+        row = edited_liste.iloc[i]
+        for role_name in role_names:
+            p = row.get(role_name)
+            if p in isimler:
+                new_schedule.at[p, col] = True
+    
+    st.session_state.schedule_bool = new_schedule
+    st.session_state.cached_rows_liste = edited_liste.to_dict('records')
+    st.session_state.excel_needs_refresh = True
+    st.rerun()
+
 df_liste = pd.DataFrame(rows_liste)
 
 stats_load = []
