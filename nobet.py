@@ -1084,14 +1084,19 @@ if st.button("🤖 Görev Yerlerini Yeniden Dağıt (Otomatik)", use_container_w
         first_role_counts = {i: 0 for i in isimler}
         new_rows_liste = []
         
+        # We need a stable shuffle to explore different options but still be deterministic for the counts
+        # Actually, let's just use a random shuffle of people assigned to each day to explore different orderings
         for row in rows_liste:
             # Extract names currently assigned to this day
             nobetciler = []
             for role_name in role_names:
                 p = row.get(role_name, "-")
-                if p != "-": nobetciler.append(p)
+                if p != "-" and p in isimler: nobetciler.append(p)
             
-            # Sort by who has served in the first role the least
+            # Shuffle current day's people to try a different order than before
+            random.shuffle(nobetciler)
+            
+            # Now sort by first_role_counts to keep it fair
             nobetciler.sort(key=lambda x: first_role_counts.get(x, 0))
             
             new_row = {"Tarih": row["Tarih"]}
@@ -1107,7 +1112,19 @@ if st.button("🤖 Görev Yerlerini Yeniden Dağıt (Otomatik)", use_container_w
         
         st.session_state.cached_rows_liste = new_rows_liste
         st.session_state.cached_first_role_counts = first_role_counts
-        st.toast("Görev yerleri otomatik olarak dengelendi!", icon="🤖")
+        
+        # Update schedule_bool to match the new assignments (though they shouldn't change, it's safer)
+        new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+        for i, col in enumerate(sutunlar):
+            row = new_rows_liste[i]
+            for role_name in role_names:
+                p = row.get(role_name)
+                if p in isimler:
+                    new_schedule.at[p, col] = True
+        st.session_state.schedule_bool = new_schedule
+        
+        st.session_state.excel_needs_refresh = True
+        st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
         st.rerun()
 
 # If list editor changes and form is submitted, we sync back to the main boolean dataframe
