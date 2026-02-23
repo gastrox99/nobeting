@@ -494,10 +494,16 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     with set_col2:
         current_year = datetime.now().year
         current_month = datetime.now().month
-        yil = st.number_input("📅 Yıl", 2024, 2030, current_year)
-        ay = st.selectbox("📆 Ay", range(1, 13), index=current_month - 1)
+        yil = st.number_input("📅 Yıl", 2024, 2030, value=st.session_state.get('yil_val', current_year), key='yil_input_direct')
+        st.session_state.yil_val = yil
+        
+        ay_options = list(range(1, 13))
+        ay = st.selectbox("📆 Ay", ay_options, index=ay_options.index(st.session_state.get('ay_val', current_month)), key='ay_input_direct')
+        st.session_state.ay_val = ay
+        
         gun_sayisi = calendar.monthrange(yil, ay)[1]
-        kişi_sayısı = st.slider("👤 Nöbet Başına Kişi:", 1, 5, 2)
+        kişi_sayısı = st.slider("👤 Nöbet Başına Kişi:", 1, 5, value=st.session_state.get('kisi_sayisi_val', 2), key='kisi_slider_direct')
+        st.session_state.kisi_sayisi_val = kişi_sayısı
     
     with set_col3:
         min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, 1)
@@ -1134,6 +1140,10 @@ with col_right:
             rows_liste_to_redist = st.session_state.cached_rows_liste
             first_role_counts_to_redist = {i: 0 for i in isimler}
             new_rows_liste = []
+            
+            # Use current date from session state to avoid resetting to system defaults
+            #yil_current = yil
+            #ay_current = ay
             
             for row in rows_liste_to_redist:
                 nobetciler = []
