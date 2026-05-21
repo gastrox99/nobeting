@@ -1167,53 +1167,33 @@ with tab_cal:
                         if ck in st.session_state.schedule_bool.columns else []
                     )
 
-                    # ── Hücre arkaplanı: önce gün tipi, sonra kişi rengi üst üste ──
+                    # ── Hücre arkaplanı: gün tipi renkleri korunur ──
                     if _is_tod:
-                        border = "2px solid #f59e0b"; day_c = "#b45309"
+                        cell_bg = "#fef3c7"; border = "2px solid #f59e0b"; day_c = "#b45309"
                     elif _is_hol:
-                        border = "1px solid #fca5a5"; day_c = "#dc2626"
+                        cell_bg = "#fee2e2"; border = "1px solid #fca5a5"; day_c = "#dc2626"
                     elif _is_we:
-                        border = "1px solid #93c5fd"; day_c = "#1d4ed8"
+                        cell_bg = "#dbeafe"; border = "1px solid #bfdbfe"; day_c = "#1d4ed8"
                     else:
-                        border = "1px solid #e2e8f0"; day_c = "#374151"
-
-                    if all_nobetciler:
-                        pc1 = person_colors.get(all_nobetciler[0], "#e2e8f0")
-                        if len(all_nobetciler) == 1:
-                            cell_bg = pc1
-                        elif len(all_nobetciler) == 2:
-                            pc2 = person_colors.get(all_nobetciler[1], "#e2e8f0")
-                            cell_bg = f"linear-gradient(135deg,{pc1} 50%,{pc2} 50%)"
-                        else:
-                            # 3+ kişi: ilk ikisi üçgen, geri kalanlar chip olarak zaten gösteriliyor
-                            pc2 = person_colors.get(all_nobetciler[1], "#e2e8f0")
-                            pc3 = person_colors.get(all_nobetciler[2], "#e2e8f0")
-                            cell_bg = (
-                                f"linear-gradient(135deg,"
-                                f"{pc1} 33%,{pc2} 33%,{pc2} 66%,{pc3} 66%)"
-                            )
-                        # Bugün / tatil kenarlıklarını koru ama arka plan person color
-                        if _is_tod:
-                            border = "2px solid #f59e0b"; day_c = "#92400e"
-                        elif _is_hol:
-                            border = "2px solid #dc2626"; day_c = "#dc2626"
-                        elif _is_we:
-                            border = "1px solid #93c5fd"; day_c = "#1d4ed8"
-                        else:
-                            border = f"1px solid {pc1}"
-                    else:
-                        if _is_tod:
-                            cell_bg = "#fef3c7"
-                        elif _is_hol:
-                            cell_bg = "#fee2e2"
-                        elif _is_we:
-                            cell_bg = "#eff6ff"
-                        else:
-                            cell_bg = "#f8fafc"
+                        cell_bg = "#f8fafc"; border = "1px solid #e2e8f0"; day_c = "#374151"
 
                     if _is_sel:
                         border = "2px solid #6366f1"
-                        # Seçili ama kişi rengi varsa hafif mavi kaplama yerine kişi rengini koru
+
+                    # Kişi renk bandı: nöbetçilerin renkleri hücre altında ince bant olarak
+                    color_bar_html = ""
+                    if all_nobetciler:
+                        _default_pc = "#e2e8f0"
+                        bar_parts = "".join(
+                            "<div style='flex:1;background:{};'></div>".format(
+                                person_colors.get(p, _default_pc)
+                            )
+                            for p in all_nobetciler
+                        )
+                        color_bar_html = (
+                            "<div style='display:flex;height:5px;border-radius:0 0 7px 7px;"
+                            "overflow:hidden;margin:-7px -7px 0 -7px;'>{}</div>".format(bar_parts)
+                        )
                     # Filtre uygula (sadece görsel; boş filtre = hepsi)
                     visible = [p for p in all_nobetciler if (not cal_filter_persons or p in cal_filter_persons)]
 
@@ -1246,9 +1226,10 @@ with tab_cal:
 
                     st.markdown(
                         f"<div style='background:{cell_bg};border:{border};border-radius:10px;"
-                        f"padding:7px;min-height:95px;opacity:{cell_opacity};'>"
+                        f"padding:7px;min-height:95px;opacity:{cell_opacity};overflow:hidden;'>"
                         f"<div style='font-size:15px;font-weight:700;color:{day_c};'>{day_icon}{dn}</div>"
                         f"<div style='margin-top:3px;'>{chips}{empty_msg}</div>"
+                        f"{color_bar_html}"
                         f"</div>",
                         unsafe_allow_html=True
                     )
