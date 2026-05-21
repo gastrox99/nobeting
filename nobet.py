@@ -1003,17 +1003,12 @@ with tab_cal:
                         sel_col in st.session_state.schedule_bool.columns
                     ) else False
                     pref_icon = {1: "🟢", 2: "🟡", 3: "🔴"}.get(pref_val, "")
-                    pref_hint = {1: " tercih", 2: " kaçın", 3: " yasak"}.get(pref_val, "")
+                    pref_hint = {1: "(tercih)", 2: "(kaçın)", 3: "(yasak)"}.get(pref_val, "")
                     is_blocked = (pref_val == 3)
                     pc = person_colors.get(person, "#e2e8f0")
                     with cb_cols[p_idx % n_cols]:
-                        st.markdown(
-                            f"<div style='display:inline-block;width:10px;height:10px;border-radius:50%;"
-                            f"background:{pc};margin-right:4px;vertical-align:middle;'></div>",
-                            unsafe_allow_html=True
-                        )
                         new_vals[person] = st.checkbox(
-                            f"{pref_icon} {person}{pref_hint}",
+                            f"{pref_icon} {person} {pref_hint}".strip(),
                             value=cur_val if not is_blocked else False,
                             disabled=is_blocked,
                             key=f"cal_form_cb_{sel_day}_{person}"
@@ -1096,11 +1091,11 @@ with tab_cal:
                         ) else 0
                         outline = {1: "2px solid #16a34a", 2: "2px solid #d97706", 3: "2px solid #dc2626"}.get(pv, "none")
                         chips += (
-                            f"<div style='display:flex;align-items:center;gap:2px;margin:2px 0;'>"
-                            f"<span style='background:{pc};border-radius:8px;padding:1px 6px;"
-                            f"font-size:10px;font-weight:600;color:#1f2937;white-space:nowrap;"
+                            f"<div style='display:flex;align-items:center;gap:3px;margin:2px 0;'>"
+                            f"<span style='background:{pc};border-radius:8px;padding:2px 8px;"
+                            f"font-size:12px;font-weight:700;color:#1f2937;white-space:nowrap;"
                             f"outline:{outline};'>{p}</span>"
-                            f"<span style='font-size:9px;color:#6b7280;white-space:nowrap;'>{rl}</span>"
+                            f"<span style='font-size:10px;color:#6b7280;white-space:nowrap;'>{rl}</span>"
                             f"</div>"
                         )
 
