@@ -966,6 +966,107 @@ with tab_cal:
             unsafe_allow_html=True
         )
 
+    # ── KİŞİ DETAY KARTI (tek kişi seçilince) ────────────
+    if len(cal_filter_persons) == 1:
+        dp = cal_filter_persons[0]
+        dp_color = person_colors.get(dp, "#e2e8f0")
+        dp_shifts = [col for col in sutunlar if (
+            dp in st.session_state.schedule_bool.index and
+            bool(st.session_state.schedule_bool.at[dp, col])
+        )]
+        dp_we = sum(1 for c in dp_shifts if gun_detaylari[c]['weekend'])
+        dp_hol = sum(1 for c in dp_shifts if gun_detaylari[c]['holiday'])
+        dp_weekday = len(dp_shifts) - dp_we
+        dp_total_h = len(dp_shifts) * 24
+        dp_fm_h = max(0, dp_total_h - zorunlu_saat)
+        dp_pay = dp_fm_h * nobet_ucreti
+        # Tercih istatistikleri (sadece nöbet tutulan günler)
+        dp_pref_on_shift = {0: 0, 1: 0, 2: 0, 3: 0}
+        dp_pref_all = {0: 0, 1: 0, 2: 0, 3: 0}
+        for col in sutunlar:
+            pv = int(st.session_state.pref_df.at[dp, col]) if (
+                dp in st.session_state.pref_df.index and col in st.session_state.pref_df.columns
+            ) else 0
+            dp_pref_all[pv] += 1
+            if col in dp_shifts:
+                dp_pref_on_shift[pv] += 1
+        dp_green_ok = dp_pref_on_shift[1]
+        dp_yellow_hit = dp_pref_on_shift[2]
+        dp_red_hit = dp_pref_on_shift[3]
+        dp_total_pref = dp_pref_all[1] + dp_pref_all[2]
+        # Tercih başarısı: yeşil günlerde kaç atama yapıldı
+        dp_pref_score = (
+            int(dp_green_ok / dp_pref_all[1] * 100) if dp_pref_all[1] > 0 else None
+        )
+
+        st.markdown(
+            f"<div style='background:linear-gradient(135deg,{dp_color}55 0%,#f8fafc 60%);"
+            f"border:2px solid {dp_color};border-radius:14px;padding:16px 20px;margin-bottom:12px;'>"
+            f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px;'>"
+            f"<span style='background:{dp_color};border-radius:50%;width:36px;height:36px;"
+            f"display:inline-flex;align-items:center;justify-content:center;"
+            f"font-size:16px;font-weight:800;color:#1f2937;border:2px solid rgba(0,0,0,0.1);'>"
+            f"{dp[0].upper()}</span>"
+            f"<span style='font-size:20px;font-weight:800;color:#1f2937;'>{dp}</span>"
+            f"<span style='font-size:13px;color:#6b7280;margin-left:4px;'>"
+            f"— {ay} / {yil}</span></div>"
+            f"<div style='display:flex;flex-wrap:wrap;gap:10px;'>"
+            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
+            f"<div style='font-size:22px;font-weight:800;color:#1d4ed8;'>{len(dp_shifts)}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>Toplam Nöbet</div></div>"
+            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
+            f"<div style='font-size:22px;font-weight:800;color:#374151;'>{dp_weekday}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>Hafta İçi</div></div>"
+            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
+            f"<div style='font-size:22px;font-weight:800;color:#1d4ed8;'>{dp_we}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>Hafta Sonu</div></div>"
+            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
+            f"<div style='font-size:22px;font-weight:800;color:#dc2626;'>{dp_hol}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>Tatil</div></div>"
+            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
+            f"<div style='font-size:22px;font-weight:800;color:#16a34a;'>{'%{}'.format(dp_pref_score) if dp_pref_score is not None else '—'}</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>Tercih Başarısı</div></div>"
+            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
+            f"<div style='font-size:22px;font-weight:800;color:#9333ea;'>{dp_pay:.0f} ₺</div>"
+            f"<div style='font-size:11px;color:#6b7280;'>Tahmini Ödeme</div></div>"
+            f"</div>"
+            f"<div style='margin-top:10px;font-size:11px;color:#6b7280;'>"
+            f"🟢 {dp_green_ok} tercih tuttu &nbsp;·&nbsp; "
+            f"🟡 {dp_yellow_hit} kaçın gününde atandı &nbsp;·&nbsp; "
+            f"🔴 {dp_red_hit} yasak günde atandı</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+        # Nöbet günleri satırı
+        if dp_shifts:
+            day_pills = ""
+            for c in dp_shifts:
+                inf = gun_detaylari[c]
+                dn2 = inf['day_num']
+                dn2_name = tr_gunler[date(yil, ay, dn2).weekday()]
+                if inf['holiday']:
+                    pill_bg = "#fee2e2"; pill_tc = "#dc2626"
+                elif inf['weekend']:
+                    pill_bg = "#dbeafe"; pill_tc = "#1d4ed8"
+                else:
+                    pill_bg = dp_color; pill_tc = "#1f2937"
+                day_pills += (
+                    f"<span style='display:inline-block;background:{pill_bg};color:{pill_tc};"
+                    f"border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;"
+                    f"margin:2px;white-space:nowrap;'>{dn2} {dn2_name}</span>"
+                )
+            st.markdown(
+                f"<div style='margin:6px 0 12px 0;line-height:2;'>{day_pills}</div>",
+                unsafe_allow_html=True
+            )
+
     # ── Seçili gün düzenleme paneli (form tabanlı) ────────
     if st.session_state.selected_cal_day is not None:
         sel_day = st.session_state.selected_cal_day
@@ -1060,22 +1161,59 @@ with tab_cal:
                     _is_tod = (date(yil, ay, dn) == today_date)
                     _is_sel = (st.session_state.selected_cal_day == dn)
 
-                    if _is_tod:
-                        cell_bg = "#fef3c7"; border = "2px solid #f59e0b"; day_c = "#b45309"
-                    elif _is_hol:
-                        cell_bg = "#fee2e2"; border = "1px solid #fca5a5"; day_c = "#dc2626"
-                    elif _is_we:
-                        cell_bg = "#dbeafe"; border = "1px solid #bfdbfe"; day_c = "#1d4ed8"
-                    else:
-                        cell_bg = "#f8fafc"; border = "1px solid #e2e8f0"; day_c = "#374151"
-                    if _is_sel:
-                        border = "2px solid #6366f1"; cell_bg = "#eef2ff"
-
                     # Nöbetçi listesi (isimler sırasına göre = rol sırası)
                     all_nobetciler = (
                         st.session_state.schedule_bool.index[st.session_state.schedule_bool[ck]].tolist()
                         if ck in st.session_state.schedule_bool.columns else []
                     )
+
+                    # ── Hücre arkaplanı: önce gün tipi, sonra kişi rengi üst üste ──
+                    if _is_tod:
+                        border = "2px solid #f59e0b"; day_c = "#b45309"
+                    elif _is_hol:
+                        border = "1px solid #fca5a5"; day_c = "#dc2626"
+                    elif _is_we:
+                        border = "1px solid #93c5fd"; day_c = "#1d4ed8"
+                    else:
+                        border = "1px solid #e2e8f0"; day_c = "#374151"
+
+                    if all_nobetciler:
+                        pc1 = person_colors.get(all_nobetciler[0], "#e2e8f0")
+                        if len(all_nobetciler) == 1:
+                            cell_bg = pc1
+                        elif len(all_nobetciler) == 2:
+                            pc2 = person_colors.get(all_nobetciler[1], "#e2e8f0")
+                            cell_bg = f"linear-gradient(135deg,{pc1} 50%,{pc2} 50%)"
+                        else:
+                            # 3+ kişi: ilk ikisi üçgen, geri kalanlar chip olarak zaten gösteriliyor
+                            pc2 = person_colors.get(all_nobetciler[1], "#e2e8f0")
+                            pc3 = person_colors.get(all_nobetciler[2], "#e2e8f0")
+                            cell_bg = (
+                                f"linear-gradient(135deg,"
+                                f"{pc1} 33%,{pc2} 33%,{pc2} 66%,{pc3} 66%)"
+                            )
+                        # Bugün / tatil kenarlıklarını koru ama arka plan person color
+                        if _is_tod:
+                            border = "2px solid #f59e0b"; day_c = "#92400e"
+                        elif _is_hol:
+                            border = "2px solid #dc2626"; day_c = "#dc2626"
+                        elif _is_we:
+                            border = "1px solid #93c5fd"; day_c = "#1d4ed8"
+                        else:
+                            border = f"1px solid {pc1}"
+                    else:
+                        if _is_tod:
+                            cell_bg = "#fef3c7"
+                        elif _is_hol:
+                            cell_bg = "#fee2e2"
+                        elif _is_we:
+                            cell_bg = "#eff6ff"
+                        else:
+                            cell_bg = "#f8fafc"
+
+                    if _is_sel:
+                        border = "2px solid #6366f1"
+                        # Seçili ama kişi rengi varsa hafif mavi kaplama yerine kişi rengini koru
                     # Filtre uygula (sadece görsel; boş filtre = hepsi)
                     visible = [p for p in all_nobetciler if (not cal_filter_persons or p in cal_filter_persons)]
 
