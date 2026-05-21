@@ -863,7 +863,7 @@ for i, col in enumerate(sutunlar):
         elif is_hol:
             num_style = "color:#c62828;font-weight:700;font-size:14px;"
             name_style = "color:#c62828;font-size:11px;"
-            badge = "!"
+            badge = "🎉"
         elif is_we:
             num_style = "color:#1d4ed8;font-weight:700;font-size:14px;"
             name_style = "color:#1d4ed8;font-size:11px;"
