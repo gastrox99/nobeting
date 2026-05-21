@@ -945,44 +945,94 @@ with tab_grid:
 # TAB 2: TAKVİM GÖRÜNÜMü
 # ═══════════════════════════════════════════════════════
 with tab_cal:
-    st.markdown("""
-<style>
-.cal-cell { border-radius:10px; padding:8px; min-height:90px; margin:2px; cursor:pointer; transition:box-shadow 0.15s; }
-.cal-cell:hover { box-shadow: 0 3px 10px rgba(0,0,0,0.15); }
-</style>
-""", unsafe_allow_html=True)
+    # Rol isimleri (Görev1, Görev2 vb.)
+    _cal_role_names = st.session_state.get('rol_isimleri', [f"Görev{i+1}" for i in range(kişi_sayısı)])
 
-    # Seçili gün düzenleme paneli
+    # ── Filtre + açıklama satırı ──────────────────────────
+    cal_top1, cal_top2 = st.columns([3, 2])
+    with cal_top1:
+        cal_filter_persons = st.multiselect(
+            "Kişiye göre filtrele:",
+            options=isimler,
+            default=[],
+            key="cal_person_filter",
+            placeholder="Tüm ekip gösteriliyor"
+        )
+    with cal_top2:
+        st.markdown(
+            "<div style='padding-top:28px;font-size:12px;color:#6b7280;'>"
+            "🟢 Tercih &nbsp; 🟡 Kaçın &nbsp; 🔴 Müsait Değil &nbsp; ✏️ Düzenle"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+    # ── Seçili gün düzenleme paneli (form tabanlı) ────────
     if st.session_state.selected_cal_day is not None:
         sel_day = st.session_state.selected_cal_day
         sel_col = f"{sel_day} {tr_gunler[date(yil, ay, sel_day).weekday()]}"
+        _sel_date_obj = date(yil, ay, sel_day)
+        _sel_day_name = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"][_sel_date_obj.weekday()]
+        _sel_is_hol = sel_day in tatil_gunleri
+        _header_extra = " 🎉 Tatil" if _sel_is_hol else ""
+
         with st.container(border=True):
-            ep1, ep2 = st.columns([5, 1])
-            with ep1:
-                st.markdown(f"**✏️ {sel_day}. Gün — Nöbet Ataması**")
-            with ep2:
+            hdr1, hdr2 = st.columns([5, 1])
+            with hdr1:
+                st.markdown(
+                    f"**✏️ {sel_day} {_sel_day_name}{_header_extra} — Nöbet Ataması**  \n"
+                    f"<span style='font-size:12px;color:#6b7280;'>🔴 müsait değil = atanamaz &nbsp;|&nbsp; "
+                    f"🟢 tercih edilen gün &nbsp;|&nbsp; 🟡 kaçınılması istenen gün</span>",
+                    unsafe_allow_html=True
+                )
+            with hdr2:
                 if st.button("✕ Kapat", key="cal_close"):
                     st.session_state.selected_cal_day = None
                     st.rerun()
-            cb_cols = st.columns(min(4, len(isimler)))
-            changed_cal = False
-            for p_idx, person in enumerate(isimler):
-                with cb_cols[p_idx % min(4, len(isimler))]:
+
+            with st.form(f"cal_edit_form_{sel_day}"):
+                n_cols = min(4, max(1, len(isimler)))
+                cb_cols = st.columns(n_cols)
+                new_vals = {}
+                for p_idx, person in enumerate(isimler):
+                    pref_val = int(st.session_state.pref_df.at[person, sel_col]) if (
+                        person in st.session_state.pref_df.index and
+                        sel_col in st.session_state.pref_df.columns
+                    ) else 0
+                    cur_val = bool(st.session_state.schedule_bool.at[person, sel_col]) if (
+                        person in st.session_state.schedule_bool.index and
+                        sel_col in st.session_state.schedule_bool.columns
+                    ) else False
+                    pref_icon = {1: "🟢", 2: "🟡", 3: "🔴"}.get(pref_val, "")
+                    pref_hint = {1: " tercih", 2: " kaçın", 3: " yasak"}.get(pref_val, "")
+                    is_blocked = (pref_val == 3)
                     pc = person_colors.get(person, "#e2e8f0")
-                    cur_val = bool(st.session_state.schedule_bool.at[person, sel_col]) if sel_col in st.session_state.schedule_bool.columns else False
-                    new_val = st.checkbox(
-                        person, value=cur_val,
-                        key=f"cal_cb_{sel_day}_{person}"
-                    )
-                    if new_val != cur_val:
-                        save_undo_state(st.session_state.schedule_bool)
-                        st.session_state.schedule_bool.at[person, sel_col] = new_val
-                        changed_cal = True
-            if changed_cal:
-                st.rerun()
+                    with cb_cols[p_idx % n_cols]:
+                        st.markdown(
+                            f"<div style='display:inline-block;width:10px;height:10px;border-radius:50%;"
+                            f"background:{pc};margin-right:4px;vertical-align:middle;'></div>",
+                            unsafe_allow_html=True
+                        )
+                        new_vals[person] = st.checkbox(
+                            f"{pref_icon} {person}{pref_hint}",
+                            value=cur_val if not is_blocked else False,
+                            disabled=is_blocked,
+                            key=f"cal_form_cb_{sel_day}_{person}"
+                        )
+                submitted = st.form_submit_button("✅ Kaydet", type="primary", use_container_width=True)
+                if submitted:
+                    save_undo_state(st.session_state.schedule_bool)
+                    for person, val in new_vals.items():
+                        pv = int(st.session_state.pref_df.at[person, sel_col]) if (
+                            person in st.session_state.pref_df.index and
+                            sel_col in st.session_state.pref_df.columns
+                        ) else 0
+                        if pv != 3 and sel_col in st.session_state.schedule_bool.columns:
+                            st.session_state.schedule_bool.at[person, sel_col] = val
+                    st.session_state.selected_cal_day = None
+                    st.rerun()
         st.markdown("---")
 
-    # Takvim başlık satırı (Pzt → Paz)
+    # ── Takvim başlık satırı (Pzt → Paz) ─────────────────
     cal_day_names = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
     cal_hdr = st.columns(7)
     for j, gn in enumerate(cal_day_names):
@@ -995,7 +1045,7 @@ with tab_cal:
                 unsafe_allow_html=True
             )
 
-    # Takvim hücreleri
+    # ── Takvim hücreleri ──────────────────────────────────
     first_weekday = date(yil, ay, 1).weekday()
     cal_day_num = 1
     for week in range(6):
@@ -1006,7 +1056,7 @@ with tab_cal:
             with week_cols[j]:
                 abs_pos = week * 7 + j
                 if abs_pos < first_weekday or cal_day_num > gun_sayisi:
-                    st.markdown("<div style='min-height:90px;'></div>", unsafe_allow_html=True)
+                    st.markdown("<div style='min-height:95px;'></div>", unsafe_allow_html=True)
                 else:
                     dn = cal_day_num
                     ck = f"{dn} {tr_gunler[date(yil, ay, dn).weekday()]}"
@@ -1023,27 +1073,49 @@ with tab_cal:
                         cell_bg = "#dbeafe"; border = "1px solid #bfdbfe"; day_c = "#1d4ed8"
                     else:
                         cell_bg = "#f8fafc"; border = "1px solid #e2e8f0"; day_c = "#374151"
-
                     if _is_sel:
-                        border = "2px solid #6366f1"
-                        cell_bg = "#eef2ff"
+                        border = "2px solid #6366f1"; cell_bg = "#eef2ff"
 
-                    nobetciler_cal = st.session_state.schedule_bool.index[st.session_state.schedule_bool[ck]].tolist() if ck in st.session_state.schedule_bool.columns else []
+                    # Nöbetçi listesi (isimler sırasına göre = rol sırası)
+                    all_nobetciler = (
+                        st.session_state.schedule_bool.index[st.session_state.schedule_bool[ck]].tolist()
+                        if ck in st.session_state.schedule_bool.columns else []
+                    )
+                    # Filtre uygula (sadece görsel; boş filtre = hepsi)
+                    visible = [p for p in all_nobetciler if (not cal_filter_persons or p in cal_filter_persons)]
 
-                    chips = "".join([
-                        f"<span style='display:inline-block;background:{person_colors.get(p,'#e2e8f0')};"
-                        f"border-radius:10px;padding:1px 6px;font-size:10px;font-weight:600;"
-                        f"color:#1f2937;margin:1px;white-space:nowrap;'>{p}</span>"
-                        for p in nobetciler_cal
-                    ])
+                    chips = ""
+                    for role_idx, p in enumerate(all_nobetciler):
+                        if cal_filter_persons and p not in cal_filter_persons:
+                            continue
+                        pc = person_colors.get(p, '#e2e8f0')
+                        rl = _cal_role_names[role_idx] if role_idx < len(_cal_role_names) else f"G{role_idx+1}"
+                        # Müsaitlik rengi kenarlık olarak
+                        pv = int(st.session_state.pref_df.at[p, ck]) if (
+                            p in st.session_state.pref_df.index and ck in st.session_state.pref_df.columns
+                        ) else 0
+                        outline = {1: "2px solid #16a34a", 2: "2px solid #d97706", 3: "2px solid #dc2626"}.get(pv, "none")
+                        chips += (
+                            f"<div style='display:flex;align-items:center;gap:2px;margin:2px 0;'>"
+                            f"<span style='background:{pc};border-radius:8px;padding:1px 6px;"
+                            f"font-size:10px;font-weight:600;color:#1f2937;white-space:nowrap;"
+                            f"outline:{outline};'>{p}</span>"
+                            f"<span style='font-size:9px;color:#6b7280;white-space:nowrap;'>{rl}</span>"
+                            f"</div>"
+                        )
+
                     day_icon = "🎉" if _is_hol else ("★" if _is_tod else "")
-                    empty_msg = "<span style='color:#9ca3af;font-size:10px;'>Boş</span>" if not chips else ""
+                    # Filtreli görünümde bu günde seçili kişi var mı?
+                    has_filtered = bool(visible) if cal_filter_persons else bool(all_nobetciler)
+                    empty_msg = "" if chips else "<span style='color:#9ca3af;font-size:10px;'>Boş</span>"
+                    # Filtre varsa ama bu günde o kişi yoksa soluk göster
+                    cell_opacity = "1" if (not cal_filter_persons or has_filtered) else "0.35"
 
                     st.markdown(
                         f"<div style='background:{cell_bg};border:{border};border-radius:10px;"
-                        f"padding:7px;min-height:90px;'>"
-                        f"<div style='font-size:16px;font-weight:700;color:{day_c};'>{day_icon}{dn}</div>"
-                        f"<div style='margin-top:4px;line-height:1.6;'>{chips}{empty_msg}</div>"
+                        f"padding:7px;min-height:95px;opacity:{cell_opacity};'>"
+                        f"<div style='font-size:15px;font-weight:700;color:{day_c};'>{day_icon}{dn}</div>"
+                        f"<div style='margin-top:3px;'>{chips}{empty_msg}</div>"
                         f"</div>",
                         unsafe_allow_html=True
                     )
