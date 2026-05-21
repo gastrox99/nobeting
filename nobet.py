@@ -710,6 +710,16 @@ for i in isimler:
 for i in isimler: 
     if i not in st.session_state.inputs: st.session_state.inputs[i] = ""
 
+# --- KİŞİ RENK PALETİ (20 pastel ton) ---
+PASTEL_COLORS = [
+    "#AED6F1", "#A9DFBF", "#F9E79F", "#F5CBA7", "#D2B4DE",
+    "#F1948A", "#A3E4D7", "#FAD7A0", "#ABEBC6", "#D7BDE2",
+    "#7FB3D3", "#82E0AA", "#F8C471", "#F0A987", "#C39BD3",
+    "#7DCEA0", "#85C1E9", "#F7DC6F", "#BB8FCE", "#F0B27A",
+]
+person_colors = {isim: PASTEL_COLORS[i % len(PASTEL_COLORS)] for i, isim in enumerate(isimler)}
+today_date = date.today()
+
 # --- BİRLEŞİK TABLO ---
 st.header("📅 Nöbet Çizelgesi")
 
@@ -729,96 +739,98 @@ else:
 
 # Initialize edit mode
 if 'edit_mode' not in st.session_state:
-    st.session_state.edit_mode = "tercih"  # tercih or atama
+    st.session_state.edit_mode = "tercih"
 
-# Mode selector and paint color
-mode_cols = st.columns([2, 3])
-with mode_cols[0]:
-    edit_mode = st.radio(
-        "Düzenleme Modu:",
-        ["🎨 Tercih Belirle", "✏️ Nöbet Ata/Kaldır"],
-        horizontal=True,
-        key="mode_radio"
-    )
-    st.session_state.edit_mode = "tercih" if "Tercih" in edit_mode else "atama"
+if 'selected_cal_day' not in st.session_state:
+    st.session_state.selected_cal_day = None
 
-with mode_cols[1]:
-    if st.session_state.edit_mode == "tercih":
-        color_info = [
-            (0, "⬜Nötr"),
-            (1, "🟩Tercih"),
-            (2, "🟨Kaçın"),
-            (3, "🟥Yok")
-        ]
-        if 'paint_color' not in st.session_state:
-            st.session_state.paint_color = 0
-        
-        color_cols = st.columns(4)
-        for i, (val, label) in enumerate(color_info):
-            with color_cols[i]:
-                btn_type = "primary" if st.session_state.paint_color == val else "secondary"
-                if st.button(label, key=f"color_{val}", type=btn_type):
-                    st.session_state.paint_color = val
-                    st.rerun()
-        selected_label = color_info[st.session_state.paint_color][1]
-    else:
-        st.info("Tıklayarak nöbet ekle/kaldır ✓")
+tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"])
 
-# Quick actions row
-action_cols = st.columns(3)
-with action_cols[0]:
-    if st.button("⚡ Simülasyon", type="primary", use_container_width=True):
-        st.session_state.run_simulation = True
-with action_cols[1]:
-    if st.button("🔄 Sıfırla", use_container_width=True):
-        st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
-        st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
-        st.rerun()
-with action_cols[2]:
-    if st.button("↩️ Geri", use_container_width=True, disabled=len(st.session_state.undo_history)==0):
-        if st.session_state.undo_history:
-            st.session_state.redo_history.append(st.session_state.schedule_bool.copy())
-            st.session_state.schedule_bool = st.session_state.undo_history.pop()
+# ═══════════════════════════════════════════════════════
+# TAB 1: TABLO GÖRÜNÜMü
+# ═══════════════════════════════════════════════════════
+with tab_grid:
+    # Mode selector and paint color
+    mode_cols = st.columns([2, 3])
+    with mode_cols[0]:
+        edit_mode = st.radio(
+            "Düzenleme Modu:",
+            ["🎨 Tercih Belirle", "✏️ Nöbet Ata/Kaldır"],
+            horizontal=True,
+            key="mode_radio"
+        )
+        st.session_state.edit_mode = "tercih" if "Tercih" in edit_mode else "atama"
+
+    with mode_cols[1]:
+        if st.session_state.edit_mode == "tercih":
+            color_info = [
+                (0, "⬜Nötr"),
+                (1, "🟩Tercih"),
+                (2, "🟨Kaçın"),
+                (3, "🟥Yok")
+            ]
+            if 'paint_color' not in st.session_state:
+                st.session_state.paint_color = 0
+            color_cols = st.columns(4)
+            for i, (val, label) in enumerate(color_info):
+                with color_cols[i]:
+                    btn_type = "primary" if st.session_state.paint_color == val else "secondary"
+                    if st.button(label, key=f"color_{val}", type=btn_type):
+                        st.session_state.paint_color = val
+                        st.rerun()
+            selected_label = color_info[st.session_state.paint_color][1]
+        else:
+            st.info("Tıklayarak nöbet ekle/kaldır ✓")
+
+    # Quick actions row
+    action_cols = st.columns(3)
+    with action_cols[0]:
+        if st.button("⚡ Simülasyon", type="primary", use_container_width=True):
+            st.session_state.run_simulation = True
+    with action_cols[1]:
+        if st.button("🔄 Sıfırla", use_container_width=True):
+            st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
+            st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
             st.rerun()
+    with action_cols[2]:
+        if st.button("↩️ Geri", use_container_width=True, disabled=len(st.session_state.undo_history)==0):
+            if st.session_state.undo_history:
+                st.session_state.redo_history.append(st.session_state.schedule_bool.copy())
+                st.session_state.schedule_bool = st.session_state.undo_history.pop()
+                st.rerun()
 
-# --- Dynamic column background CSS (weekends=blue, holidays=red, today=amber) ---
-today_date = date.today()
-col_bg_css_parts = []
-for _i, _col in enumerate(sutunlar):
-    _idx = _i + 2  # nth-child: 1=name col, 2=first day col
-    _info = gun_detaylari[_col]
-    _is_today = (date(yil, ay, _info['day_num']) == today_date)
-    if _is_today:
-        col_bg_css_parts.append(
-            f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
-            f"{{ background:rgba(254,243,199,0.75)!important; border-radius:6px; outline:2px solid #f59e0b; }}"
-        )
-    elif _info['holiday']:
-        col_bg_css_parts.append(
-            f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
-            f"{{ background:rgba(254,226,226,0.55)!important; border-radius:6px; }}"
-        )
-    elif _info['weekend']:
-        col_bg_css_parts.append(
-            f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
-            f"{{ background:rgba(219,234,254,0.5)!important; border-radius:6px; }}"
-        )
+    # Dynamic column background CSS
+    col_bg_css_parts = []
+    for _i, _col in enumerate(sutunlar):
+        _idx = _i + 2
+        _info = gun_detaylari[_col]
+        _is_today = (date(yil, ay, _info['day_num']) == today_date)
+        if _is_today:
+            col_bg_css_parts.append(
+                f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{{ background:rgba(254,243,199,0.75)!important; border-radius:6px; outline:2px solid #f59e0b; }}"
+            )
+        elif _info['holiday']:
+            col_bg_css_parts.append(
+                f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{{ background:rgba(254,226,226,0.55)!important; border-radius:6px; }}"
+            )
+        elif _info['weekend']:
+            col_bg_css_parts.append(
+                f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{{ background:rgba(219,234,254,0.5)!important; border-radius:6px; }}"
+            )
+    col_bg_css = "\n".join(col_bg_css_parts)
 
-col_bg_css = "\n".join(col_bg_css_parts)
-
-st.markdown(f"""
+    st.markdown(f"""
 <style>
-/* Name column sticky background */
 .schedule-grid [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1) {{
     background: #f8fafc !important;
     border-right: 2px solid #e2e8f0;
     min-width: 80px;
 }}
-/* Column backgrounds */
 {col_bg_css}
-/* Compact column padding */
 .schedule-grid div[data-testid="column"] {{ padding: 0 1px !important; }}
-/* Button base style */
 .schedule-grid .stButton > button {{
     padding: 0px !important;
     min-height: 30px !important;
@@ -838,125 +850,207 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# Grid wrapper with horizontal scroll for mobile
-st.markdown('<div class="schedule-grid-wrapper"><div class="schedule-grid">', unsafe_allow_html=True)
+    st.markdown('<div class="schedule-grid-wrapper"><div class="schedule-grid">', unsafe_allow_html=True)
 
-# Full month grid - header row
-tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
-header_cols = st.columns([2] + [1] * len(sutunlar))
-with header_cols[0]:
-    st.markdown("<div style='font-size:13px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
-
-for i, col in enumerate(sutunlar):
-    with header_cols[i + 1]:
-        _info = gun_detaylari[col]
-        day_num = _info['day_num']
-        is_we = _info['weekend']
-        is_hol = _info['holiday']
-        _is_today = (date(yil, ay, day_num) == today_date)
-        day_name = tr_gunler_short[date(yil, ay, day_num).weekday()]
-
-        if _is_today:
-            num_style = "color:#b45309;font-weight:800;font-size:15px;"
-            name_style = "color:#b45309;font-size:11px;"
-            badge = "★"
-        elif is_hol:
-            num_style = "color:#c62828;font-weight:700;font-size:14px;"
-            name_style = "color:#c62828;font-size:11px;"
-            badge = "🎉"
-        elif is_we:
-            num_style = "color:#1d4ed8;font-weight:700;font-size:14px;"
-            name_style = "color:#1d4ed8;font-size:11px;"
-            badge = ""
-        else:
-            num_style = "color:#374151;font-size:14px;"
-            name_style = "color:#9ca3af;font-size:11px;"
-            badge = ""
-
-        st.markdown(
-            f"<div style='text-align:center;line-height:1.35;padding:2px 0;'>"
-            f"<div style='{num_style}'>{badge}{day_num}</div>"
-            f"<div style='{name_style}'>{day_name}</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-
-# Data rows - each person on one row
-_person_limits = st.session_state.get('person_limits', {})
-for person in isimler:
-    row_cols = st.columns([2] + [1] * len(sutunlar))
-    with row_cols[0]:
-        count = int(st.session_state.schedule_bool.loc[person].sum()) if person in st.session_state.schedule_bool.index else 0
-        p_lim = _person_limits.get(person, {})
-        min_l = p_lim.get('min', 0)
-        max_l = p_lim.get('max', 999)
-        if count < min_l:
-            badge_bg = "#dc2626"
-        elif max_l < 999 and count > max_l:
-            badge_bg = "#dc2626"
-        else:
-            badge_bg = "#16a34a"
-        st.markdown(
-            f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
-            f"<b>{person}</b>&nbsp;"
-            f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-
+    tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
+    header_cols = st.columns([2] + [1] * len(sutunlar))
+    with header_cols[0]:
+        st.markdown("<div style='font-size:13px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
     for i, col in enumerate(sutunlar):
-        with row_cols[i + 1]:
-            pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
-            is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
-
-            if is_assigned:
-                if pref_val == 1:
-                    label = "✅"
-                elif pref_val == 2:
-                    label = "⚠️"
-                elif pref_val == 3:
-                    label = "🚫"
-                else:
-                    label = "●"
+        with header_cols[i + 1]:
+            _info = gun_detaylari[col]
+            day_num = _info['day_num']
+            is_we = _info['weekend']
+            is_hol = _info['holiday']
+            _is_today = (date(yil, ay, day_num) == today_date)
+            day_name = tr_gunler_short[date(yil, ay, day_num).weekday()]
+            if _is_today:
+                num_style = "color:#b45309;font-weight:800;font-size:15px;"
+                name_style = "color:#b45309;font-size:11px;"
+                badge = "★"
+            elif is_hol:
+                num_style = "color:#c62828;font-weight:700;font-size:14px;"
+                name_style = "color:#c62828;font-size:11px;"
+                badge = "🎉"
+            elif is_we:
+                num_style = "color:#1d4ed8;font-weight:700;font-size:14px;"
+                name_style = "color:#1d4ed8;font-size:11px;"
+                badge = ""
             else:
-                if pref_val == 1:
-                    label = "🟢"
-                elif pref_val == 2:
-                    label = "🟡"
-                elif pref_val == 3:
-                    label = "🔴"
-                else:
-                    label = "○"
+                num_style = "color:#374151;font-size:14px;"
+                name_style = "color:#9ca3af;font-size:11px;"
+                badge = ""
+            st.markdown(
+                f"<div style='text-align:center;line-height:1.35;padding:2px 0;'>"
+                f"<div style='{num_style}'>{badge}{day_num}</div>"
+                f"<div style='{name_style}'>{day_name}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
 
-            if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
-                if st.session_state.edit_mode == "tercih":
-                    st.session_state.pref_df.at[person, col] = st.session_state.paint_color
+    _person_limits = st.session_state.get('person_limits', {})
+    for person in isimler:
+        row_cols = st.columns([2] + [1] * len(sutunlar))
+        with row_cols[0]:
+            count = int(st.session_state.schedule_bool.loc[person].sum()) if person in st.session_state.schedule_bool.index else 0
+            p_lim = _person_limits.get(person, {})
+            min_l = p_lim.get('min', 0)
+            max_l = p_lim.get('max', 999)
+            badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
+            pc = person_colors.get(person, "#e2e8f0")
+            st.markdown(
+                f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
+                f"<span style='display:inline-block;width:11px;height:11px;border-radius:50%;"
+                f"background:{pc};margin-right:4px;vertical-align:middle;border:1px solid rgba(0,0,0,0.12);'></span>"
+                f"<b>{person}</b>&nbsp;"
+                f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        for i, col in enumerate(sutunlar):
+            with row_cols[i + 1]:
+                pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
+                is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
+                if is_assigned:
+                    label = "✅" if pref_val == 1 else ("⚠️" if pref_val == 2 else ("🚫" if pref_val == 3 else "●"))
                 else:
-                    save_undo_state(st.session_state.schedule_bool)
-                    current = st.session_state.schedule_bool.at[person, col]
-                    st.session_state.schedule_bool.at[person, col] = not current
+                    label = "🟢" if pref_val == 1 else ("🟡" if pref_val == 2 else ("🔴" if pref_val == 3 else "○"))
+                if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
+                    if st.session_state.edit_mode == "tercih":
+                        st.session_state.pref_df.at[person, col] = st.session_state.paint_color
+                    else:
+                        save_undo_state(st.session_state.schedule_bool)
+                        st.session_state.schedule_bool.at[person, col] = not st.session_state.schedule_bool.at[person, col]
+                    st.rerun()
+
+    st.markdown('</div></div>', unsafe_allow_html=True)
+
+    legend_cols = st.columns(7)
+    legends = [
+        ("●", "#374151", "Atandı"),
+        ("✅", "#16a34a", "Atandı+İstedi"),
+        ("⚠️", "#d97706", "Atandı+Kaçın"),
+        ("🚫", "#dc2626", "Atandı+Yasak"),
+        ("🟢", "#16a34a", "Tercih"),
+        ("🟡", "#d97706", "Kaçınma"),
+        ("🔴", "#dc2626", "Yasak"),
+    ]
+    for lc, (icon, color, desc) in zip(legend_cols, legends):
+        with lc:
+            st.markdown(f"<div style='text-align:center;font-size:16px;color:{color};'>{icon}<br/><span style='color:#6b7280;font-size:12px;font-weight:500;'>{desc}</span></div>", unsafe_allow_html=True)
+
+    st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════
+# TAB 2: TAKVİM GÖRÜNÜMü
+# ═══════════════════════════════════════════════════════
+with tab_cal:
+    st.markdown("""
+<style>
+.cal-cell { border-radius:10px; padding:8px; min-height:90px; margin:2px; cursor:pointer; transition:box-shadow 0.15s; }
+.cal-cell:hover { box-shadow: 0 3px 10px rgba(0,0,0,0.15); }
+</style>
+""", unsafe_allow_html=True)
+
+    # Seçili gün düzenleme paneli
+    if st.session_state.selected_cal_day is not None:
+        sel_day = st.session_state.selected_cal_day
+        sel_col = f"{sel_day} {tr_gunler[date(yil, ay, sel_day).weekday()]}"
+        with st.container(border=True):
+            ep1, ep2 = st.columns([5, 1])
+            with ep1:
+                st.markdown(f"**✏️ {sel_day}. Gün — Nöbet Ataması**")
+            with ep2:
+                if st.button("✕ Kapat", key="cal_close"):
+                    st.session_state.selected_cal_day = None
+                    st.rerun()
+            cb_cols = st.columns(min(4, len(isimler)))
+            changed_cal = False
+            for p_idx, person in enumerate(isimler):
+                with cb_cols[p_idx % min(4, len(isimler))]:
+                    pc = person_colors.get(person, "#e2e8f0")
+                    cur_val = bool(st.session_state.schedule_bool.at[person, sel_col]) if sel_col in st.session_state.schedule_bool.columns else False
+                    new_val = st.checkbox(
+                        person, value=cur_val,
+                        key=f"cal_cb_{sel_day}_{person}"
+                    )
+                    if new_val != cur_val:
+                        save_undo_state(st.session_state.schedule_bool)
+                        st.session_state.schedule_bool.at[person, sel_col] = new_val
+                        changed_cal = True
+            if changed_cal:
                 st.rerun()
+        st.markdown("---")
 
-# Close grid wrapper
-st.markdown('</div></div>', unsafe_allow_html=True)
+    # Takvim başlık satırı (Pzt → Paz)
+    cal_day_names = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+    cal_hdr = st.columns(7)
+    for j, gn in enumerate(cal_day_names):
+        with cal_hdr[j]:
+            bg = "#dbeafe" if j >= 5 else "#f1f5f9"
+            tc = "#1d4ed8" if j >= 5 else "#374151"
+            st.markdown(
+                f"<div style='text-align:center;background:{bg};border-radius:8px;padding:6px 2px;"
+                f"font-size:12px;font-weight:700;color:{tc};'>{gn[:3]}</div>",
+                unsafe_allow_html=True
+            )
 
-# Visual legend
-legend_cols = st.columns(7)
-legends = [
-    ("●", "#374151", "Atandı"),
-    ("✅", "#16a34a", "Atandı+İstedi"),
-    ("⚠️", "#d97706", "Atandı+Kaçın"),
-    ("🚫", "#dc2626", "Atandı+Yasak"),
-    ("🟢", "#16a34a", "Tercih"),
-    ("🟡", "#d97706", "Kaçınma"),
-    ("🔴", "#dc2626", "Yasak"),
-]
-for lc, (icon, color, desc) in zip(legend_cols, legends):
-    with lc:
-        st.markdown(f"<div style='text-align:center;font-size:16px;color:{color};'>{icon}<br/><span style='color:#6b7280;font-size:12px;font-weight:500;'>{desc}</span></div>", unsafe_allow_html=True)
+    # Takvim hücreleri
+    first_weekday = date(yil, ay, 1).weekday()
+    cal_day_num = 1
+    for week in range(6):
+        if cal_day_num > gun_sayisi:
+            break
+        week_cols = st.columns(7)
+        for j in range(7):
+            with week_cols[j]:
+                abs_pos = week * 7 + j
+                if abs_pos < first_weekday or cal_day_num > gun_sayisi:
+                    st.markdown("<div style='min-height:90px;'></div>", unsafe_allow_html=True)
+                else:
+                    dn = cal_day_num
+                    ck = f"{dn} {tr_gunler[date(yil, ay, dn).weekday()]}"
+                    _is_we = date(yil, ay, dn).weekday() >= 5
+                    _is_hol = dn in tatil_gunleri
+                    _is_tod = (date(yil, ay, dn) == today_date)
+                    _is_sel = (st.session_state.selected_cal_day == dn)
 
-# Mobile scroll hint (hidden on desktop via CSS)
-st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
+                    if _is_tod:
+                        cell_bg = "#fef3c7"; border = "2px solid #f59e0b"; day_c = "#b45309"
+                    elif _is_hol:
+                        cell_bg = "#fee2e2"; border = "1px solid #fca5a5"; day_c = "#dc2626"
+                    elif _is_we:
+                        cell_bg = "#dbeafe"; border = "1px solid #bfdbfe"; day_c = "#1d4ed8"
+                    else:
+                        cell_bg = "#f8fafc"; border = "1px solid #e2e8f0"; day_c = "#374151"
+
+                    if _is_sel:
+                        border = "2px solid #6366f1"
+                        cell_bg = "#eef2ff"
+
+                    nobetciler_cal = st.session_state.schedule_bool.index[st.session_state.schedule_bool[ck]].tolist() if ck in st.session_state.schedule_bool.columns else []
+
+                    chips = "".join([
+                        f"<span style='display:inline-block;background:{person_colors.get(p,'#e2e8f0')};"
+                        f"border-radius:10px;padding:1px 6px;font-size:10px;font-weight:600;"
+                        f"color:#1f2937;margin:1px;white-space:nowrap;'>{p}</span>"
+                        for p in nobetciler_cal
+                    ])
+                    day_icon = "🎉" if _is_hol else ("★" if _is_tod else "")
+                    empty_msg = "<span style='color:#9ca3af;font-size:10px;'>Boş</span>" if not chips else ""
+
+                    st.markdown(
+                        f"<div style='background:{cell_bg};border:{border};border-radius:10px;"
+                        f"padding:7px;min-height:90px;'>"
+                        f"<div style='font-size:16px;font-weight:700;color:{day_c};'>{day_icon}{dn}</div>"
+                        f"<div style='margin-top:4px;line-height:1.6;'>{chips}{empty_msg}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                    if st.button("✏️", key=f"cal_edit_{dn}", help="Nöbetçi ata/kaldır", use_container_width=True):
+                        st.session_state.selected_cal_day = dn if st.session_state.selected_cal_day != dn else None
+                        st.rerun()
+                    cal_day_num += 1
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
