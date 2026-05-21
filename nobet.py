@@ -1067,67 +1067,6 @@ with tab_cal:
                 unsafe_allow_html=True
             )
 
-    # ── Seçili gün düzenleme paneli (form tabanlı) ────────
-    if st.session_state.selected_cal_day is not None:
-        sel_day = st.session_state.selected_cal_day
-        sel_col = f"{sel_day} {tr_gunler[date(yil, ay, sel_day).weekday()]}"
-        _sel_date_obj = date(yil, ay, sel_day)
-        _sel_day_name = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"][_sel_date_obj.weekday()]
-        _sel_is_hol = sel_day in tatil_gunleri
-        _header_extra = " 🎉 Tatil" if _sel_is_hol else ""
-
-        with st.container(border=True):
-            hdr1, hdr2 = st.columns([5, 1])
-            with hdr1:
-                st.markdown(
-                    f"**✏️ {sel_day} {_sel_day_name}{_header_extra} — Nöbet Ataması**  \n"
-                    f"<span style='font-size:12px;color:#6b7280;'>🔴 müsait değil = atanamaz &nbsp;|&nbsp; "
-                    f"🟢 tercih edilen gün &nbsp;|&nbsp; 🟡 kaçınılması istenen gün</span>",
-                    unsafe_allow_html=True
-                )
-            with hdr2:
-                if st.button("✕ Kapat", key="cal_close"):
-                    st.session_state.selected_cal_day = None
-                    st.rerun()
-
-            with st.form(f"cal_edit_form_{sel_day}"):
-                n_cols = min(4, max(1, len(isimler)))
-                cb_cols = st.columns(n_cols)
-                new_vals = {}
-                for p_idx, person in enumerate(isimler):
-                    pref_val = int(st.session_state.pref_df.at[person, sel_col]) if (
-                        person in st.session_state.pref_df.index and
-                        sel_col in st.session_state.pref_df.columns
-                    ) else 0
-                    cur_val = bool(st.session_state.schedule_bool.at[person, sel_col]) if (
-                        person in st.session_state.schedule_bool.index and
-                        sel_col in st.session_state.schedule_bool.columns
-                    ) else False
-                    pref_icon = {1: "🟢", 2: "🟡", 3: "🔴"}.get(pref_val, "")
-                    pref_hint = {1: "(tercih)", 2: "(kaçın)", 3: "(yasak)"}.get(pref_val, "")
-                    is_blocked = (pref_val == 3)
-                    pc = person_colors.get(person, "#e2e8f0")
-                    with cb_cols[p_idx % n_cols]:
-                        new_vals[person] = st.checkbox(
-                            f"{pref_icon} {person} {pref_hint}".strip(),
-                            value=cur_val if not is_blocked else False,
-                            disabled=is_blocked,
-                            key=f"cal_form_cb_{sel_day}_{person}"
-                        )
-                submitted = st.form_submit_button("✅ Kaydet", type="primary", use_container_width=True)
-                if submitted:
-                    save_undo_state(st.session_state.schedule_bool)
-                    for person, val in new_vals.items():
-                        pv = int(st.session_state.pref_df.at[person, sel_col]) if (
-                            person in st.session_state.pref_df.index and
-                            sel_col in st.session_state.pref_df.columns
-                        ) else 0
-                        if pv != 3 and sel_col in st.session_state.schedule_bool.columns:
-                            st.session_state.schedule_bool.at[person, sel_col] = val
-                    st.session_state.selected_cal_day = None
-                    st.rerun()
-        st.markdown("---")
-
     # ── Takvim başlık satırı (Pzt → Paz) ─────────────────
     cal_day_names = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
     cal_hdr = st.columns(7)
@@ -1159,8 +1098,6 @@ with tab_cal:
                     _is_we = date(yil, ay, dn).weekday() >= 5
                     _is_hol = dn in tatil_gunleri
                     _is_tod = (date(yil, ay, dn) == today_date)
-                    _is_sel = (st.session_state.selected_cal_day == dn)
-
                     # Nöbetçi listesi (isimler sırasına göre = rol sırası)
                     all_nobetciler = (
                         st.session_state.schedule_bool.index[st.session_state.schedule_bool[ck]].tolist()
@@ -1176,9 +1113,6 @@ with tab_cal:
                         cell_bg = "#dbeafe"; border = "1px solid #bfdbfe"; day_c = "#1d4ed8"
                     else:
                         cell_bg = "#f8fafc"; border = "1px solid #e2e8f0"; day_c = "#374151"
-
-                    if _is_sel:
-                        border = "2px solid #6366f1"
 
                     # Kişi renk bandı: nöbetçilerin renkleri hücre altında ince bant olarak
                     color_bar_html = ""
@@ -1233,9 +1167,6 @@ with tab_cal:
                         f"</div>",
                         unsafe_allow_html=True
                     )
-                    if st.button("✏️", key=f"cal_edit_{dn}", help="Nöbetçi ata/kaldır", use_container_width=True):
-                        st.session_state.selected_cal_day = dn if st.session_state.selected_cal_day != dn else None
-                        st.rerun()
                     cal_day_num += 1
 
 # Build algorithm inputs from pref_df
