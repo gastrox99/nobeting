@@ -953,7 +953,7 @@ legends = [
 ]
 for lc, (icon, color, desc) in zip(legend_cols, legends):
     with lc:
-        st.markdown(f"<div style='text-align:center;font-size:10px;color:{color};'>{icon}<br/><span style='color:#6b7280;font-size:8px;'>{desc}</span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:center;font-size:16px;color:{color};'>{icon}<br/><span style='color:#6b7280;font-size:12px;font-weight:500;'>{desc}</span></div>", unsafe_allow_html=True)
 
 # Mobile scroll hint (hidden on desktop via CSS)
 st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
