@@ -845,7 +845,7 @@ st.markdown('<div class="schedule-grid-wrapper"><div class="schedule-grid">', un
 tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
 header_cols = st.columns([2] + [1] * len(sutunlar))
 with header_cols[0]:
-    st.markdown("<div style='font-size:10px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:13px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
 
 for i, col in enumerate(sutunlar):
     with header_cols[i + 1]:
@@ -857,26 +857,26 @@ for i, col in enumerate(sutunlar):
         day_name = tr_gunler_short[date(yil, ay, day_num).weekday()]
 
         if _is_today:
-            num_style = "color:#b45309;font-weight:800;font-size:12px;"
-            name_style = "color:#b45309;"
+            num_style = "color:#b45309;font-weight:800;font-size:15px;"
+            name_style = "color:#b45309;font-size:11px;"
             badge = "★"
         elif is_hol:
-            num_style = "color:#c62828;font-weight:700;font-size:11px;"
-            name_style = "color:#c62828;"
+            num_style = "color:#c62828;font-weight:700;font-size:14px;"
+            name_style = "color:#c62828;font-size:11px;"
             badge = "!"
         elif is_we:
-            num_style = "color:#1d4ed8;font-weight:700;font-size:11px;"
-            name_style = "color:#1d4ed8;"
+            num_style = "color:#1d4ed8;font-weight:700;font-size:14px;"
+            name_style = "color:#1d4ed8;font-size:11px;"
             badge = ""
         else:
-            num_style = "color:#374151;font-size:11px;"
-            name_style = "color:#9ca3af;"
+            num_style = "color:#374151;font-size:14px;"
+            name_style = "color:#9ca3af;font-size:11px;"
             badge = ""
 
         st.markdown(
-            f"<div style='text-align:center;line-height:1.25;padding:1px 0;'>"
+            f"<div style='text-align:center;line-height:1.35;padding:2px 0;'>"
             f"<div style='{num_style}'>{badge}{day_num}</div>"
-            f"<div style='font-size:8px;{name_style}'>{day_name}</div>"
+            f"<div style='{name_style}'>{day_name}</div>"
             f"</div>",
             unsafe_allow_html=True
         )
@@ -897,9 +897,9 @@ for person in isimler:
         else:
             badge_bg = "#16a34a"
         st.markdown(
-            f"<div style='font-size:10px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
+            f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
             f"<b>{person}</b>&nbsp;"
-            f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:0 5px;font-size:9px;font-weight:700;'>{count}</span>"
+            f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
             f"</div>",
             unsafe_allow_html=True
         )
