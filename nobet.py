@@ -781,43 +781,144 @@ with action_cols[2]:
             st.session_state.schedule_bool = st.session_state.undo_history.pop()
             st.rerun()
 
-# Compact CSS for grid
-st.markdown("""
+# --- Dynamic column background CSS (weekends=blue, holidays=red, today=amber) ---
+today_date = date.today()
+col_bg_css_parts = []
+for _i, _col in enumerate(sutunlar):
+    _idx = _i + 2  # nth-child: 1=name col, 2=first day col
+    _info = gun_detaylari[_col]
+    _is_today = (date(yil, ay, _info['day_num']) == today_date)
+    if _is_today:
+        col_bg_css_parts.append(
+            f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+            f"{{ background:rgba(254,243,199,0.75)!important; border-radius:6px; outline:2px solid #f59e0b; }}"
+        )
+    elif _info['holiday']:
+        col_bg_css_parts.append(
+            f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+            f"{{ background:rgba(254,226,226,0.55)!important; border-radius:6px; }}"
+        )
+    elif _info['weekend']:
+        col_bg_css_parts.append(
+            f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+            f"{{ background:rgba(219,234,254,0.5)!important; border-radius:6px; }}"
+        )
+
+col_bg_css = "\n".join(col_bg_css_parts)
+
+st.markdown(f"""
 <style>
-div[data-testid="column"] { padding: 0 1px !important; }
-.stButton > button { padding: 1px 3px !important; min-height: 26px !important; font-size: 11px !important; }
+/* Name column sticky background */
+.schedule-grid [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1) {{
+    background: #f8fafc !important;
+    border-right: 2px solid #e2e8f0;
+    min-width: 80px;
+}}
+/* Column backgrounds */
+{col_bg_css}
+/* Compact column padding */
+.schedule-grid div[data-testid="column"] {{ padding: 0 1px !important; }}
+/* Button base style */
+.schedule-grid .stButton > button {{
+    padding: 0px !important;
+    min-height: 30px !important;
+    font-size: 14px !important;
+    border-radius: 5px !important;
+    line-height: 1 !important;
+    width: 100% !important;
+    border: 1px solid #e5e7eb !important;
+    transition: transform 0.1s, box-shadow 0.1s;
+}}
+.schedule-grid .stButton > button:hover {{
+    transform: scale(1.15);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    z-index: 20;
+    position: relative;
+}}
 </style>
 """, unsafe_allow_html=True)
 
 # Grid wrapper with horizontal scroll for mobile
-st.markdown('<div class="schedule-grid-wrapper">', unsafe_allow_html=True)
+st.markdown('<div class="schedule-grid-wrapper"><div class="schedule-grid">', unsafe_allow_html=True)
 
 # Full month grid - header row
+tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
 header_cols = st.columns([2] + [1] * len(sutunlar))
 with header_cols[0]:
-    st.markdown("**İsim**")
+    st.markdown("<div style='font-size:10px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
+
 for i, col in enumerate(sutunlar):
     with header_cols[i + 1]:
-        day_num = gun_detaylari[col]['day_num']
-        is_we = gun_detaylari[col]['weekend']
-        is_hol = gun_detaylari[col]['holiday']
-        style = "color:#c62828;" if is_hol else ("color:#1565c0;" if is_we else "")
-        icon = "🚨" if is_hol else ("🏖" if is_we else "")
-        st.markdown(f"<div style='text-align:center;{style}font-size:9px;'>{icon}{day_num}</div>", unsafe_allow_html=True)
+        _info = gun_detaylari[col]
+        day_num = _info['day_num']
+        is_we = _info['weekend']
+        is_hol = _info['holiday']
+        _is_today = (date(yil, ay, day_num) == today_date)
+        day_name = tr_gunler_short[date(yil, ay, day_num).weekday()]
+
+        if _is_today:
+            num_style = "color:#b45309;font-weight:800;font-size:12px;"
+            name_style = "color:#b45309;"
+            badge = "★"
+        elif is_hol:
+            num_style = "color:#c62828;font-weight:700;font-size:11px;"
+            name_style = "color:#c62828;"
+            badge = "!"
+        elif is_we:
+            num_style = "color:#1d4ed8;font-weight:700;font-size:11px;"
+            name_style = "color:#1d4ed8;"
+            badge = ""
+        else:
+            num_style = "color:#374151;font-size:11px;"
+            name_style = "color:#9ca3af;"
+            badge = ""
+
+        st.markdown(
+            f"<div style='text-align:center;line-height:1.25;padding:1px 0;'>"
+            f"<div style='{num_style}'>{badge}{day_num}</div>"
+            f"<div style='font-size:8px;{name_style}'>{day_name}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
 
 # Data rows - each person on one row
+_person_limits = st.session_state.get('person_limits', {})
 for person in isimler:
     row_cols = st.columns([2] + [1] * len(sutunlar))
     with row_cols[0]:
-        count = st.session_state.schedule_bool.loc[person].sum() if person in st.session_state.schedule_bool.index else 0
-        st.markdown(f"<div style='font-size:10px;white-space:nowrap;'><b>{person}</b>({count})</div>", unsafe_allow_html=True)
-    
+        count = int(st.session_state.schedule_bool.loc[person].sum()) if person in st.session_state.schedule_bool.index else 0
+        p_lim = _person_limits.get(person, {})
+        min_l = p_lim.get('min', 0)
+        max_l = p_lim.get('max', 999)
+        if count < min_l:
+            badge_bg = "#dc2626"
+        elif max_l < 999 and count > max_l:
+            badge_bg = "#dc2626"
+        else:
+            badge_bg = "#16a34a"
+        st.markdown(
+            f"<div style='font-size:10px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
+            f"<b>{person}</b>&nbsp;"
+            f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:0 5px;font-size:9px;font-weight:700;'>{count}</span>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
     for i, col in enumerate(sutunlar):
         with row_cols[i + 1]:
             pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
             is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
-            
+
             if is_assigned:
+                if pref_val == 1:
+                    label = "✅"
+                elif pref_val == 2:
+                    label = "⚠️"
+                elif pref_val == 3:
+                    label = "🚫"
+                else:
+                    label = "●"
+            else:
                 if pref_val == 1:
                     label = "🟢"
                 elif pref_val == 2:
@@ -825,17 +926,8 @@ for person in isimler:
                 elif pref_val == 3:
                     label = "🔴"
                 else:
-                    label = "✓"
-            else:
-                if pref_val == 1:
-                    label = "🟩"
-                elif pref_val == 2:
-                    label = "🟨"
-                elif pref_val == 3:
-                    label = "🟥"
-                else:
-                    label = "·"
-            
+                    label = "○"
+
             if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
                 if st.session_state.edit_mode == "tercih":
                     st.session_state.pref_df.at[person, col] = st.session_state.paint_color
@@ -846,7 +938,23 @@ for person in isimler:
                 st.rerun()
 
 # Close grid wrapper
-st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div></div>', unsafe_allow_html=True)
+
+# Visual legend
+legend_cols = st.columns(7)
+legends = [
+    ("●", "#374151", "Atandı"),
+    ("✅", "#16a34a", "Atandı+İstedi"),
+    ("⚠️", "#d97706", "Atandı+Kaçın"),
+    ("🚫", "#dc2626", "Atandı+Yasak"),
+    ("🟢", "#16a34a", "Tercih"),
+    ("🟡", "#d97706", "Kaçınma"),
+    ("🔴", "#dc2626", "Yasak"),
+]
+for lc, (icon, color, desc) in zip(legend_cols, legends):
+    with lc:
+        st.markdown(f"<div style='text-align:center;font-size:10px;color:{color};'>{icon}<br/><span style='color:#6b7280;font-size:8px;'>{desc}</span></div>", unsafe_allow_html=True)
+
 # Mobile scroll hint (hidden on desktop via CSS)
 st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
 
