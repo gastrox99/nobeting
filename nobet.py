@@ -580,65 +580,6 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                         pass
     st.session_state.person_limits = person_limits
     
-    # --- SAVE/LOAD ---
-    st.divider()
-    st.header("💾 Kaydet/Yükle")
-    
-    tab1, tab2, tab3 = st.tabs(["Kaydet", "Yükle", "Listele"])
-    
-    with tab1:
-        save_name = st.text_input("Takvim Adı:", f"Nöbet_{yil}_{ay:02d}")
-        if st.button("💾 Kaydet", type="primary", key="save_btn"):
-            if save_schedule(save_name, yil, ay, isimler, st.session_state.schedule_bool):
-                st.success(f"✅ '{save_name}' kaydedildi!")
-            else:
-                st.error("❌ Kaydetme başarısız")
-    
-    with tab2:
-        schedules = list_schedules()
-        if schedules:
-            schedule_options = [f"{s['name']} ({s['year']}-{s['month']:02d})" for s in schedules]
-            selected = st.selectbox("Kaydedilmiş Takvim:", schedule_options)
-            
-            if st.button("📂 Yükle", key="load_btn"):
-                # Parse selection
-                selected_name = selected.split(" (")[0]
-                for s in schedules:
-                    if s['name'] == selected_name:
-                        team, df = load_schedule(s['name'], s['year'], s['month'])
-                        if df is not None:
-                            # Check for team mismatch
-                            loaded_people = list(df.index)
-                            missing = [p for p in loaded_people if p not in isimler]
-                            extra = [p for p in isimler if p not in loaded_people]
-                            
-                            st.session_state.schedule_bool = df
-                            st.session_state.should_regenerate_assignments = True
-                            
-                            if missing or extra:
-                                st.warning(f"⚠️ Ekip uyumsuzluğu! Kaydedilen: {loaded_people}, Şu anki: {isimler}")
-                            st.success(f"✅ '{s['name']}' yüklendi!")
-                            st.rerun()
-                        break
-        else:
-            st.info("Henüz kayıtlı takvim yok")
-    
-    with tab3:
-        schedules = list_schedules()
-        if schedules:
-            st.write("📋 Kayıtlı Takvimler:")
-            for s in schedules:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.write(f"**{s['name']}** - {s['year']}-{s['month']:02d}")
-                    updated = s['updated_at'].strftime('%Y-%m-%d') if hasattr(s['updated_at'], 'strftime') else str(s['updated_at'])[:10]
-                    st.caption(f"Güncellendi: {updated}")
-                with col2:
-                    if st.button("🗑️", key=f"del_{s['name']}_{s['year']}_{s['month']}"):
-                        delete_schedule(s['name'], s['year'], s['month'])
-                        st.rerun()
-        else:
-            st.info("Henüz kayıtlı takvim yok")
 
 if not isimler: st.stop()
 
@@ -1398,81 +1339,61 @@ df_stats_finance = pd.DataFrame(stats_finance).set_index("İsim")
 
 # --- GÖRÜNÜM ---
 st.divider()
-col_left, col_right = st.columns([1.3, 1])
 
-# === SOL SÜTUN: LİSTE ===
-with col_left:
-    st.subheader("📅 Günlük Liste")
-    
-    # Export buttons row 1
-    c1, c2, c3 = st.columns(3)
-    with c1: st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv", type="primary")
-    with c2: st.download_button("🖼️ PNG", convert_df_to_png(df_liste), "liste.png", "image/png")
-    with c3: 
-        if EXCEL_AVAILABLE:
-            # Compute hash of data to detect changes and refresh Excel cache
-            data_hash = hash(df_liste.to_csv() + df_stats_load.to_csv() + df_stats_finance.to_csv())
-            excel_key = f"excel_{yil}_{ay}"
-            hash_key = f"excel_hash_{yil}_{ay}"
-            
-            # Regenerate if hash changed or no cached data
-            if excel_key not in st.session_state or st.session_state.get(hash_key) != data_hash:
-                st.session_state[excel_key] = convert_df_to_excel(df_liste, df_stats_load, df_stats_finance)
-                st.session_state[hash_key] = data_hash
-            st.download_button("📊 Excel", st.session_state[excel_key], f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        else:
-            st.caption("Excel yok")
-    
-    # Export buttons row 2
-    c4, c5, c6 = st.columns(3)
-    with c4:
-        with st.popover("💬 Metin"):
-            st.text_area("Kopyala:", value=df_liste.to_markdown(index=False), height=200)
-    with c5:
-        # Print-friendly HTML
-        print_html = create_print_html(df_liste, df_stats_load, yil, ay)
-        st.download_button("🖨️ Yazdır", print_html.encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html")
+# ── İndirme butonları ince yatay satır ──────────────────────────────────────
+data_hash = hash(df_liste.to_csv() + df_stats_load.to_csv() + df_stats_finance.to_csv())
+excel_key = f"excel_{yil}_{ay}"
+hash_key = f"excel_hash_{yil}_{ay}"
+if EXCEL_AVAILABLE:
+    if excel_key not in st.session_state or st.session_state.get(hash_key) != data_hash:
+        st.session_state[excel_key] = convert_df_to_excel(df_liste, df_stats_load, df_stats_finance)
+        st.session_state[hash_key] = data_hash
 
-    def highlight_list(row):
-        c = "white"
-        if "Cmt" in row['Tarih'] or "Paz" in row['Tarih']: c = "#eff6ff"
-        return [f'background-color: {c}' for _ in row]
-    
-    h_liste = len(df_liste) * 35 + 38
-    st.dataframe(df_liste.style.apply(highlight_list, axis=1), height=h_liste, use_container_width=True)
+print_html = create_print_html(df_liste, df_stats_load, yil, ay)
 
-# === SAĞ SÜTUN: ANALİZ ===
-with col_right:
-    st.header("📊 Analiz")
-    
-    # 1. Yük
-    st.markdown("**1. Nöbet Yükü (Dengeli)**")
+dl1, dl2, dl3, dl4, dl5 = st.columns(5)
+with dl1:
+    st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv", use_container_width=True)
+with dl2:
+    st.download_button("🖼️ PNG", convert_df_to_png(df_liste), "liste.png", "image/png", use_container_width=True)
+with dl3:
+    if EXCEL_AVAILABLE:
+        st.download_button("📊 Excel", st.session_state[excel_key], f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    else:
+        st.caption("Excel yok")
+with dl4:
+    with st.popover("💬 Metin", use_container_width=True):
+        st.text_area("Kopyala:", value=df_liste.to_markdown(index=False), height=200)
+with dl5:
+    st.download_button("🖨️ Yazdır", print_html.encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html", use_container_width=True)
+
+st.divider()
+
+# ── Analiz — yatay dağılım ───────────────────────────────────────────────────
+st.header("📊 Analiz")
+
+# Satır 1: Nöbet Yükü  |  Ücret Özeti
+an1, an2 = st.columns(2)
+
+with an1:
+    st.markdown("**Nöbet Yükü**")
     st.dataframe(
         df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam", role_names[0]])
                            .background_gradient(cmap="Oranges", subset=["Özel"]),
         use_container_width=True
     )
-    
-    # Autonomous Redistribution Button
     if st.button("🤖 Görev Yerlerini Otomatik Dağıt", use_container_width=True, help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
         if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
             rows_liste_to_redist = st.session_state.cached_rows_liste
             first_role_counts_to_redist = {i: 0 for i in isimler}
             new_rows_liste = []
-            
-            # Use current date from session state to avoid resetting to system defaults
-            #yil_current = yil
-            #ay_current = ay
-            
             for row in rows_liste_to_redist:
                 nobetciler = []
                 for rn in role_names:
                     p = row.get(rn, "-")
                     if p != "-" and p in isimler: nobetciler.append(p)
-                
                 random.shuffle(nobetciler)
                 nobetciler.sort(key=lambda x: first_role_counts_to_redist.get(x, 0))
-                
                 new_row = {"Tarih": row["Tarih"]}
                 for idx, rn in enumerate(role_names):
                     if len(nobetciler) > idx:
@@ -1483,11 +1404,8 @@ with col_right:
                     else:
                         new_row[rn] = "-"
                 new_rows_liste.append(new_row)
-            
             st.session_state.cached_rows_liste = new_rows_liste
             st.session_state.cached_first_role_counts = first_role_counts_to_redist
-            
-            # Update schedule_bool to match
             new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
             for i, col in enumerate(sutunlar):
                 row = new_rows_liste[i]
@@ -1496,98 +1414,73 @@ with col_right:
                     if p in isimler:
                         new_schedule.at[p, col] = True
             st.session_state.schedule_bool = new_schedule
-            
             st.session_state.excel_needs_refresh = True
             st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
             st.rerun()
 
-    st.divider()
-
-    # 2. Kişisel Detay
-    st.markdown("**2. Kişisel Detay 🔍**")
-    kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
-    kisi_rows = []
-    for index, row in df_liste.iterrows():
-        # Check all role columns for this person
-        partners = []
-        rol = None
-        
-        for role_idx, role_name in enumerate(role_names):
-            if role_name in row and row.get(role_name) == kisi_sec:
-                rol = role_name
-                # Collect all other assigned people as partners
-                for other_idx, other_role in enumerate(role_names):
-                    if other_idx != role_idx and other_role in row and row.get(other_role) and row[other_role] != '-':
-                        partners.append(row[other_role])
-                break
-        
-        if rol:
-            partner_str = ', '.join(partners) if partners else 'Tek'
-            kisi_rows.append({"Tarih": row['Tarih'], "Partner": partner_str, "Rol": rol})
-    
-    df_kisi = pd.DataFrame(kisi_rows)
-    if not df_kisi.empty:
-        h_kisi = len(df_kisi) * 35 + 38
-        st.dataframe(df_kisi, height=h_kisi, use_container_width=True, hide_index=True)
-    else:
-        st.info("Nöbet yok.")
-
-    st.divider()
-
-    # 3. Matris
-    st.markdown("**3. Eşleşme Matrisi**")
-    st.dataframe(pair_display, use_container_width=True)
-
-    st.divider()
-
-    # 4. Tercih Başarısı
-    st.markdown("**4. Tercih Başarısı (%)**")
-    pref_stats = []
-    for isim in isimler:
-        green_total = 0
-        green_assigned = 0
-        yellow_total = 0
-        yellow_avoided = 0
-        red_total = 0
-        red_blocked = 0
-        
-        for col in sutunlar:
-            pref_val = st.session_state.pref_df.at[isim, col] if isim in st.session_state.pref_df.index and col in st.session_state.pref_df.columns else 0
-            is_assigned = edited.at[isim, col] if isim in edited.index and col in edited.columns else False
-            
-            if pref_val == 1:  # Green - İstek
-                green_total += 1
-                if is_assigned:
-                    green_assigned += 1
-            elif pref_val == 2:  # Yellow - Kaçınma
-                yellow_total += 1
-                if not is_assigned:
-                    yellow_avoided += 1
-            elif pref_val == 3:  # Red - İstenmeyen
-                red_total += 1
-                if not is_assigned:
-                    red_blocked += 1
-        
-        green_pct = f"{round(green_assigned / green_total * 100)}%" if green_total > 0 else "-"
-        yellow_pct = f"{round(yellow_avoided / yellow_total * 100)}%" if yellow_total > 0 else "-"
-        red_pct = f"{round(red_blocked / red_total * 100)}%" if red_total > 0 else "-"
-        
-        pref_stats.append({
-            "İsim": isim,
-            "🟢 İstek": str(green_pct),
-            "🟡 Kaçınma": str(yellow_pct),
-            "🔴 İstenmeyen": str(red_pct)
-        })
-    
-    df_pref_stats = pd.DataFrame(pref_stats).set_index("İsim")
-    st.dataframe(df_pref_stats, use_container_width=True)
-    
-    st.divider()
-
-    # 5. Ücret
-    st.markdown("**5. Ücret Özeti**")
+with an2:
+    st.markdown("**Ücret Özeti**")
     st.dataframe(
         df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
                               .format({"Ücret (TL)": "₺ {:,.2f}"}),
         use_container_width=True
     )
+
+st.divider()
+
+# Satır 2: Kişisel Detay  |  Eşleşme Matrisi  |  Tercih Başarısı
+an3, an4, an5 = st.columns(3)
+
+with an3:
+    st.markdown("**Kişisel Detay**")
+    kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
+    kisi_rows = []
+    for index, row in df_liste.iterrows():
+        partners = []
+        rol = None
+        for role_idx, role_name in enumerate(role_names):
+            if role_name in row and row.get(role_name) == kisi_sec:
+                rol = role_name
+                for other_idx, other_role in enumerate(role_names):
+                    if other_idx != role_idx and other_role in row and row.get(other_role) and row[other_role] != '-':
+                        partners.append(row[other_role])
+                break
+        if rol:
+            partner_str = ', '.join(partners) if partners else 'Tek'
+            kisi_rows.append({"Tarih": row['Tarih'], "Partner": partner_str, "Rol": rol})
+    df_kisi = pd.DataFrame(kisi_rows)
+    if not df_kisi.empty:
+        h_kisi = min(len(df_kisi) * 35 + 38, 400)
+        st.dataframe(df_kisi, height=h_kisi, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nöbet yok.")
+
+with an4:
+    st.markdown("**Eşleşme Matrisi**")
+    st.dataframe(pair_display, use_container_width=True)
+
+with an5:
+    st.markdown("**Tercih Başarısı (%)**")
+    pref_stats = []
+    for isim in isimler:
+        green_total = green_assigned = yellow_total = yellow_avoided = red_total = red_blocked = 0
+        for col in sutunlar:
+            pref_val = st.session_state.pref_df.at[isim, col] if isim in st.session_state.pref_df.index and col in st.session_state.pref_df.columns else 0
+            is_assigned = edited.at[isim, col] if isim in edited.index and col in edited.columns else False
+            if pref_val == 1:
+                green_total += 1
+                if is_assigned: green_assigned += 1
+            elif pref_val == 2:
+                yellow_total += 1
+                if not is_assigned: yellow_avoided += 1
+            elif pref_val == 3:
+                red_total += 1
+                if not is_assigned: red_blocked += 1
+        pref_stats.append({
+            "İsim": isim,
+            "🟢 İstek": f"{round(green_assigned/green_total*100)}%" if green_total > 0 else "-",
+            "🟡 Kaçınma": f"{round(yellow_avoided/yellow_total*100)}%" if yellow_total > 0 else "-",
+            "🔴 İstenmeyen": f"{round(red_blocked/red_total*100)}%" if red_total > 0 else "-",
+        })
+    df_pref_stats = pd.DataFrame(pref_stats).set_index("İsim")
+    st.dataframe(df_pref_stats, use_container_width=True)
