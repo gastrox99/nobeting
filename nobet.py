@@ -1515,9 +1515,8 @@ with an1:
                     if p in isimler:
                         new_schedule.at[p, col] = True
             st.session_state.schedule_bool = new_schedule
-            st.session_state.excel_needs_refresh = True
+            st.session_state.should_regenerate_assignments = False
             st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
-            st.rerun()
 
 with an2:
     st.markdown("**Kişisel Detay**")
