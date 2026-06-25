@@ -609,7 +609,26 @@ zorunlu_saat = calisma_gunu * 8
 
 # --- SESSION ---
 if 'schedule_bool' not in st.session_state:
-    st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+    # Sayfa yenilenmesinde otomatik geri yükle
+    _auto_name = f"Otomatik_{yil}_{ay:02d}"
+    try:
+        _, _saved_df = load_schedule(_auto_name, yil, ay)
+    except Exception:
+        _saved_df = None
+    if _saved_df is not None and not _saved_df.empty:
+        _new_sched = pd.DataFrame(False, index=isimler, columns=sutunlar)
+        for _p in isimler:
+            if _p in _saved_df.index:
+                for _c in sutunlar:
+                    if _c in _saved_df.columns:
+                        try:
+                            _new_sched.at[_p, _c] = bool(_saved_df.at[_p, _c])
+                        except Exception:
+                            pass
+        st.session_state.schedule_bool = _new_sched
+        st.session_state.should_regenerate_assignments = True
+    else:
+        st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
 else:
     # Ensure schedule matches current team and columns
     current_schedule = st.session_state.schedule_bool
@@ -890,24 +909,29 @@ with tab_cal:
     _cal_role_names = st.session_state.get('rol_isimleri', [f"Görev{i+1}" for i in range(kişi_sayısı)])
 
     # ── Takvimden gelen görev yeri değişim isteği ────────
-    _swap_dn = st.session_state.pop('cal_swap_day', None)
-    if _swap_dn is not None and 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
-        _row_idx = _swap_dn - 1
-        if 0 <= _row_idx < len(st.session_state.cached_rows_liste):
-            _srow = dict(st.session_state.cached_rows_liste[_row_idx])
-            _persons = [_srow.get(rn, "-") for rn in _cal_role_names]
-            _valid = [p for p in _persons if p and p != "-" and p in isimler]
-            if len(_valid) >= 2:
-                _valid = [_valid[-1]] + _valid[:-1]  # son kişiyi başa al (rotation)
-                _vi = 0
-                for _rn in _cal_role_names:
-                    _old = _srow.get(_rn, "-")
-                    if _old and _old != "-" and _old in isimler:
-                        _srow[_rn] = _valid[_vi]; _vi += 1
-                st.session_state.cached_rows_liste[_row_idx] = _srow
-                st.session_state.should_regenerate_assignments = True
-                st.toast(f"{_swap_dn}. gün görev yerleri değiştirildi", icon="🔄")
-                st.rerun()
+    _swap_dn = st.session_state.get('cal_swap_day', None)
+    if _swap_dn is not None:
+        if 'cal_swap_day' in st.session_state:
+            del st.session_state['cal_swap_day']
+        # cached_rows_liste içindeki rol isimlerini kullan (schedule ile tutarlı)
+        _swap_role_names = st.session_state.get('cached_role_names', _cal_role_names)
+        if st.session_state.get('cached_rows_liste'):
+            _row_idx = _swap_dn - 1
+            if 0 <= _row_idx < len(st.session_state.cached_rows_liste):
+                _srow = dict(st.session_state.cached_rows_liste[_row_idx])
+                _valid = [_srow.get(rn, "-") for rn in _swap_role_names]
+                _valid = [p for p in _valid if p and p != "-" and p in isimler]
+                if len(_valid) >= 2:
+                    _valid = [_valid[-1]] + _valid[:-1]  # döngüsel kaydırma
+                    _vi = 0
+                    for _rn in _swap_role_names:
+                        _old = _srow.get(_rn, "-")
+                        if _old and _old != "-" and _old in isimler:
+                            _srow[_rn] = _valid[_vi]; _vi += 1
+                    st.session_state.cached_rows_liste[_row_idx] = _srow
+                    st.session_state.should_regenerate_assignments = False
+                    st.toast(f"{_swap_dn}. gün görev yerleri değiştirildi", icon="🔄")
+                    st.rerun()
 
     # ── Filtre + açıklama satırı ──────────────────────────
     cal_top1, cal_top2 = st.columns([3, 2])
@@ -1375,7 +1399,7 @@ if EXCEL_AVAILABLE:
 
 print_html = create_print_html(df_liste, df_stats_load, yil, ay)
 
-dl1, dl2, dl3, dl4, dl5 = st.columns(5)
+dl1, dl2, dl3, dl4, dl5, dl6 = st.columns(6)
 with dl1:
     st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv", use_container_width=True)
 with dl2:
@@ -1390,6 +1414,59 @@ with dl4:
         st.text_area("Kopyala:", value=df_liste.to_markdown(index=False), height=200)
 with dl5:
     st.download_button("🖨️ Yazdır", print_html.encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html", use_container_width=True)
+with dl6:
+    with st.popover("📂 Excel Yükle", use_container_width=True):
+        st.caption("Daha önce indirilen Excel dosyasını veya aynı formatta hazırladığınız listeyi yükleyin.")
+        _uploaded = st.file_uploader("Excel dosyası seçin (.xlsx)", type=["xlsx"], key="excel_import_uploader", label_visibility="collapsed")
+        if _uploaded is not None:
+            try:
+                _xl = pd.ExcelFile(_uploaded)
+                _sheet = "Günlük Liste" if "Günlük Liste" in _xl.sheet_names else _xl.sheet_names[0]
+                _df_imp = pd.read_excel(_xl, sheet_name=_sheet)
+                # Tarih sütunundan gün numarasını çıkar (örn: "01.06.2026 Paz" → 1)
+                _imp_role_cols = [c for c in _df_imp.columns if c != "Tarih"]
+                if "Tarih" not in _df_imp.columns or not _imp_role_cols:
+                    st.error("Dosya formatı uyumsuz: 'Tarih' sütunu ve en az bir görev sütunu gerekli.")
+                else:
+                    _new_sched = pd.DataFrame(False, index=isimler, columns=sutunlar)
+                    _new_rows = []
+                    _matched = 0
+                    for _, _irow in _df_imp.iterrows():
+                        _tarih_str = str(_irow.get("Tarih", ""))
+                        try:
+                            _day_num = int(_tarih_str.split(".")[0])
+                        except Exception:
+                            continue
+                        # Sutunlar içinde eşleşen kolonu bul
+                        _match_col = None
+                        for _sc in sutunlar:
+                            if gun_detaylari[_sc]['day_num'] == _day_num:
+                                _match_col = _sc; break
+                        if _match_col is None:
+                            continue
+                        _row_data = {"Tarih": gun_detaylari[_match_col]['full_date']}
+                        for _ri, _rn in enumerate(role_names):
+                            _src_col = _imp_role_cols[_ri] if _ri < len(_imp_role_cols) else None
+                            _person = str(_irow.get(_src_col, "-")).strip() if _src_col else "-"
+                            if _person and _person != "-" and _person != "nan" and _person in isimler:
+                                _new_sched.at[_person, _match_col] = True
+                                _row_data[_rn] = _person
+                            else:
+                                _row_data[_rn] = "-"
+                        _new_rows.append(_row_data)
+                        _matched += 1
+                    if _matched > 0:
+                        st.session_state.schedule_bool = _new_sched
+                        st.session_state.cached_rows_liste = _new_rows
+                        st.session_state.cached_role_names = role_names
+                        st.session_state.should_regenerate_assignments = False
+                        save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched)
+                        st.success(f"{_matched} gün yüklendi!")
+                        st.rerun()
+                    else:
+                        st.warning("Eşleşen gün bulunamadı. Ekip isimleri ve ay/yıl ayarlarının uyumlu olduğunu kontrol edin.")
+            except Exception as _e:
+                st.error(f"Dosya okunamadı: {_e}")
 
 st.divider()
 
