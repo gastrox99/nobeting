@@ -889,6 +889,26 @@ with tab_cal:
     # Rol isimleri (Görev1, Görev2 vb.)
     _cal_role_names = st.session_state.get('rol_isimleri', [f"Görev{i+1}" for i in range(kişi_sayısı)])
 
+    # ── Takvimden gelen görev yeri değişim isteği ────────
+    _swap_dn = st.session_state.pop('cal_swap_day', None)
+    if _swap_dn is not None and 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
+        _row_idx = _swap_dn - 1
+        if 0 <= _row_idx < len(st.session_state.cached_rows_liste):
+            _srow = dict(st.session_state.cached_rows_liste[_row_idx])
+            _persons = [_srow.get(rn, "-") for rn in _cal_role_names]
+            _valid = [p for p in _persons if p and p != "-" and p in isimler]
+            if len(_valid) >= 2:
+                _valid = [_valid[-1]] + _valid[:-1]  # son kişiyi başa al (rotation)
+                _vi = 0
+                for _rn in _cal_role_names:
+                    _old = _srow.get(_rn, "-")
+                    if _old and _old != "-" and _old in isimler:
+                        _srow[_rn] = _valid[_vi]; _vi += 1
+                st.session_state.cached_rows_liste[_row_idx] = _srow
+                st.session_state.should_regenerate_assignments = True
+                st.toast(f"{_swap_dn}. gün görev yerleri değiştirildi", icon="🔄")
+                st.rerun()
+
     # ── Filtre + açıklama satırı ──────────────────────────
     cal_top1, cal_top2 = st.columns([3, 2])
     with cal_top1:
@@ -902,7 +922,7 @@ with tab_cal:
     with cal_top2:
         st.markdown(
             "<div style='padding-top:28px;font-size:12px;color:#6b7280;'>"
-            "🟢 Tercih &nbsp; 🟡 Kaçın &nbsp; 🔴 Müsait Değil &nbsp; ✏️ Düzenle"
+            "🟢 Tercih &nbsp; 🟡 Kaçın &nbsp; 🔴 Müsait Değil &nbsp; 🔄 Görev Yeri Değiştir"
             "</div>",
             unsafe_allow_html=True
         )
@@ -1108,6 +1128,10 @@ with tab_cal:
                         f"</div>",
                         unsafe_allow_html=True
                     )
+                    if len(all_nobetciler) >= 2:
+                        if st.button("🔄", key=f"cal_swap_{dn}", help="Görev yerlerini değiştir", use_container_width=True):
+                            st.session_state['cal_swap_day'] = dn
+                            st.rerun()
                     cal_day_num += 1
 
 # Build algorithm inputs from pref_df
@@ -1372,7 +1396,7 @@ st.divider()
 # ── Analiz — yatay dağılım ───────────────────────────────────────────────────
 st.header("📊 Analiz")
 
-# Satır 1: Nöbet Yükü  |  Ücret Özeti
+# Satır 1: Nöbet Yükü  |  Kişisel Detay
 an1, an2 = st.columns(2)
 
 with an1:
@@ -1419,19 +1443,6 @@ with an1:
             st.rerun()
 
 with an2:
-    st.markdown("**Ücret Özeti**")
-    st.dataframe(
-        df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
-                              .format({"Ücret (TL)": "₺ {:,.2f}"}),
-        use_container_width=True
-    )
-
-st.divider()
-
-# Satır 2: Kişisel Detay  |  Eşleşme Matrisi  |  Tercih Başarısı
-an3, an4, an5 = st.columns(3)
-
-with an3:
     st.markdown("**Kişisel Detay**")
     kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
     kisi_rows = []
@@ -1455,32 +1466,19 @@ with an3:
     else:
         st.info("Nöbet yok.")
 
+st.divider()
+
+# Satır 2: Ücret Özeti  |  Eşleşme Matrisi
+an3, an4 = st.columns(2)
+
+with an3:
+    st.markdown("**Ücret Özeti**")
+    st.dataframe(
+        df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
+                              .format({"Ücret (TL)": "₺ {:,.2f}"}),
+        use_container_width=True
+    )
+
 with an4:
     st.markdown("**Eşleşme Matrisi**")
     st.dataframe(pair_display, use_container_width=True)
-
-with an5:
-    st.markdown("**Tercih Başarısı (%)**")
-    pref_stats = []
-    for isim in isimler:
-        green_total = green_assigned = yellow_total = yellow_avoided = red_total = red_blocked = 0
-        for col in sutunlar:
-            pref_val = st.session_state.pref_df.at[isim, col] if isim in st.session_state.pref_df.index and col in st.session_state.pref_df.columns else 0
-            is_assigned = edited.at[isim, col] if isim in edited.index and col in edited.columns else False
-            if pref_val == 1:
-                green_total += 1
-                if is_assigned: green_assigned += 1
-            elif pref_val == 2:
-                yellow_total += 1
-                if not is_assigned: yellow_avoided += 1
-            elif pref_val == 3:
-                red_total += 1
-                if not is_assigned: red_blocked += 1
-        pref_stats.append({
-            "İsim": isim,
-            "🟢 İstek": f"{round(green_assigned/green_total*100)}%" if green_total > 0 else "-",
-            "🟡 Kaçınma": f"{round(yellow_avoided/yellow_total*100)}%" if yellow_total > 0 else "-",
-            "🔴 İstenmeyen": f"{round(red_blocked/red_total*100)}%" if red_total > 0 else "-",
-        })
-    df_pref_stats = pd.DataFrame(pref_stats).set_index("İsim")
-    st.dataframe(df_pref_stats, use_container_width=True)
