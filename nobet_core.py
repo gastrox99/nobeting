@@ -9,6 +9,7 @@ import random
 import calendar
 from io import BytesIO
 from datetime import datetime
+from itertools import combinations as _combinations
 
 
 def parse_unwanted_days(text_input, max_day):
@@ -144,6 +145,37 @@ def build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri):
     return gun_detaylari
 
 
+def _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs):
+    """Sıralı listeden forbidden_pairs'e uymayan kisi_sayisi boyutunda grup bulur.
+    Önce greedy (sıra korunur), başarısız olursa tam kombinasyon araması yapar."""
+    secilenler = []
+    for p in adaylar:
+        valid = True
+        if forbidden_pairs:
+            for s in secilenler:
+                if tuple(sorted((p, s))) in forbidden_pairs:
+                    valid = False
+                    break
+        if valid:
+            secilenler.append(p)
+            if len(secilenler) >= kisi_sayisi:
+                return secilenler
+    # Greedy yetmedi; tüm kombinasyonları dene (geçerli varsa mutlaka bulur)
+    if len(secilenler) < kisi_sayisi and forbidden_pairs and len(adaylar) >= kisi_sayisi:
+        for combo in _combinations(adaylar, kisi_sayisi):
+            ok = True
+            for i in range(len(combo)):
+                for j in range(i + 1, len(combo)):
+                    if tuple(sorted((combo[i], combo[j]))) in forbidden_pairs:
+                        ok = False
+                        break
+                if not ok:
+                    break
+            if ok:
+                return list(combo)
+    return secilenler
+
+
 def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                         min_bosluk, kisi_sayisi, forbidden_pairs=None,
                         person_limits=None, df_preferred=None,
@@ -217,33 +249,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col))
 
             if len(adaylar) >= kisi_sayisi:
-                secilenler = []
-                for p in adaylar:
-                    valid = True
-                    if forbidden_pairs:
-                        for selected in secilenler:
-                            if tuple(sorted((p, selected))) in forbidden_pairs:
-                                valid = False
-                                break
-                    if valid:
-                        secilenler.append(p)
-                        if len(secilenler) >= kisi_sayisi:
-                            break
-
-                # Retry with shuffle if forbidden pairs blocked
-                if len(secilenler) < kisi_sayisi and forbidden_pairs and len(adaylar) >= kisi_sayisi:
-                    random.shuffle(adaylar)
-                    secilenler = []
-                    for p in adaylar:
-                        valid = True
-                        for selected in secilenler:
-                            if tuple(sorted((p, selected))) in forbidden_pairs:
-                                valid = False
-                                break
-                        if valid:
-                            secilenler.append(p)
-                            if len(secilenler) >= kisi_sayisi:
-                                break
+                secilenler = _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs)
 
                 if len(secilenler) >= kisi_sayisi:
                     if kisi_sayisi >= 2:

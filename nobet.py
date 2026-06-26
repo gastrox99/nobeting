@@ -596,6 +596,7 @@ with tab_grid:
             selected_label = color_info[st.session_state.paint_color][1]
         else:
             st.info("Tıklayarak nöbet ekle/kaldır ✓")
+            selected_label = ""
 
     # Quick actions row
     action_cols = st.columns(3)
@@ -668,6 +669,7 @@ with tab_grid:
     st.markdown('<div class="schedule-grid-wrapper"><div class="schedule-grid">', unsafe_allow_html=True)
 
     tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
+    _is_tercih = st.session_state.edit_mode == "tercih"
     header_cols = st.columns([2] + [1] * len(sutunlar))
     with header_cols[0]:
         st.markdown("<div style='font-size:13px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
@@ -702,6 +704,11 @@ with tab_grid:
                 f"</div>",
                 unsafe_allow_html=True
             )
+            if _is_tercih:
+                if st.button("▼", key=f"col_paint_{col}", help=f"{day_num}. günü herkese uygula", use_container_width=True):
+                    for _pp in isimler:
+                        st.session_state.pref_df.at[_pp, col] = st.session_state.paint_color
+                    st.rerun()
 
     _person_limits = st.session_state.get('person_limits', {})
     for person in isimler:
@@ -713,15 +720,26 @@ with tab_grid:
             max_l = p_lim.get('max', 999)
             badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
             pc = person_colors.get(person, "#e2e8f0")
-            st.markdown(
-                f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
-                f"<span style='display:inline-block;width:11px;height:11px;border-radius:50%;"
-                f"background:{pc};margin-right:4px;vertical-align:middle;border:1px solid rgba(0,0,0,0.12);'></span>"
-                f"<b>{person}</b>&nbsp;"
-                f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+            if _is_tercih:
+                if st.button(
+                    f"→ {person} {count}",
+                    key=f"row_paint_{person}",
+                    use_container_width=True,
+                    help=f"{person} için tüm ayı uygula"
+                ):
+                    for _rc in sutunlar:
+                        st.session_state.pref_df.at[person, _rc] = st.session_state.paint_color
+                    st.rerun()
+            else:
+                st.markdown(
+                    f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
+                    f"<span style='display:inline-block;width:11px;height:11px;border-radius:50%;"
+                    f"background:{pc};margin-right:4px;vertical-align:middle;border:1px solid rgba(0,0,0,0.12);'></span>"
+                    f"<b>{person}</b>&nbsp;"
+                    f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
         for i, col in enumerate(sutunlar):
             with row_cols[i + 1]:
                 pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
@@ -750,12 +768,13 @@ with tab_grid:
 
     st.markdown('</div></div>', unsafe_allow_html=True)
 
-    legend_cols = st.columns(7)
+    legend_cols = st.columns(8)
     legends = [
         ("●", "#374151", "Atandı"),
         ("✅", "#16a34a", "Atandı+İstedi"),
         ("⚠️", "#d97706", "Atandı+Kaçın"),
         ("🚫", "#dc2626", "Atandı+Yasak"),
+        ("🔺", "#dc2626", "Çakışma"),
         ("🟢", "#16a34a", "Tercih"),
         ("🟡", "#d97706", "Kaçınma"),
         ("🔴", "#dc2626", "Yasak"),
@@ -1043,7 +1062,18 @@ st.session_state.run_simulation = False
 
 if sim_clicked:
     is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kişi_sayısı)
-    
+
+    # Min limit fizibilite kontrolü
+    _sim_person_limits = st.session_state.get('person_limits', {})
+    if _sim_person_limits:
+        for _p, _lim in _sim_person_limits.items():
+            if _p in isimler:
+                _min_req = _lim.get('min', 0)
+                if _min_req > 0:
+                    _avail = sum(1 for _c in sutunlar if not df_unwanted.at[_p, _c])
+                    if _min_req > _avail:
+                        warnings.append(f"⚠️ **{_p}**: Min {_min_req} nöbet gerekli ama yalnızca {_avail} müsait gün var — limit karşılanamayabilir")
+
     if errors:
         st.error("🚨 Hata(lar) düzeltilmeli:")
         for err in errors:
@@ -1223,11 +1253,21 @@ for isim in isimler:
     fm_saat = max(0, saat - zorunlu_saat)
     ucret = fm_saat * nobet_ucreti
     
+    _p_lim_s = st.session_state.get('person_limits', {}).get(isim, {})
+    _min_s = _p_lim_s.get('min', 0)
+    _max_s = _p_lim_s.get('max', 999)
+    _limit_str = (
+        f"{_min_s}-{_max_s}" if _min_s or _max_s < 999
+        else "-"
+    )
+    _limit_ok = (int(toplam) >= _min_s) and (int(toplam) <= _max_s)
     stats_load.append({
         "İsim": isim,
         "Toplam": int(toplam),
         "Özel": int(ozel_gun),
-        role_names[0]: first_role_counts.get(isim, 0)
+        role_names[0]: first_role_counts.get(isim, 0),
+        "Limit": _limit_str,
+        "✓": "🟢" if _limit_ok else "🔴",
     })
     stats_finance.append({
         "İsim": isim,
