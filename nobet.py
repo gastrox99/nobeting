@@ -216,9 +216,21 @@ def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance):
         
         # Format worksheets
         workbook = writer.book
+        def _xl_col(n):
+            s = ""
+            while n >= 0:
+                s = chr(65 + n % 26) + s
+                n = n // 26 - 1
+            return s
+        n_cols = max(
+            df_liste.shape[1],
+            df_stats_load.shape[1] + 1,
+            df_stats_finance.shape[1] + 1,
+        )
+        last_col = _xl_col(n_cols + 2)
         for sheet_name in writer.sheets:
             worksheet = writer.sheets[sheet_name]
-            worksheet.set_column('A:Z', 15)
+            worksheet.set_column(f'A:{last_col}', 15)
     
     return output.getvalue()
 
@@ -555,6 +567,11 @@ for i in isimler:
         st.session_state.person_preferences[i] = {}
 for i in isimler: 
     if i not in st.session_state.inputs: st.session_state.inputs[i] = ""
+# Ekipten çıkarılan üyelerin eski verilerini temizle
+for _stale in [k for k in list(st.session_state.inputs.keys()) if k not in isimler]:
+    del st.session_state.inputs[_stale]
+for _stale in [k for k in list(st.session_state.person_preferences.keys()) if k not in isimler]:
+    del st.session_state.person_preferences[_stale]
 
 # --- KİŞİ RENK PALETİ (20 pastel ton) ---
 PASTEL_COLORS = [
@@ -651,7 +668,7 @@ with tab_grid:
             selected_label = ""
 
     # Quick actions row
-    action_cols = st.columns(3)
+    action_cols = st.columns(4)
     with action_cols[0]:
         if st.button("⚡ Simülasyon", type="primary", use_container_width=True):
             st.session_state.run_simulation = True
@@ -672,7 +689,21 @@ with tab_grid:
                         st.session_state.pref_df = _snap['pref']
                 else:
                     st.session_state.schedule_bool = _snap
-                # Tablo ve analiz görünümlerini geri yüklenen durumla senkronize et
+                st.session_state.cached_rows_liste = None
+                st.session_state.should_regenerate_assignments = True
+                st.rerun()
+    with action_cols[3]:
+        if st.button("↪️ İleri", use_container_width=True, disabled=len(st.session_state.redo_history)==0):
+            if st.session_state.redo_history:
+                st.session_state.undo_history.append(_current_state_snapshot())
+                _snap = st.session_state.redo_history.pop()
+                if isinstance(_snap, dict):
+                    if _snap.get('schedule') is not None:
+                        st.session_state.schedule_bool = _snap['schedule']
+                    if _snap.get('pref') is not None:
+                        st.session_state.pref_df = _snap['pref']
+                else:
+                    st.session_state.schedule_bool = _snap
                 st.session_state.cached_rows_liste = None
                 st.session_state.should_regenerate_assignments = True
                 st.rerun()
@@ -1190,13 +1221,27 @@ for col in sutunlar:
                 if pair in st.session_state.forbidden_pairs:
                     forbidden_msg.append(f"🚫 **{gun_no}. Gün**: {nobetciler[i]} ve {nobetciler[j]} birlikte çalışamaz!")
 
-if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violations:
+# Kişisel limit ihlali kontrolü
+limit_msg = []
+_pl = st.session_state.get('person_limits', {})
+for isim in isimler:
+    _lim = _pl.get(isim, {})
+    _min_l = _lim.get('min', 0)
+    _max_l = _lim.get('max', 999)
+    _tot = int(edited.loc[isim].sum())
+    if _min_l > 0 and _tot < _min_l:
+        limit_msg.append(f"🔻 **{isim}**: Min {_min_l} nöbet gerekli, şu an {_tot} atanmış.")
+    if _max_l < 999 and _tot > _max_l:
+        limit_msg.append(f"🔺 **{isim}**: Max {_max_l} nöbet aşıldı, şu an {_tot} atanmış.")
+
+if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violations or limit_msg:
     with st.expander("🚨 HATA RAPORU (Tıklayıp Açın)", expanded=True):
         for m in max_person_msg: st.error(m)
         for m in min_person_msg: st.warning(m)
         for c in conflict_msg: st.error(c)
         for f in forbidden_msg: st.error(f)
         for v in violations: st.info(v)
+        for m in limit_msg: st.warning(m)
 else:
     st.success(f"✅ Kurallar uygun (Her gün {kişi_sayısı} kişi, çakışma yok).")
 
@@ -1284,6 +1329,14 @@ else:
 
 df_liste = pd.DataFrame(rows_liste)
 
+# Tüm roller için kişi başı sayım tablosu
+all_role_counts = {rn: {isim: 0 for isim in isimler} for rn in role_names}
+for _row in rows_liste:
+    for rn in role_names:
+        _p = _row.get(rn, '-')
+        if _p in isimler:
+            all_role_counts[rn][_p] += 1
+
 stats_load = []
 stats_finance = []
 pair_matrix = pd.DataFrame(0, index=isimler, columns=isimler, dtype=int)
@@ -1313,7 +1366,7 @@ for isim in isimler:
         "İsim": isim,
         "Toplam": int(toplam),
         "Özel": int(ozel_gun),
-        role_names[0]: first_role_counts.get(isim, 0),
+        **{rn: all_role_counts[rn].get(isim, 0) for rn in role_names},
         "Limit": _limit_str,
         "✓": "🟢" if _limit_ok else "🔴",
     })
@@ -1492,7 +1545,7 @@ an1, an2 = st.columns(2)
 with an1:
     st.markdown("**Nöbet Yükü**")
     st.dataframe(
-        df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam", role_names[0]])
+        df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
                            .background_gradient(cmap="Oranges", subset=["Özel"]),
         use_container_width=True
     )
@@ -1544,7 +1597,6 @@ with an2:
                 for other_idx, other_role in enumerate(role_names):
                     if other_idx != role_idx and other_role in row and row.get(other_role) and row[other_role] != '-':
                         partners.append(row[other_role])
-                break
         if rol:
             partner_str = ', '.join(partners) if partners else 'Tek'
             kisi_rows.append({"Tarih": row['Tarih'], "Partner": partner_str, "Rol": rol})
