@@ -226,6 +226,22 @@ class TestBuildGunDetaylari(unittest.TestCase):
         result = build_gun_detaylari(2025, 1, 31, [])
         self.assertIn("Oca", result["G01"]["full_date"])
 
+    def test_ayni_hafta_sonu_ayni_week(self):
+        # Cmt ve Paz aynı hafta sonu -> aynı 'week' değeri olmalı
+        result = build_gun_detaylari(2025, 1, 31, [])
+        self.assertEqual(result["G04"]["week"], result["G05"]["week"])  # 4 Cmt, 5 Paz
+
+    def test_ardisik_hafta_sonu_week_farki_bir(self):
+        # Ardışık hafta sonları tam olarak 1 fark etmeli
+        result = build_gun_detaylari(2025, 1, 31, [])
+        self.assertEqual(result["G11"]["week"] - result["G04"]["week"], 1)  # 4 Cmt -> 11 Cmt
+
+    def test_yil_siniri_week_monoton(self):
+        # Ocak 2022: 1 Cmt (ISO hafta 52/2021), 8 Cmt (ISO hafta 1/2022)
+        # ISO hafta numarası kullanılsaydı 52 -> 1 olur, +1 mantığı kırılırdı.
+        result = build_gun_detaylari(2022, 1, 31, [])
+        self.assertEqual(result["G08"]["week"] - result["G01"]["week"], 1)
+
 
 # ==============================================================================
 # 6. run_scheduling_core testleri (algoritma)

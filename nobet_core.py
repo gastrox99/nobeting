@@ -135,12 +135,14 @@ def build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri):
         is_weekend = weekday >= 5
         full_date = f"{gun} {ay_isimleri[ay]} {gun_isimleri[weekday]}"
         col_key = f"G{gun:02d}"
+        week_val = (datetime(yil, ay, gun).toordinal() - weekday) // 7
         gun_detaylari[col_key] = {
             'day_num': gun,
             'weekend': is_weekend,
             'holiday': gun in tatil_gunleri,
             'full_date': full_date,
             'weekday': weekday,
+            'week': week_val,
         }
     return gun_detaylari
 
@@ -231,7 +233,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             gun_no = info['day_num']
             is_sp = info['weekend'] or info['holiday']
             is_weekend = info['weekend']
-            weekend_num = (gun_no - 1) // 7
+            weekend_num = info.get('week', (gun_no - 1) // 7)
 
             adaylar = []
             for k in isimler:

@@ -21,10 +21,13 @@ except ImportError:
     EXCEL_AVAILABLE = False
 
 # Initialize database on app start
-init_db()
+_db_ready = init_db()
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Adil Nöbet v98 (AI Simulation)", layout="wide")
+
+if not _db_ready:
+    st.warning("⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt özellikleri şu an çalışmayabilir.")
 
 # --- localStorage for team list persistence ---
 local_storage = LocalStorage()
@@ -272,8 +275,15 @@ def create_print_html(df_liste, df_stats_load, yil, ay):
     """
     return html
 
-def save_undo_state(schedule_df):
-    """Save current state for undo"""
+def _current_state_snapshot():
+    """Geri al/yinele için hem nöbet hem tercih durumunu kaydeder."""
+    return {
+        'schedule': st.session_state.schedule_bool.copy() if 'schedule_bool' in st.session_state else None,
+        'pref': st.session_state.pref_df.copy() if 'pref_df' in st.session_state else None,
+    }
+
+def save_undo_state(schedule_df=None):
+    """Save current state (schedule + preferences) for undo"""
     if 'undo_history' not in st.session_state:
         st.session_state.undo_history = []
     if 'redo_history' not in st.session_state:
@@ -283,7 +293,7 @@ def save_undo_state(schedule_df):
     if len(st.session_state.undo_history) >= 10:
         st.session_state.undo_history.pop(0)
     
-    st.session_state.undo_history.append(schedule_df.copy())
+    st.session_state.undo_history.append(_current_state_snapshot())
     st.session_state.redo_history = []  # Clear redo on new action
 
 # --- ANA ALGORİTMA: nobet_core.run_scheduling_core kullanır ---
@@ -346,7 +356,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     
     with set_col3:
         min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, 1)
-        tatil_gunleri = [int(x) for x in st.text_input("🎉 Tatiller:", placeholder="1,2,23").split(",") if x.strip().isdigit()]
+        tatil_gunleri = parse_unwanted_days(st.text_input("🎉 Tatiller:", placeholder="1,2,5-10,23"), gun_sayisi)
         nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", value=1.0)
     
     # Additional settings row
@@ -437,7 +447,8 @@ for g in range(1, gun_sayisi + 1):
     is_hol = g in tatil_gunleri
     if is_we or is_hol: ozel_gun_sayisi += 1
     full_d = dt.strftime("%d.%m.%Y") + " " + tr_gunler[dt.weekday()]
-    gun_detaylari[baslik] = {"weekend": is_we, "holiday": is_hol, "day_num": g, "full_date": full_d}
+    week_val = (dt.toordinal() - dt.weekday()) // 7
+    gun_detaylari[baslik] = {"weekend": is_we, "holiday": is_hol, "day_num": g, "full_date": full_d, "week": week_val}
     disp = str(g)
     if is_hol: disp = f"🚨 {g}"
     elif is_we: disp = f"🏖️ {g}"
@@ -616,8 +627,15 @@ with tab_grid:
     with action_cols[2]:
         if st.button("↩️ Geri", use_container_width=True, disabled=len(st.session_state.undo_history)==0):
             if st.session_state.undo_history:
-                st.session_state.redo_history.append(st.session_state.schedule_bool.copy())
-                st.session_state.schedule_bool = st.session_state.undo_history.pop()
+                st.session_state.redo_history.append(_current_state_snapshot())
+                _snap = st.session_state.undo_history.pop()
+                if isinstance(_snap, dict):
+                    if _snap.get('schedule') is not None:
+                        st.session_state.schedule_bool = _snap['schedule']
+                    if _snap.get('pref') is not None:
+                        st.session_state.pref_df = _snap['pref']
+                else:
+                    st.session_state.schedule_bool = _snap
                 st.rerun()
 
     # Dynamic column background CSS
@@ -747,10 +765,10 @@ with tab_grid:
                 else:
                     label = "🟢" if pref_val == 1 else ("🟡" if pref_val == 2 else ("🔴" if pref_val == 3 else "○"))
                 if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
+                    save_undo_state()
                     if st.session_state.edit_mode == "tercih":
                         st.session_state.pref_df.at[person, col] = st.session_state.paint_color
                     else:
-                        save_undo_state(st.session_state.schedule_bool)
                         st.session_state.schedule_bool.at[person, col] = not st.session_state.schedule_bool.at[person, col]
                     st.rerun()
 
@@ -1144,9 +1162,10 @@ else:
 
 # --- VERİ HAZIRLIĞI ---
 # Only regenerate assignments when AI button is clicked, not on manual edits
+_cache_key = (yil, ay, tuple(isimler), tuple(sutunlar))
 if (st.session_state.should_regenerate_assignments
         or st.session_state.cached_rows_liste is None
-        or len(st.session_state.cached_rows_liste) != len(sutunlar)):
+        or st.session_state.get('cached_key') != _cache_key):
     rows_liste = []
     first_role_counts = {i: 0 for i in isimler}
     for col in sutunlar:
@@ -1169,6 +1188,7 @@ if (st.session_state.should_regenerate_assignments
     st.session_state.cached_rows_liste = rows_liste
     st.session_state.cached_first_role_counts = first_role_counts
     st.session_state.cached_role_names = role_names
+    st.session_state.cached_key = _cache_key
     st.session_state.should_regenerate_assignments = False
 else:
     # If we are not regenerating (manual edits happened), we need to SYNC rows_liste from the edited dataframe
@@ -1372,7 +1392,10 @@ with dl6:
                     else:
                         st.warning("Eşleşen gün bulunamadı. Ekip isimleri ve ay/yıl ayarlarının uyumlu olduğunu kontrol edin.")
             except Exception as _e:
-                st.error(f"Dosya okunamadı: {_e}")
+                st.error(
+                    "Dosya okunamadı. Lütfen uygulamadan indirilen Excel formatını "
+                    f"('Tarih' + görev sütunları) kullandığınızdan emin olun.\n\nDetay: {_e}"
+                )
 
 st.divider()
 

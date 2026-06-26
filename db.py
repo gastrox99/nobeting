@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 import pandas as pd
 from datetime import datetime
 import json
@@ -69,14 +69,17 @@ def save_schedule(name, year, month, team_members, schedule_df):
         # Delete old data for this schedule
         cur.execute('DELETE FROM schedule_data WHERE schedule_id = %s', (schedule_id,))
         
-        # Insert schedule data
-        for person in schedule_df.index:
-            for col in schedule_df.columns:
-                assigned = bool(schedule_df.at[person, col])
-                cur.execute('''
-                    INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
-                    VALUES (%s, %s, %s, %s)
-                ''', (schedule_id, person, col, assigned))
+        # Insert schedule data (tek toplu sorgu - tek tek INSERT yerine)
+        rows = [
+            (schedule_id, person, col, bool(schedule_df.at[person, col]))
+            for person in schedule_df.index
+            for col in schedule_df.columns
+        ]
+        if rows:
+            execute_values(cur, '''
+                INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
+                VALUES %s
+            ''', rows)
         
         conn.commit()
         cur.close()
