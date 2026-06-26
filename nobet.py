@@ -1589,17 +1589,17 @@ with an2:
     kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
     kisi_rows = []
     for index, row in df_liste.iterrows():
-        partners = []
-        rol = None
+        roller = []
+        partners_set = set()
         for role_idx, role_name in enumerate(role_names):
             if role_name in row and row.get(role_name) == kisi_sec:
-                rol = role_name
+                roller.append(role_name)
                 for other_idx, other_role in enumerate(role_names):
                     if other_idx != role_idx and other_role in row and row.get(other_role) and row[other_role] != '-':
-                        partners.append(row[other_role])
-        if rol:
-            partner_str = ', '.join(partners) if partners else 'Tek'
-            kisi_rows.append({"Tarih": row['Tarih'], "Partner": partner_str, "Rol": rol})
+                        partners_set.add(row[other_role])
+        if roller:
+            partner_str = ', '.join(sorted(partners_set)) if partners_set else 'Tek'
+            kisi_rows.append({"Tarih": row['Tarih'], "Partner": partner_str, "Rol": ', '.join(roller)})
     df_kisi = pd.DataFrame(kisi_rows)
     if not df_kisi.empty:
         h_kisi = min(len(df_kisi) * 35 + 38, 400)
