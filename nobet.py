@@ -288,10 +288,12 @@ def create_print_html(df_liste, df_stats_load, yil, ay):
     return html
 
 def _current_state_snapshot():
-    """Geri al/yinele için hem nöbet hem tercih durumunu kaydeder."""
+    """Geri al/yinele için hem nöbet hem tercih hem de görev yeri atamalarını kaydeder."""
     return {
         'schedule': st.session_state.schedule_bool.copy() if 'schedule_bool' in st.session_state else None,
         'pref': st.session_state.pref_df.copy() if 'pref_df' in st.session_state else None,
+        'rows_liste': list(st.session_state.cached_rows_liste) if st.session_state.get('cached_rows_liste') else None,
+        'role_names': list(st.session_state.cached_role_names) if st.session_state.get('cached_role_names') else None,
     }
 
 def save_undo_state(schedule_df=None):
@@ -707,10 +709,17 @@ with tab_grid:
                         st.session_state.schedule_bool = _snap['schedule']
                     if _snap.get('pref') is not None:
                         st.session_state.pref_df = _snap['pref']
+                    if _snap.get('rows_liste') is not None:
+                        st.session_state.cached_rows_liste = _snap['rows_liste']
+                        st.session_state.cached_role_names = _snap.get('role_names')
+                        st.session_state.should_regenerate_assignments = False
+                    else:
+                        st.session_state.cached_rows_liste = None
+                        st.session_state.should_regenerate_assignments = True
                 else:
                     st.session_state.schedule_bool = _snap
-                st.session_state.cached_rows_liste = None
-                st.session_state.should_regenerate_assignments = True
+                    st.session_state.cached_rows_liste = None
+                    st.session_state.should_regenerate_assignments = True
                 st.rerun()
     with action_cols[3]:
         if st.button("↪️ İleri", use_container_width=True, disabled=len(st.session_state.redo_history)==0):
@@ -722,10 +731,17 @@ with tab_grid:
                         st.session_state.schedule_bool = _snap['schedule']
                     if _snap.get('pref') is not None:
                         st.session_state.pref_df = _snap['pref']
+                    if _snap.get('rows_liste') is not None:
+                        st.session_state.cached_rows_liste = _snap['rows_liste']
+                        st.session_state.cached_role_names = _snap.get('role_names')
+                        st.session_state.should_regenerate_assignments = False
+                    else:
+                        st.session_state.cached_rows_liste = None
+                        st.session_state.should_regenerate_assignments = True
                 else:
                     st.session_state.schedule_bool = _snap
-                st.session_state.cached_rows_liste = None
-                st.session_state.should_regenerate_assignments = True
+                    st.session_state.cached_rows_liste = None
+                    st.session_state.should_regenerate_assignments = True
                 st.rerun()
 
     # Simülasyon onay dialogu
@@ -916,6 +932,7 @@ with tab_cal:
                 _valid = [_srow.get(rn, "-") for rn in _swap_role_names]
                 _valid = [p for p in _valid if p and p != "-" and p in isimler]
                 if len(_valid) >= 2:
+                    save_undo_state()
                     _valid = [_valid[-1]] + _valid[:-1]  # döngüsel kaydırma
                     _vi = 0
                     for _rn in _swap_role_names:
@@ -1297,6 +1314,28 @@ if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violatio
 else:
     st.success(f"✅ Kurallar uygun (Her gün {kişi_sayısı} kişi, çakışma yok).")
 
+# ── Günlük Listeden gelen görev yeri değişim isteği ──────────────────────────
+_liste_swap_dn = st.session_state.pop('liste_swap_day', None)
+if _liste_swap_dn is not None and st.session_state.get('cached_rows_liste'):
+    _ls_role_names = st.session_state.get('cached_role_names', [f"Görev{i+1}" for i in range(kişi_sayısı)])
+    _ls_row_idx = _liste_swap_dn - 1
+    if 0 <= _ls_row_idx < len(st.session_state.cached_rows_liste):
+        _ls_row = dict(st.session_state.cached_rows_liste[_ls_row_idx])
+        _ls_valid = [_ls_row.get(rn, "-") for rn in _ls_role_names]
+        _ls_valid = [p for p in _ls_valid if p and p != "-" and p in isimler]
+        if len(_ls_valid) >= 2:
+            save_undo_state()
+            _ls_valid = [_ls_valid[-1]] + _ls_valid[:-1]  # döngüsel kaydırma
+            _lsvi = 0
+            for _lsrn in _ls_role_names:
+                _lsold = _ls_row.get(_lsrn, "-")
+                if _lsold and _lsold != "-" and _lsold in isimler:
+                    _ls_row[_lsrn] = _ls_valid[_lsvi]; _lsvi += 1
+            st.session_state.cached_rows_liste[_ls_row_idx] = _ls_row
+            st.session_state.should_regenerate_assignments = False
+            st.toast(f"{_liste_swap_dn}. gün görev yerleri değiştirildi", icon="🔄")
+            st.rerun()
+
 # --- VERİ HAZIRLIĞI ---
 # Only regenerate assignments when AI button is clicked, not on manual edits
 _cache_key = (yil, ay, tuple(isimler), tuple(sutunlar))
@@ -1547,8 +1586,55 @@ with dl6:
 
 st.divider()
 
+# ── Günlük Liste — görev yeri değişimi ───────────────────────────────────────
+st.subheader("📋 Günlük Liste")
+st.caption("Her satırdaki 🔄 butona tıklayarak o günün görev yerlerini döngüsel olarak değiştirebilirsiniz. Değişiklik Geri Al / İleri Al ile geri alınabilir.")
+if rows_liste:
+    _gl_role_names = role_names
+    _gl_cols_cfg = {"Tarih": st.column_config.TextColumn("Tarih", disabled=True)}
+    for _glrn in _gl_role_names:
+        _gl_cols_cfg[_glrn] = st.column_config.TextColumn(_glrn, disabled=True)
+    _gl_cols_cfg["🔄"] = st.column_config.CheckboxColumn("Değiştir", default=False)
+    _gl_display_rows = []
+    for _glrow in rows_liste:
+        _gl_persons = [_glrow.get(rn, "-") for rn in _gl_role_names]
+        _gl_persons = [p for p in _gl_persons if p and p != "-" and p in isimler]
+        _gl_display_rows.append({
+            "Tarih": _glrow.get("Tarih", ""),
+            **{rn: _glrow.get(rn, "-") for rn in _gl_role_names},
+            "🔄": False,
+        })
+    _gl_df = pd.DataFrame(_gl_display_rows)
+    _gl_edited = st.data_editor(
+        _gl_df,
+        column_config=_gl_cols_cfg,
+        use_container_width=True,
+        hide_index=True,
+        key="gunluk_liste_swap_editor",
+        num_rows="fixed",
+    )
+    if _gl_edited is not None:
+        _gl_swap_rows = _gl_edited[_gl_edited["🔄"] == True]
+        if not _gl_swap_rows.empty:
+            _gl_swap_idx = _gl_swap_rows.index[0]
+            _gl_swap_row = rows_liste[_gl_swap_idx]
+            _gl_day_people = [_gl_swap_row.get(rn, "-") for rn in _gl_role_names]
+            _gl_day_people = [p for p in _gl_day_people if p and p != "-" and p in isimler]
+            if len(_gl_day_people) >= 2:
+                _gl_tarih_str = _gl_swap_row.get("Tarih", "")
+                try:
+                    _gl_dn = int(str(_gl_tarih_str).split(".")[0])
+                except Exception:
+                    _gl_dn = _gl_swap_idx + 1
+                st.session_state['liste_swap_day'] = _gl_dn
+                st.rerun()
+else:
+    st.info("Önce simülasyon çalıştırın veya nöbet ataması yapın.")
+
+st.divider()
+
 # ── Görev Yeri Düzenleme ─────────────────────────────────────────────────────
-with st.expander("✏️ Görev Yerlerini Düzenle", expanded=False):
+with st.expander("✏️ Görev Yerlerini Düzenle (Gelişmiş)", expanded=False):
     st.caption("Görev sütunlarındaki isimleri değiştirerek rol atamalarını düzenleyebilirsiniz. Sadece o güne atanmış kişiler geçerlidir.")
     if rows_liste:
         _edit_col_cfg = {"Tarih": st.column_config.TextColumn("Tarih", disabled=True)}
@@ -1584,6 +1670,7 @@ with st.expander("✏️ Görev Yerlerini Düzenle", expanded=False):
                             _role_changed = True
                 _new_rows_edit.append(_new_r)
             if _role_changed:
+                save_undo_state()
                 st.session_state.cached_rows_liste = _new_rows_edit
                 st.session_state.should_regenerate_assignments = False
                 st.rerun()
