@@ -44,6 +44,11 @@ def init_db():
         cur.execute('''
             ALTER TABLE schedules ADD COLUMN IF NOT EXISTS pref_json TEXT
         ''')
+
+        # Add settings_json column if it doesn't exist (safe migration)
+        cur.execute('''
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS settings_json TEXT
+        ''')
         
         conn.commit()
         cur.close()
@@ -53,7 +58,7 @@ def init_db():
         print(f"Database init error: {e}")
         return False
 
-def save_schedule(name, year, month, team_members, schedule_df, pref_df=None):
+def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None):
     """Save a schedule to database"""
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -69,17 +74,26 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None):
                 pref_json = pref_df.to_json()
             except Exception:
                 pref_json = None
+
+        # Serialize settings dict as JSON if provided
+        settings_json_str = None
+        if settings_dict is not None:
+            try:
+                settings_json_str = json.dumps(settings_dict)
+            except Exception:
+                settings_json_str = None
         
         # Insert or update schedule
         cur.execute('''
-            INSERT INTO schedules (name, year, month, team_members, pref_json, updated_at)
-            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT (name, year, month) DO UPDATE
                 SET updated_at = CURRENT_TIMESTAMP,
                     team_members = EXCLUDED.team_members,
-                    pref_json = EXCLUDED.pref_json
+                    pref_json = EXCLUDED.pref_json,
+                    settings_json = EXCLUDED.settings_json
             RETURNING id
-        ''', (name, year, month, team_str, pref_json))
+        ''', (name, year, month, team_str, pref_json, settings_json_str))
         
         schedule_id = cur.fetchone()[0]
         
@@ -108,8 +122,8 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None):
 
 def load_schedule(name, year, month):
     """Load a schedule from database.
-    Returns (team_members, schedule_df, pref_df).
-    pref_df is None when not saved.
+    Returns (team_members, schedule_df, pref_df, settings_dict).
+    pref_df and settings_dict are None when not saved.
     """
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -122,7 +136,7 @@ def load_schedule(name, year, month):
         
         schedule_row = cur.fetchone()
         if not schedule_row:
-            return None, None, None
+            return None, None, None, None
         
         schedule_id = schedule_row['id']
 
@@ -141,6 +155,15 @@ def load_schedule(name, year, month):
                 pref_df = pd.read_json(raw_pref)
             except Exception:
                 pref_df = None
+
+        # Decode settings_dict if available
+        settings_dict = None
+        raw_settings = schedule_row.get('settings_json')
+        if raw_settings:
+            try:
+                settings_dict = json.loads(raw_settings)
+            except Exception:
+                settings_dict = None
         
         # Get schedule data
         cur.execute('''
@@ -153,7 +176,7 @@ def load_schedule(name, year, month):
         conn.close()
         
         if not data_rows:
-            return team_members, None, pref_df
+            return team_members, None, pref_df, settings_dict
         
         # Reconstruct dataframe
         schedule_dict = {}
@@ -167,11 +190,11 @@ def load_schedule(name, year, month):
             schedule_dict[day_col][person] = assigned
         
         df = pd.DataFrame(schedule_dict, index=team_members)
-        return team_members, df, pref_df
+        return team_members, df, pref_df, settings_dict
         
     except Exception as e:
         print(f"Load schedule error: {e}")
-        return None, None, None
+        return None, None, None, None
 
 def list_schedules():
     """List all saved schedules"""

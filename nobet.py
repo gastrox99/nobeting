@@ -294,6 +294,9 @@ def _current_state_snapshot():
         'pref': st.session_state.pref_df.copy() if 'pref_df' in st.session_state else None,
         'rows_liste': list(st.session_state.cached_rows_liste) if st.session_state.get('cached_rows_liste') else None,
         'role_names': list(st.session_state.cached_role_names) if st.session_state.get('cached_role_names') else None,
+        'forbidden_pairs_text': st.session_state.get('forbidden_pairs_text', ''),
+        'limits_text': st.session_state.get('limits_text', ''),
+        'rol_isimleri': list(st.session_state.get('rol_isimleri', [])),
     }
 
 def save_undo_state(schedule_df=None):
