@@ -326,8 +326,13 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         local_storage.setItem("nobet_team", isimler_input)
     
     with set_col2:
-        current_year = datetime.now().year
-        current_month = datetime.now().month
+        _now = datetime.now()
+        if _now.month == 12:
+            current_year = _now.year + 1
+            current_month = 1
+        else:
+            current_year = _now.year
+            current_month = _now.month + 1
         yil = st.number_input("📅 Yıl", 2024, 2030, value=st.session_state.get('yil_val', current_year), key='yil_input_direct')
         st.session_state.yil_val = yil
         
@@ -669,7 +674,6 @@ with tab_grid:
     st.markdown('<div class="schedule-grid-wrapper"><div class="schedule-grid">', unsafe_allow_html=True)
 
     tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
-    _is_tercih = st.session_state.edit_mode == "tercih"
     header_cols = st.columns([2] + [1] * len(sutunlar))
     with header_cols[0]:
         st.markdown("<div style='font-size:13px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
@@ -704,11 +708,6 @@ with tab_grid:
                 f"</div>",
                 unsafe_allow_html=True
             )
-            if _is_tercih:
-                if st.button("▼", key=f"col_paint_{col}", help=f"{day_num}. günü herkese uygula", use_container_width=True):
-                    for _pp in isimler:
-                        st.session_state.pref_df.at[_pp, col] = st.session_state.paint_color
-                    st.rerun()
 
     _person_limits = st.session_state.get('person_limits', {})
     for person in isimler:
@@ -720,26 +719,15 @@ with tab_grid:
             max_l = p_lim.get('max', 999)
             badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
             pc = person_colors.get(person, "#e2e8f0")
-            if _is_tercih:
-                if st.button(
-                    f"→ {person} {count}",
-                    key=f"row_paint_{person}",
-                    use_container_width=True,
-                    help=f"{person} için tüm ayı uygula"
-                ):
-                    for _rc in sutunlar:
-                        st.session_state.pref_df.at[person, _rc] = st.session_state.paint_color
-                    st.rerun()
-            else:
-                st.markdown(
-                    f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
-                    f"<span style='display:inline-block;width:11px;height:11px;border-radius:50%;"
-                    f"background:{pc};margin-right:4px;vertical-align:middle;border:1px solid rgba(0,0,0,0.12);'></span>"
-                    f"<b>{person}</b>&nbsp;"
-                    f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
+            st.markdown(
+                f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
+                f"<span style='display:inline-block;width:11px;height:11px;border-radius:50%;"
+                f"background:{pc};margin-right:4px;vertical-align:middle;border:1px solid rgba(0,0,0,0.12);'></span>"
+                f"<b>{person}</b>&nbsp;"
+                f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
         for i, col in enumerate(sutunlar):
             with row_cols[i + 1]:
                 pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
