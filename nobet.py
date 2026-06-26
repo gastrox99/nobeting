@@ -429,6 +429,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                             if _n and _n not in isimler:
                                 _fp_unknown.append(_n)
     st.session_state.forbidden_pairs = forbidden_pairs
+    st.session_state.fp_unknown_names = sorted(set(_fp_unknown))
     if _fp_unknown:
         st.warning(f"⚠️ Yasak çiftte ekip listesinde olmayan isim(ler): **{', '.join(sorted(set(_fp_unknown)))}** — kısıtlama uygulanmayacak.")
 
@@ -449,6 +450,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                     except ValueError:
                         pass
     st.session_state.person_limits = person_limits
+    st.session_state.lim_unknown_names = sorted(set(_lim_unknown))
     if _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(sorted(set(_lim_unknown)))}** — limit uygulanmayacak.")
     
@@ -1221,7 +1223,7 @@ if elapsed >= 30:
         st.session_state.auto_save_failed = True
 
 if st.session_state.auto_save_failed:
-    st.toast("⚠️ Otomatik kayıt başarısız oldu — çizelgeniz kaydedilemiyor!", icon="⚠️")
+    st.error("🔴 Otomatik kayıt başarısız oldu — çizelgeniz veritabanına kaydedilemiyor! Sayfayı yenilemeden önce Excel/PNG olarak indirin.")
 
 # Use the current schedule for all calculations
 # In Fast Mode, we allow direct editing of the main grid
@@ -1274,7 +1276,16 @@ for isim in isimler:
     if _max_l < 999 and _tot > _max_l:
         limit_msg.append(f"🔺 **{isim}**: Max {_max_l} nöbet aşıldı, şu an {_tot} atanmış.")
 
-if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violations or limit_msg:
+# Giriş doğrulama uyarıları (yasak çift / limit — bilinmeyen isimler)
+_fp_unk = st.session_state.get('fp_unknown_names', [])
+_lim_unk = st.session_state.get('lim_unknown_names', [])
+input_warn_msg = []
+if _fp_unk:
+    input_warn_msg.append(f"⚠️ Yasak çiftte ekip dışı isim(ler): **{', '.join(_fp_unk)}** — bu kısıtlama etkisiz.")
+if _lim_unk:
+    input_warn_msg.append(f"⚠️ Kişisel limitte ekip dışı isim(ler): **{', '.join(_lim_unk)}** — bu limit etkisiz.")
+
+if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violations or limit_msg or input_warn_msg:
     with st.expander("🚨 HATA RAPORU (Tıklayıp Açın)", expanded=True):
         for m in max_person_msg: st.error(m)
         for m in min_person_msg: st.warning(m)
@@ -1282,6 +1293,7 @@ if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violatio
         for f in forbidden_msg: st.error(f)
         for v in violations: st.info(v)
         for m in limit_msg: st.warning(m)
+        for m in input_warn_msg: st.warning(m)
 else:
     st.success(f"✅ Kurallar uygun (Her gün {kişi_sayısı} kişi, çakışma yok).")
 
@@ -1519,8 +1531,10 @@ with dl6:
                         st.session_state.cached_rows_liste = _new_rows
                         st.session_state.cached_role_names = role_names
                         st.session_state.should_regenerate_assignments = False
-                        save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched,
-                                     pref_df=st.session_state.get('pref_df'))
+                        _xl_save_ok = save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched,
+                                                    pref_df=st.session_state.get('pref_df'))
+                        if not _xl_save_ok:
+                            st.warning("⚠️ Excel verisi yüklendi ancak otomatik kayıt başarısız oldu.")
                         st.success(f"{_matched} gün yüklendi!")
                         st.rerun()
                     else:
