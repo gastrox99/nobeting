@@ -412,6 +412,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     
     # Parse forbidden pairs
     forbidden_pairs = set()
+    _fp_unknown = []
     if forbidden_input.strip():
         all_pairs = []
         for line in forbidden_input.strip().split('\n'):
@@ -424,10 +425,16 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                     p1, p2 = parts[0].strip(), parts[1].strip()
                     if p1 and p2:
                         forbidden_pairs.add(tuple(sorted((p1, p2))))
+                        for _n in (p1, p2):
+                            if _n and _n not in isimler:
+                                _fp_unknown.append(_n)
     st.session_state.forbidden_pairs = forbidden_pairs
-    
+    if _fp_unknown:
+        st.warning(f"⚠️ Yasak çiftte ekip listesinde olmayan isim(ler): **{', '.join(sorted(set(_fp_unknown)))}** — kısıtlama uygulanmayacak.")
+
     # Parse limits
     person_limits = {}
+    _lim_unknown = []
     if limits_text.strip():
         for line in limits_text.strip().split('\n'):
             if ':' in line:
@@ -437,9 +444,13 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                     try:
                         min_val, max_val = map(int, parts[1].split('-'))
                         person_limits[name] = {'min': min_val, 'max': max_val}
+                        if name not in isimler:
+                            _lim_unknown.append(name)
                     except ValueError:
                         pass
     st.session_state.person_limits = person_limits
+    if _lim_unknown:
+        st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(sorted(set(_lim_unknown)))}** — limit uygulanmayacak.")
     
 
 if not isimler: st.stop()
@@ -560,6 +571,8 @@ if 'forbidden_pairs' not in st.session_state: st.session_state.forbidden_pairs =
 if 'undo_history' not in st.session_state: st.session_state.undo_history = []
 if 'redo_history' not in st.session_state: st.session_state.redo_history = []
 if 'last_auto_save' not in st.session_state: st.session_state.last_auto_save = time.time()
+if 'auto_save_failed' not in st.session_state: st.session_state.auto_save_failed = False
+if 'sim_pending_confirm' not in st.session_state: st.session_state.sim_pending_confirm = False
 if 'preferences' not in st.session_state: st.session_state.preferences = {}
 if 'person_preferences' not in st.session_state: st.session_state.person_preferences = {}
 for i in isimler:
@@ -671,7 +684,12 @@ with tab_grid:
     action_cols = st.columns(4)
     with action_cols[0]:
         if st.button("⚡ Simülasyon", type="primary", use_container_width=True):
-            st.session_state.run_simulation = True
+            _has_edits = bool(st.session_state.schedule_bool.values.sum())
+            if _has_edits:
+                st.session_state.sim_pending_confirm = True
+                st.rerun()
+            else:
+                st.session_state.run_simulation = True
     with action_cols[1]:
         if st.button("🔄 Sıfırla", use_container_width=True):
             st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
@@ -706,6 +724,20 @@ with tab_grid:
                     st.session_state.schedule_bool = _snap
                 st.session_state.cached_rows_liste = None
                 st.session_state.should_regenerate_assignments = True
+                st.rerun()
+
+    # Simülasyon onay dialogu
+    if st.session_state.sim_pending_confirm:
+        st.warning("⚠️ Mevcut çizelgede el ile yapılan değişiklikler var. Simülasyon bunları silip yeniden hesaplayacak.")
+        _conf_cols = st.columns(2)
+        with _conf_cols[0]:
+            if st.button("✅ Devam Et — Simülasyonu Çalıştır", type="primary", use_container_width=True):
+                st.session_state.sim_pending_confirm = False
+                st.session_state.run_simulation = True
+                st.rerun()
+        with _conf_cols[1]:
+            if st.button("❌ İptal", use_container_width=True):
+                st.session_state.sim_pending_confirm = False
                 st.rerun()
 
     # Dynamic column background CSS
@@ -1176,12 +1208,20 @@ if sim_clicked:
 elapsed = time.time() - st.session_state.last_auto_save
 if elapsed >= 30:
     auto_name = f"Otomatik_{yil}_{ay:02d}"
+    _saved_ok = False
     try:
-        if save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
-                         pref_df=st.session_state.get('pref_df')):
-            st.session_state.last_auto_save = time.time()
+        _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
+                                  pref_df=st.session_state.get('pref_df'))
     except Exception:
-        pass
+        _saved_ok = False
+    if _saved_ok:
+        st.session_state.last_auto_save = time.time()
+        st.session_state.auto_save_failed = False
+    else:
+        st.session_state.auto_save_failed = True
+
+if st.session_state.auto_save_failed:
+    st.toast("⚠️ Otomatik kayıt başarısız oldu — çizelgeniz kaydedilemiyor!", icon="⚠️")
 
 # Use the current schedule for all calculations
 # In Fast Mode, we allow direct editing of the main grid
