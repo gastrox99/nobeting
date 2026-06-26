@@ -39,6 +39,11 @@ def init_db():
                 UNIQUE(schedule_id, person, day_col)
             )
         ''')
+
+        # Add pref_json column if it doesn't exist (safe migration)
+        cur.execute('''
+            ALTER TABLE schedules ADD COLUMN IF NOT EXISTS pref_json TEXT
+        ''')
         
         conn.commit()
         cur.close()
@@ -48,28 +53,40 @@ def init_db():
         print(f"Database init error: {e}")
         return False
 
-def save_schedule(name, year, month, team_members, schedule_df):
+def save_schedule(name, year, month, team_members, schedule_df, pref_df=None):
     """Save a schedule to database"""
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         
-        team_str = ','.join(team_members)
+        # JSON-safe team encoding (handles commas in names)
+        team_str = json.dumps(list(team_members))
+        
+        # Serialize preference dataframe as JSON if provided
+        pref_json = None
+        if pref_df is not None:
+            try:
+                pref_json = pref_df.to_json()
+            except Exception:
+                pref_json = None
         
         # Insert or update schedule
         cur.execute('''
-            INSERT INTO schedules (name, year, month, team_members, updated_at)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (name, year, month) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+            INSERT INTO schedules (name, year, month, team_members, pref_json, updated_at)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (name, year, month) DO UPDATE
+                SET updated_at = CURRENT_TIMESTAMP,
+                    team_members = EXCLUDED.team_members,
+                    pref_json = EXCLUDED.pref_json
             RETURNING id
-        ''', (name, year, month, team_str))
+        ''', (name, year, month, team_str, pref_json))
         
         schedule_id = cur.fetchone()[0]
         
         # Delete old data for this schedule
         cur.execute('DELETE FROM schedule_data WHERE schedule_id = %s', (schedule_id,))
         
-        # Insert schedule data (tek toplu sorgu - tek tek INSERT yerine)
+        # Insert schedule data (tek toplu sorgu)
         rows = [
             (schedule_id, person, col, bool(schedule_df.at[person, col]))
             for person in schedule_df.index
@@ -90,7 +107,10 @@ def save_schedule(name, year, month, team_members, schedule_df):
         return False
 
 def load_schedule(name, year, month):
-    """Load a schedule from database"""
+    """Load a schedule from database.
+    Returns (team_members, schedule_df, pref_df).
+    pref_df is None when not saved.
+    """
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -102,10 +122,25 @@ def load_schedule(name, year, month):
         
         schedule_row = cur.fetchone()
         if not schedule_row:
-            return None, None
+            return None, None, None
         
         schedule_id = schedule_row['id']
-        team_members = schedule_row['team_members'].split(',')
+
+        # Decode team_members — try JSON first (new format), fall back to comma split (legacy)
+        raw_team = schedule_row['team_members']
+        try:
+            team_members = json.loads(raw_team)
+        except (json.JSONDecodeError, TypeError):
+            team_members = [m.strip() for m in raw_team.split(',') if m.strip()]
+
+        # Decode pref_df if available
+        pref_df = None
+        raw_pref = schedule_row.get('pref_json')
+        if raw_pref:
+            try:
+                pref_df = pd.read_json(raw_pref)
+            except Exception:
+                pref_df = None
         
         # Get schedule data
         cur.execute('''
@@ -118,7 +153,7 @@ def load_schedule(name, year, month):
         conn.close()
         
         if not data_rows:
-            return team_members, None
+            return team_members, None, pref_df
         
         # Reconstruct dataframe
         schedule_dict = {}
@@ -132,11 +167,11 @@ def load_schedule(name, year, month):
             schedule_dict[day_col][person] = assigned
         
         df = pd.DataFrame(schedule_dict, index=team_members)
-        return team_members, df
+        return team_members, df, pref_df
         
     except Exception as e:
         print(f"Load schedule error: {e}")
-        return None, None
+        return None, None, None
 
 def list_schedules():
     """List all saved schedules"""

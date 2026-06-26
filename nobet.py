@@ -462,21 +462,48 @@ if 'schedule_bool' not in st.session_state:
     # Sayfa yenilenmesinde otomatik geri yükle
     _auto_name = f"Otomatik_{yil}_{ay:02d}"
     try:
-        _, _saved_df = load_schedule(_auto_name, yil, ay)
+        _, _saved_df, _saved_pref = load_schedule(_auto_name, yil, ay)
     except Exception:
         _saved_df = None
+        _saved_pref = None
     if _saved_df is not None and not _saved_df.empty:
         _new_sched = pd.DataFrame(False, index=isimler, columns=sutunlar)
+        # Match by day number (column adı yıla göre değişse de gün no sabit)
+        _old_day_map = {}
+        for _oc in _saved_df.columns:
+            try:
+                _old_day_map[int(str(_oc).split()[0])] = _oc
+            except (ValueError, IndexError):
+                pass
         for _p in isimler:
             if _p in _saved_df.index:
                 for _c in sutunlar:
-                    if _c in _saved_df.columns:
+                    _dnum = gun_detaylari[_c]['day_num']
+                    _oc = _old_day_map.get(_dnum)
+                    if _oc and _oc in _saved_df.columns:
                         try:
-                            _new_sched.at[_p, _c] = bool(_saved_df.at[_p, _c])
+                            _new_sched.at[_p, _c] = bool(_saved_df.at[_p, _oc])
                         except Exception:
                             pass
         st.session_state.schedule_bool = _new_sched
         st.session_state.should_regenerate_assignments = True
+        # Restore preferences if available
+        if _saved_pref is not None:
+            try:
+                _new_pref = pd.DataFrame(0, index=isimler, columns=sutunlar)
+                for _p in isimler:
+                    if _p in _saved_pref.index:
+                        for _c in sutunlar:
+                            _dnum = gun_detaylari[_c]['day_num']
+                            _oc = _old_day_map.get(_dnum)
+                            if _oc and _oc in _saved_pref.columns:
+                                try:
+                                    _new_pref.at[_p, _c] = int(_saved_pref.at[_p, _oc])
+                                except Exception:
+                                    pass
+                st.session_state.pref_df = _new_pref
+            except Exception:
+                pass
     else:
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
 else:
@@ -492,13 +519,22 @@ else:
         needs_update = True
     
     if needs_update:
-        # Preserve existing data where possible
+        # Mevcut veriyi mümkün olduğunca koru — gün numarasıyla eşleştir
+        # (kolon adı yıl değiştiğinde farklı olabilir: "1 Pzt" vs "1 Çar")
         new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+        old_day_map = {}
+        for oc in current_schedule.columns:
+            try:
+                old_day_map[int(str(oc).split()[0])] = oc
+            except (ValueError, IndexError):
+                pass
         for person in isimler:
             if person in current_schedule.index:
                 for col in sutunlar:
-                    if col in current_schedule.columns:
-                        new_schedule.at[person, col] = current_schedule.at[person, col]
+                    dnum = gun_detaylari[col]['day_num']
+                    oc = old_day_map.get(dnum)
+                    if oc:
+                        new_schedule.at[person, col] = current_schedule.at[person, col] if oc == col else current_schedule.at[person, oc]
         st.session_state.schedule_bool = new_schedule
         st.session_state.cached_rows_liste = None  # Reset cache
 
@@ -636,6 +672,9 @@ with tab_grid:
                         st.session_state.pref_df = _snap['pref']
                 else:
                     st.session_state.schedule_bool = _snap
+                # Tablo ve analiz görünümlerini geri yüklenen durumla senkronize et
+                st.session_state.cached_rows_liste = None
+                st.session_state.should_regenerate_assignments = True
                 st.rerun()
 
     # Dynamic column background CSS
@@ -1107,7 +1146,8 @@ elapsed = time.time() - st.session_state.last_auto_save
 if elapsed >= 30:
     auto_name = f"Otomatik_{yil}_{ay:02d}"
     try:
-        if save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool):
+        if save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
+                         pref_df=st.session_state.get('pref_df')):
             st.session_state.last_auto_save = time.time()
     except Exception:
         pass
@@ -1386,7 +1426,8 @@ with dl6:
                         st.session_state.cached_rows_liste = _new_rows
                         st.session_state.cached_role_names = role_names
                         st.session_state.should_regenerate_assignments = False
-                        save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched)
+                        save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched,
+                                     pref_df=st.session_state.get('pref_df'))
                         st.success(f"{_matched} gün yüklendi!")
                         st.rerun()
                     else:
