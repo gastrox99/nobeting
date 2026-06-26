@@ -11,6 +11,7 @@ import time
 import json
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
 from streamlit_local_storage import LocalStorage
+from nobet_core import run_scheduling_core
 
 # Excel export
 try:
@@ -285,189 +286,22 @@ def save_undo_state(schedule_df):
     st.session_state.undo_history.append(schedule_df.copy())
     st.session_state.redo_history = []  # Clear redo on new action
 
-# --- ANA ALGORİTMA (V98: BEST-OF-N SIMULATION) ---
+# --- ANA ALGORİTMA: nobet_core.run_scheduling_core kullanır ---
 def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None):
-    
-    best_schedule = None
-    best_score = float('inf') # Daha düşük puan daha iyi (Ceza puanı mantığı)
-    
-    # 100 Deneme Yap, En İyisini Seç
-    SIMULATION_COUNT = 100
-    
     progress_bar = st.progress(0)
-    
-    for attempt in range(SIMULATION_COUNT):
-        # İlerleme çubuğunu güncelle
-        if attempt % 10 == 0: progress_bar.progress(attempt + 1)
-        
-        # --- TEKİL DENEME BAŞLANGICI ---
-        stat_total = {i: 0 for i in isimler}
-        stat_special = {i: 0 for i in isimler} 
-        stat_consecutive_weekend = {i: 0 for i in isimler}  # Weekend balance
-        last_weekend_shift = {i: -10 for i in isimler}  # Track last weekend
-        pair_history = {} 
-        last_shift_day = {i: -10 for i in isimler}
-        
-        temp_schedule = pd.DataFrame({col: [False]*len(isimler) for col in sutunlar}, index=isimler)
-        
-        # Score Calculation (Local decision)
-        def get_decision_score(p, is_sp, col, p1=None):
-            total = stat_total[p] + (random.random() * 0.5) # Küçük rastgelelik tie-breaker
-            sp_count = stat_special[p]
-            penalty = pair_history.get(tuple(sorted((p1, p))) if p1 else None, 0)
-            
-            # Weekend balance penalty - avoid consecutive weekends
-            consecutive_penalty = stat_consecutive_weekend[p] * 200
-            
-            # Preference bonus (negative = preferred, positive = avoid)
-            # Yeşil (1): Öncelikli - çok güçlü bonus (-500)
-            # Sarı (2): Kaçınılmalı - yüksek ceza (+300)
-            # Kırmızı (3): df_unwanted_bool ile tamamen engelli
-            pref_bonus = 0
-            if df_preferred is not None and p in df_preferred.index and col in df_preferred.columns:
-                pref_val = df_preferred.at[p, col]
-                if pref_val == 1:  # Green/Preferred - STRONG PRIORITY
-                    pref_bonus = -500
-                elif pref_val == 2:  # Yellow/Avoid - HIGH PENALTY
-                    pref_bonus = 300
-            
-            # Min/max limits penalty
-            limit_penalty = 0
-            if person_limits and p in person_limits:
-                max_limit = person_limits[p].get('max', 999)
-                if stat_total[p] >= max_limit:
-                    limit_penalty = 50000  # Very high to prevent assignment
-            
-            # Hafta sonuysa, önce hafta sonu dengesine bak
-            if is_sp:
-                return (sp_count * 100) + (total * 10) + penalty + consecutive_penalty + pref_bonus + limit_penalty
-            else:
-                return (total * 10) + (sp_count * 1) + penalty + pref_bonus + limit_penalty
-
-        # Lineer İşleme (1..30) - Dağılım dengesi için şart
-        empty_shifts = 0
-        limit_violations = 0
-        
-        for col in sutunlar:
-            info = gun_detaylari[col]
-            gun_no = info['day_num']
-            is_sp = info['weekend'] or info['holiday']
-            is_weekend = info['weekend']
-            
-            # Calculate which weekend number this is (for consecutive tracking)
-            weekend_num = (gun_no - 1) // 7
-            
-            # Adayları bul - also check max limits
-            adaylar = []
-            for k in isimler:
-                if df_unwanted_bool.at[k, col]:
-                    continue
-                if (gun_no - last_shift_day[k]) <= min_bosluk:
-                    continue
-                # Check max limit
-                if person_limits and k in person_limits:
-                    max_limit = person_limits[k].get('max', 999)
-                    if stat_total[k] >= max_limit:
-                        continue
-                adaylar.append(k)
-            
-            random.shuffle(adaylar) # Şans faktörü
-            
-            # Adayları o anki duruma göre sırala
-            adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col))
-            
-            if len(adaylar) >= kisi_sayisi:
-                # Check for forbidden pairs - validate ALL combinations for 3+ people
-                secilenler = []
-                for p in adaylar:
-                    valid = True
-                    if forbidden_pairs:
-                        # Check against ALL already selected people (not just the first)
-                        for selected in secilenler:
-                            pair = tuple(sorted((p, selected)))
-                            if pair in forbidden_pairs:
-                                valid = False
-                                break
-                    if valid:
-                        secilenler.append(p)
-                        if len(secilenler) >= kisi_sayisi:
-                            break
-                
-                # Retry with shuffled order if first attempt failed due to forbidden pairs
-                if len(secilenler) < kisi_sayisi and forbidden_pairs and len(adaylar) >= kisi_sayisi:
-                    random.shuffle(adaylar)
-                    secilenler = []
-                    for p in adaylar:
-                        valid = True
-                        for selected in secilenler:
-                            pair = tuple(sorted((p, selected)))
-                            if pair in forbidden_pairs:
-                                valid = False
-                                break
-                        if valid:
-                            secilenler.append(p)
-                            if len(secilenler) >= kisi_sayisi:
-                                break
-                
-                if len(secilenler) >= kisi_sayisi:
-                    # Pair history tracking for main 2
-                    if kisi_sayisi >= 2:
-                        pair = tuple(sorted((secilenler[0], secilenler[1])))
-                        pair_history[pair] = pair_history.get(pair, 0) + 1
-                    
-                    for k in secilenler:
-                        temp_schedule.at[k, col] = True
-                        stat_total[k] += 1
-                        if is_sp: stat_special[k] += 1
-                        last_shift_day[k] = gun_no
-                        
-                        # Track consecutive weekends
-                        if is_weekend:
-                            if last_weekend_shift[k] >= 0 and weekend_num == last_weekend_shift[k] + 1:
-                                stat_consecutive_weekend[k] += 1
-                            elif last_weekend_shift[k] >= 0 and weekend_num > last_weekend_shift[k] + 1:
-                                # Gap in weekends - reset consecutive counter
-                                stat_consecutive_weekend[k] = 0
-                            last_weekend_shift[k] = weekend_num
-                else:
-                    empty_shifts += 1
-            else:
-                empty_shifts += 1 # Ceza: Yetersiz aday
-
-        # Check min limits violations
-        if person_limits:
-            for p, limits in person_limits.items():
-                min_limit = limits.get('min', 0)
-                if stat_total.get(p, 0) < min_limit:
-                    limit_violations += 1
-
-        # --- DENEME SONUCU PUANLAMA (GLOBAL SCORE) ---
-        # Amaç: Standart sapmayı (farkları) minimize etmek
-        totals = list(stat_total.values())
-        specials = list(stat_special.values())
-        consecutive_weekends = sum(stat_consecutive_weekend.values())
-        
-        std_dev_total = np.std(totals)
-        std_dev_special = np.std(specials)
-        range_total = max(totals) - min(totals)
-        
-        # Puan Fonksiyonu: Ne kadar düşükse o kadar iyi
-        current_sim_score = (
-            (empty_shifts * 10000) + 
-            (limit_violations * 5000) +
-            (consecutive_weekends * 500) +  # Weekend balance
-            (range_total * 100) + 
-            (std_dev_total * 10) + 
-            (std_dev_special * 5)
-        )
-        
-        if current_sim_score < best_score:
-            best_score = current_sim_score
-            best_schedule = temp_schedule.copy()
-    
+    def _progress(n):
+        if n % 10 == 0:
+            progress_bar.progress(n)
+    best_schedule, _ = run_scheduling_core(
+        isimler, sutunlar, df_unwanted_bool, gun_detaylari,
+        min_bosluk, kisi_sayisi, forbidden_pairs, person_limits, df_preferred,
+        simulation_count=100, progress_callback=_progress
+    )
     progress_bar.empty()
-    st.session_state.schedule_bool = best_schedule
-    st.toast(f"100 Simülasyon yapıldı. En adil sonuç seçildi!", icon="🧠")
+    if best_schedule is not None:
+        st.session_state.schedule_bool = best_schedule
+    st.toast("100 Simülasyon yapıldı. En adil sonuç seçildi!", icon="🧠")
+
 
 # --- AYARLAR (Ana Sayfada Açılır Panel) ---
 # Check if team exists to determine if settings should be expanded
@@ -704,6 +538,27 @@ if 'edit_mode' not in st.session_state:
 if 'selected_cal_day' not in st.session_state:
     st.session_state.selected_cal_day = None
 
+# --- ÇAKIŞMA HÜCRELERİ (grid vurgulaması için önceden hesapla) ---
+conflict_cells = set()  # (kişi, col) çiftleri
+_last_cf = {i: -10 for i in isimler}
+for _cf_col in sutunlar:
+    _cf_gun = gun_detaylari[_cf_col]['day_num']
+    _cf_assigned = (
+        st.session_state.schedule_bool.index[st.session_state.schedule_bool[_cf_col]].tolist()
+        if _cf_col in st.session_state.schedule_bool.columns else []
+    )
+    for _cf_k in _cf_assigned:
+        _pref_v = (
+            st.session_state.pref_df.at[_cf_k, _cf_col]
+            if _cf_k in st.session_state.pref_df.index and _cf_col in st.session_state.pref_df.columns
+            else 0
+        )
+        if _pref_v == 3:
+            conflict_cells.add((_cf_k, _cf_col))
+        if (_cf_gun - _last_cf.get(_cf_k, -10)) <= min_bosluk and _last_cf.get(_cf_k, -10) != -10:
+            conflict_cells.add((_cf_k, _cf_col))
+        _last_cf[_cf_k] = _cf_gun
+
 tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"])
 
 # ═══════════════════════════════════════════════════════
@@ -871,8 +726,18 @@ with tab_grid:
             with row_cols[i + 1]:
                 pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
                 is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
+                has_conflict = (person, col) in conflict_cells
                 if is_assigned:
-                    label = "✅" if pref_val == 1 else ("⚠️" if pref_val == 2 else ("🚫" if pref_val == 3 else "●"))
+                    if has_conflict:
+                        label = "🔺"
+                    elif pref_val == 1:
+                        label = "✅"
+                    elif pref_val == 2:
+                        label = "⚠️"
+                    elif pref_val == 3:
+                        label = "🚫"
+                    else:
+                        label = "●"
                 else:
                     label = "🟢" if pref_val == 1 else ("🟡" if pref_val == 2 else ("🔴" if pref_val == 3 else "○"))
                 if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
@@ -1261,7 +1126,9 @@ else:
 
 # --- VERİ HAZIRLIĞI ---
 # Only regenerate assignments when AI button is clicked, not on manual edits
-if st.session_state.should_regenerate_assignments or st.session_state.cached_rows_liste is None:
+if (st.session_state.should_regenerate_assignments
+        or st.session_state.cached_rows_liste is None
+        or len(st.session_state.cached_rows_liste) != len(sutunlar)):
     rows_liste = []
     first_role_counts = {i: 0 for i in isimler}
     for col in sutunlar:
@@ -1434,7 +1301,18 @@ with dl6:
                     for _, _irow in _df_imp.iterrows():
                         _tarih_str = str(_irow.get("Tarih", ""))
                         try:
-                            _day_num = int(_tarih_str.split(".")[0])
+                            # dd.mm.yyyy veya "1 Oca Pzt" gibi formatları dene
+                            _ts = _tarih_str.strip()
+                            if "." in _ts:
+                                _day_num = int(_ts.split(".")[0])
+                            elif "/" in _ts:
+                                _day_num = int(_ts.split("/")[0])
+                            elif "-" in _ts:
+                                # yyyy-mm-dd
+                                _day_num = int(_ts.split("-")[2].split()[0])
+                            else:
+                                # Sadece sayı (Excel integer tarihi) veya "15 Haz Pzt" formatı
+                                _day_num = int(float(_ts.split()[0]))
                         except Exception:
                             continue
                         # Sutunlar içinde eşleşen kolonu bul
@@ -1469,6 +1347,49 @@ with dl6:
                 st.error(f"Dosya okunamadı: {_e}")
 
 st.divider()
+
+# ── Görev Yeri Düzenleme ─────────────────────────────────────────────────────
+with st.expander("✏️ Görev Yerlerini Düzenle", expanded=False):
+    st.caption("Görev sütunlarındaki isimleri değiştirerek rol atamalarını düzenleyebilirsiniz. Sadece o güne atanmış kişiler geçerlidir.")
+    if rows_liste:
+        _edit_col_cfg = {"Tarih": st.column_config.TextColumn("Tarih", disabled=True)}
+        for _rn in role_names:
+            _edit_col_cfg[_rn] = st.column_config.TextColumn(_rn, max_chars=50)
+        _role_edit_df = pd.DataFrame([
+            {k: v for k, v in r.items() if k == "Tarih" or k in role_names}
+            for r in rows_liste
+        ])
+        _edited_roles = st.data_editor(
+            _role_edit_df,
+            column_config=_edit_col_cfg,
+            use_container_width=True,
+            hide_index=True,
+            key="role_editor_table",
+            num_rows="fixed",
+        )
+        if _edited_roles is not None:
+            _role_changed = False
+            _new_rows_edit = []
+            for _ri, (_erow, _orow) in enumerate(zip(_edited_roles.itertuples(index=False), rows_liste)):
+                _new_r = dict(_orow)
+                _day_col = sutunlar[_ri] if _ri < len(sutunlar) else None
+                _assigned_today = (
+                    edited.index[edited[_day_col]].tolist()
+                    if _day_col and _day_col in edited.columns else []
+                )
+                for _rn in role_names:
+                    _val = str(getattr(_erow, _rn, "-")).strip()
+                    if _val and _val not in ("nan", "-") and _val in _assigned_today:
+                        if _new_r.get(_rn) != _val:
+                            _new_r[_rn] = _val
+                            _role_changed = True
+                _new_rows_edit.append(_new_r)
+            if _role_changed:
+                st.session_state.cached_rows_liste = _new_rows_edit
+                st.session_state.should_regenerate_assignments = False
+                st.rerun()
+    else:
+        st.info("Önce simülasyon çalıştırın veya nöbet ataması yapın.")
 
 # ── Analiz — yatay dağılım ───────────────────────────────────────────────────
 st.header("📊 Analiz")
