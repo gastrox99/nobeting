@@ -492,7 +492,7 @@ if 'schedule_bool' not in st.session_state:
     # Sayfa yenilenmesinde otomatik geri yükle
     _auto_name = f"Otomatik_{yil}_{ay:02d}"
     try:
-        _, _saved_df, _saved_pref = load_schedule(_auto_name, yil, ay)
+        _, _saved_df, _saved_pref, _ = load_schedule(_auto_name, yil, ay)
     except Exception:
         _saved_df = None
         _saved_pref = None
@@ -533,7 +533,7 @@ if 'schedule_bool' not in st.session_state:
                                     pass
                 st.session_state.pref_df = _new_pref
             except Exception:
-                pass
+                st.toast("⚠️ Tercihler kısmen yüklenemedi; çizelge geri yüklendi.", icon="⚠️")
     else:
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
 else:
@@ -1548,6 +1548,7 @@ with dl6:
                     _new_sched = pd.DataFrame(False, index=isimler, columns=sutunlar)
                     _new_rows = []
                     _matched = 0
+                    _skipped_names = set()
                     for _, _irow in _df_imp.iterrows():
                         _tarih_str = str(_irow.get("Tarih", ""))
                         try:
@@ -1580,6 +1581,8 @@ with dl6:
                                 _new_sched.at[_person, _match_col] = True
                                 _row_data[_rn] = _person
                             else:
+                                if _person and _person != "-" and _person != "nan":
+                                    _skipped_names.add(_person)
                                 _row_data[_rn] = "-"
                         _new_rows.append(_row_data)
                         _matched += 1
@@ -1592,6 +1595,8 @@ with dl6:
                                                     pref_df=st.session_state.get('pref_df'))
                         if not _xl_save_ok:
                             st.warning("⚠️ Excel verisi yüklendi ancak otomatik kayıt başarısız oldu.")
+                        if _skipped_names:
+                            st.warning(f"⚠️ {len(_skipped_names)} isim mevcut ekipte bulunamadığı için atlandı: {', '.join(sorted(_skipped_names))}")
                         st.success(f"{_matched} gün yüklendi!")
                         st.rerun()
                     else:
