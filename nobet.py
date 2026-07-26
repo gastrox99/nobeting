@@ -1393,7 +1393,8 @@ else:
     # We update rows_liste based on current edited state, but keep the role structure
     new_rows_liste = []
     for i, col in enumerate(sutunlar):
-        current_row = rows_liste[i]
+        # Güvenli indeks erişimi: rows_liste eksik olabilir (örn. Excel kısmi yükleme)
+        current_row = rows_liste[i] if i < len(rows_liste) else {"Tarih": gun_detaylari[col]['full_date']}
         nobetciler_in_df = edited.index[edited[col]].tolist()
         
         # Update names in the row based on what's in the boolean dataframe
@@ -1546,8 +1547,7 @@ with dl6:
                     st.error("Dosya formatı uyumsuz: 'Tarih' sütunu ve en az bir görev sütunu gerekli.")
                 else:
                     _new_sched = pd.DataFrame(False, index=isimler, columns=sutunlar)
-                    _new_rows = []
-                    _matched = 0
+                    _day_rows_dict = {}  # day_num -> row_data (Excel sırasından bağımsız)
                     _skipped_names = set()
                     for _, _irow in _df_imp.iterrows():
                         _tarih_str = str(_irow.get("Tarih", ""))
@@ -1584,12 +1584,25 @@ with dl6:
                                 if _person and _person != "-" and _person != "nan":
                                     _skipped_names.add(_person)
                                 _row_data[_rn] = "-"
-                        _new_rows.append(_row_data)
-                        _matched += 1
+                        _day_rows_dict[_day_num] = _row_data
+                    # sutunlar sırasıyla _new_rows oluştur; eksik günler boş satırla doldur
+                    _new_rows = []
+                    _matched = 0
+                    for _sc in sutunlar:
+                        _dn = gun_detaylari[_sc]['day_num']
+                        if _dn in _day_rows_dict:
+                            _new_rows.append(_day_rows_dict[_dn])
+                            _matched += 1
+                        else:
+                            _empty = {"Tarih": gun_detaylari[_sc]['full_date']}
+                            for _rn in role_names:
+                                _empty[_rn] = "-"
+                            _new_rows.append(_empty)
                     if _matched > 0:
                         st.session_state.schedule_bool = _new_sched
                         st.session_state.cached_rows_liste = _new_rows
                         st.session_state.cached_role_names = role_names
+                        st.session_state.cached_key = (yil, ay, tuple(isimler), tuple(sutunlar))
                         st.session_state.should_regenerate_assignments = False
                         _xl_save_ok = save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched,
                                                     pref_df=st.session_state.get('pref_df'))
