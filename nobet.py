@@ -1131,11 +1131,22 @@ with tab_cal:
                     visible = [p for p in all_nobetciler if (not cal_filter_persons or p in cal_filter_persons)]
 
                     chips = ""
+                    _cal_rows = st.session_state.get('cached_rows_liste') or []
+                    _cal_crnames = st.session_state.get('cached_role_names', _cal_role_names)
                     for role_idx, p in enumerate(all_nobetciler):
                         if cal_filter_persons and p not in cal_filter_persons:
                             continue
                         pc = person_colors.get(p, '#e2e8f0')
-                        rl = _cal_role_names[role_idx] if role_idx < len(_cal_role_names) else f"G{role_idx+1}"
+                        # cached_rows_liste'den kişinin gerçek görev yerini bul
+                        rl = None
+                        if _cal_rows and 0 <= dn - 1 < len(_cal_rows):
+                            _drow = _cal_rows[dn - 1]
+                            for _rn in _cal_crnames:
+                                if _drow.get(_rn) == p:
+                                    rl = _rn
+                                    break
+                        if rl is None:
+                            rl = _cal_role_names[role_idx] if role_idx < len(_cal_role_names) else f"G{role_idx+1}"
                         # Müsaitlik rengi kenarlık olarak
                         pv = int(st.session_state.pref_df.at[p, ck]) if (
                             p in st.session_state.pref_df.index and ck in st.session_state.pref_df.columns
