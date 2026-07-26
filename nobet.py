@@ -802,6 +802,9 @@ with tab_grid:
     width: 100% !important;
     border: 1px solid #e5e7eb !important;
     transition: transform 0.1s, box-shadow 0.1s;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
 }}
 .schedule-grid .stButton > button:hover {{
     transform: scale(1.15);
@@ -861,10 +864,11 @@ with tab_grid:
             badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
             pc = person_colors.get(person, "#e2e8f0")
             st.markdown(
-                f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;line-height:1.6;'>"
-                f"<span style='display:inline-block;width:11px;height:11px;border-radius:50%;"
-                f"background:{pc};margin-right:4px;vertical-align:middle;border:1px solid rgba(0,0,0,0.12);'></span>"
-                f"<b>{person}</b>&nbsp;"
+                f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;"
+                f"display:flex;align-items:center;gap:4px;min-height:30px;'>"
+                f"<span style='flex-shrink:0;width:11px;height:11px;border-radius:50%;"
+                f"background:{pc};border:1px solid rgba(0,0,0,0.12);'></span>"
+                f"<b>{person}</b>"
                 f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
                 f"</div>",
                 unsafe_allow_html=True
