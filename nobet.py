@@ -20,8 +20,12 @@ try:
 except ImportError:
     EXCEL_AVAILABLE = False
 
-# Initialize database on app start
-_db_ready = init_db()
+# Initialize database once per server session (not on every rerun)
+@st.cache_resource
+def _init_db_once():
+    return init_db()
+
+_db_ready = _init_db_once()
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Adil Nöbet v98 (AI Simulation)", layout="wide")
@@ -1515,13 +1519,22 @@ if EXCEL_AVAILABLE:
         st.session_state[excel_key] = convert_df_to_excel(df_liste, df_stats_load, df_stats_finance)
         st.session_state[hash_key] = data_hash
 
-print_html = create_print_html(df_liste, df_stats_load, yil, ay)
+png_key = f"png_{yil}_{ay}"
+png_hash_key = f"png_hash_{yil}_{ay}"
+if png_key not in st.session_state or st.session_state.get(png_hash_key) != data_hash:
+    st.session_state[png_key] = convert_df_to_png(df_liste)
+    st.session_state[png_hash_key] = data_hash
+
+html_key = f"html_{yil}_{ay}"
+html_hash_key = f"html_hash_{yil}_{ay}"
+if html_key not in st.session_state or st.session_state.get(html_hash_key) != data_hash:
+    st.session_state[html_key] = create_print_html(df_liste, df_stats_load, yil, ay)
 
 dl1, dl2, dl3, dl4, dl5, dl6 = st.columns(6)
 with dl1:
     st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv", use_container_width=True)
 with dl2:
-    st.download_button("🖼️ PNG", convert_df_to_png(df_liste), "liste.png", "image/png", use_container_width=True)
+    st.download_button("🖼️ PNG", st.session_state[png_key], "liste.png", "image/png", use_container_width=True)
 with dl3:
     if EXCEL_AVAILABLE:
         st.download_button("📊 Excel", st.session_state[excel_key], f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
@@ -1531,7 +1544,7 @@ with dl4:
     with st.popover("💬 Metin", use_container_width=True):
         st.text_area("Kopyala:", value=df_liste.to_markdown(index=False), height=200)
 with dl5:
-    st.download_button("🖨️ Yazdır", print_html.encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html", use_container_width=True)
+    st.download_button("🖨️ Yazdır", st.session_state[html_key].encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html", use_container_width=True)
 with dl6:
     with st.popover("📂 Excel Yükle", use_container_width=True):
         st.caption("Daha önce indirilen Excel dosyasını veya aynı formatta hazırladığınız listeyi yükleyin.")
