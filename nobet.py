@@ -445,21 +445,48 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     # Parse limits
     person_limits = {}
     _lim_unknown = []
+    _lim_invalid_lines = []
+    _lim_errors = []
     if limits_text.strip():
         for line in limits_text.strip().split('\n'):
-            if ':' in line:
-                parts = line.split(':')
-                name = parts[0].strip()
-                if len(parts) == 2 and '-' in parts[1]:
-                    try:
-                        min_val, max_val = map(int, parts[1].split('-'))
-                        person_limits[name] = {'min': min_val, 'max': max_val}
-                        if name not in isimler:
-                            _lim_unknown.append(name)
-                    except ValueError:
-                        pass
+            line = line.strip()
+            if not line:
+                continue
+            if ':' not in line:
+                _lim_invalid_lines.append(line)
+                continue
+            name_part, _, range_part = line.partition(':')
+            name = name_part.strip()
+            range_part = range_part.strip()
+            if not name:
+                _lim_invalid_lines.append(line)
+                continue
+            if '-' not in range_part:
+                _lim_invalid_lines.append(line)
+                continue
+            try:
+                # rsplit so that a negative min like "-1-10" is handled correctly
+                min_str, max_str = range_part.rsplit('-', 1)
+                min_val = int(min_str)
+                max_val = int(max_str)
+            except ValueError:
+                _lim_invalid_lines.append(line)
+                continue
+            # Semantic validation
+            if min_val < 0 or max_val < 0:
+                _lim_errors.append(f"**{name}**: negatif değer ({range_part}) — atlandı")
+            elif min_val > max_val:
+                _lim_errors.append(f"**{name}**: min ({min_val}) > max ({max_val}) — atlandı")
+            else:
+                person_limits[name] = {'min': min_val, 'max': max_val}
+                if name not in isimler:
+                    _lim_unknown.append(name)
     st.session_state.person_limits = person_limits
     st.session_state.lim_unknown_names = sorted(set(_lim_unknown))
+    if _lim_errors:
+        st.error("❌ Geçersiz limit değerleri:\n" + "\n".join(_lim_errors))
+    if _lim_invalid_lines:
+        st.warning(f"⚠️ {len(_lim_invalid_lines)} satır geçersiz format (doğru format: `İsim:min-max`) — atlandı.")
     if _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(sorted(set(_lim_unknown)))}** — limit uygulanmayacak.")
     

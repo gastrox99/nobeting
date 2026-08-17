@@ -104,20 +104,33 @@ def parse_forbidden_pairs(forbidden_input):
 
 
 def parse_person_limits(limits_text):
-    """Kişisel limit metnini sözlüğe çevirir: {'Ali': {'min': 5, 'max': 10}}"""
+    """Kişisel limit metnini sözlüğe çevirir: {'Ali': {'min': 5, 'max': 10}}.
+
+    Geçersiz satırlar (boş isim, negatif değer, min > max, hatalı format)
+    sessizce atlanır; UI katmanı (nobet.py) kullanıcıya uyarı gösterir.
+    """
     person_limits = {}
     if not limits_text or not limits_text.strip():
         return person_limits
     for line in limits_text.strip().split('\n'):
-        if ':' in line:
-            parts = line.split(':')
-            name = parts[0].strip()
-            if len(parts) == 2 and '-' in parts[1]:
-                try:
-                    min_val, max_val = map(int, parts[1].split('-'))
-                    person_limits[name] = {'min': min_val, 'max': max_val}
-                except ValueError:
-                    pass
+        line = line.strip()
+        if not line or ':' not in line:
+            continue
+        name_part, _, range_part = line.partition(':')
+        name = name_part.strip()
+        range_part = range_part.strip()
+        if not name or '-' not in range_part:
+            continue
+        try:
+            # rsplit so that a negative min like "-1-10" is parsed correctly
+            min_str, max_str = range_part.rsplit('-', 1)
+            min_val = int(min_str)
+            max_val = int(max_str)
+        except ValueError:
+            continue
+        if min_val < 0 or max_val < 0 or min_val > max_val:
+            continue
+        person_limits[name] = {'min': min_val, 'max': max_val}
     return person_limits
 
 

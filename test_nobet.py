@@ -193,6 +193,38 @@ class TestParsePersonLimits(unittest.TestCase):
         result = parse_person_limits("Ali Veli:2-6")
         self.assertIn("Ali Veli", result)
 
+    def test_bos_isim_atlaniyor(self):
+        """':5-10' gibi boş isimli satır atlanmalı"""
+        result = parse_person_limits(":5-10")
+        self.assertEqual(result, {})
+
+    def test_negatif_min_atlaniyor(self):
+        """min negatifse satır atlanmalı"""
+        result = parse_person_limits("Ali:-1-10")
+        self.assertEqual(result, {})
+
+    def test_negatif_max_atlaniyor(self):
+        """max negatifse satır atlanmalı"""
+        result = parse_person_limits("Ali:5--2")
+        self.assertEqual(result, {})
+
+    def test_min_buyuk_max_atlaniyor(self):
+        """min > max ise satır atlanmalı"""
+        result = parse_person_limits("Ali:10-5")
+        self.assertEqual(result, {})
+
+    def test_hicbir_cizgi_yok(self):
+        """'Ali:5' gibi aralık yoksa atlanmalı"""
+        result = parse_person_limits("Ali:5")
+        self.assertEqual(result, {})
+
+    def test_gecerli_ve_gecersiz_karisik(self):
+        """Geçerli satır kabul, geçersiz atlanmalı"""
+        result = parse_person_limits("Ali:3-8\nAyşe:10-2\nMehmet:2-6")
+        self.assertIn("Ali", result)
+        self.assertNotIn("Ayşe", result)  # min > max
+        self.assertIn("Mehmet", result)
+
 
 # ==============================================================================
 # 5. build_gun_detaylari testleri
