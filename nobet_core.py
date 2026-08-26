@@ -10,6 +10,12 @@ import calendar
 from io import BytesIO
 from datetime import datetime
 from itertools import combinations as _combinations
+from html import escape as _escape_html
+
+
+def escape_html(value):
+    """Convert any displayed value to safe HTML text."""
+    return _escape_html(str(value), quote=True)
 
 
 def parse_unwanted_days(text_input, max_day):
@@ -319,10 +325,11 @@ def create_print_html(df_liste, df_stats_load, yil, ay):
     """Yazdırma dostu HTML oluşturur."""
     ay_isimleri = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran",
                    7:"Temmuz", 8:"Ağustos", 9:"Eylül", 10:"Ekim", 11:"Kasım", 12:"Aralık"}
-    html = f"""<html><head><meta charset="utf-8"><title>Nöbet - {ay_isimleri[ay]} {yil}</title></head>
-    <body><h1>Nöbet Listesi - {ay_isimleri[ay]} {yil}</h1>
-    <table><tr>{''.join(f'<th>{col}</th>' for col in df_liste.columns)}</tr>"""
+    month_name = escape_html(ay_isimleri[ay])
+    html = f"""<html><head><meta charset="utf-8"><title>Nöbet - {month_name} {yil}</title></head>
+    <body><h1>Nöbet Listesi - {month_name} {yil}</h1>
+    <table><tr>{''.join(f'<th>{escape_html(col)}</th>' for col in df_liste.columns)}</tr>"""
     for _, row in df_liste.iterrows():
-        html += f"<tr>{''.join(f'<td>{val}</td>' for val in row)}</tr>"
+        html += f"<tr>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
     html += "</table></body></html>"
     return html

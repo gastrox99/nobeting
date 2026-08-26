@@ -9,6 +9,7 @@ from datetime import date, datetime
 import numpy as np
 import time
 import json
+from html import escape as _escape_html
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
 from streamlit_local_storage import LocalStorage
 from nobet_core import run_scheduling_core
@@ -28,7 +29,7 @@ def _init_db_once():
 _db_ready = _init_db_once()
 
 # Sayfa Ayarları
-st.set_page_config(page_title="Adil Nöbet v98 (AI Simulation)", layout="wide")
+st.set_page_config(page_title="Adil Nöbet", layout="wide")
 
 if not _db_ready:
     st.warning("⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt özellikleri şu an çalışmayabilir.")
@@ -38,10 +39,11 @@ local_storage = LocalStorage()
 
 # Load saved team from localStorage on first run
 if 'localStorage_loaded' not in st.session_state:
-    st.session_state.localStorage_loaded = False
+    st.session_state.localStorage_loaded = True
     saved_team = local_storage.getItem("nobet_team")
     if saved_team:
         st.session_state.isimler_text = saved_team
+    st.session_state.last_stored_team_text = saved_team or st.session_state.get("isimler_text", "")
 
 # --- GLOBAL RESPONSIVE CSS ---
 st.markdown("""
@@ -123,6 +125,10 @@ st.markdown("""
 st.markdown("<h1 style='text-align: center; font-size: 2.5rem;'>Nöbet Yönetimi</h1>", unsafe_allow_html=True)
 
 # --- YARDIMCI FONKSİYONLAR ---
+def escape_html(value):
+    """Convert any displayed value to safe HTML text."""
+    return _escape_html(str(value), quote=True)
+
 def parse_unwanted_days(text_input, max_day):
     if not text_input or pd.isna(text_input): return []
     days = set()
@@ -189,26 +195,29 @@ def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, m
 
 def convert_df_to_png(df):
     fig, ax = plt.subplots(figsize=(8, len(df) * 0.4 + 1))
-    ax.axis('off')
-    table = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
-    table.auto_set_font_size(False); table.set_fontsize(10); table.scale(1.2, 1.2)
-    
-    if "Tarih" in df.columns:
-        idx = df.columns.get_loc("Tarih")
-        for i, row_data in enumerate(df['Tarih']):
-            color = "white"
-            if "Cmt" in row_data or "Paz" in row_data: color = "#dbeafe"
-            for j in range(len(df.columns)):
-                table[i+1, j].set_facecolor(color)
-                if j == idx: table[i+1, j].set_text_props(ha='left')
+    try:
+        ax.axis('off')
+        table = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
+        table.auto_set_font_size(False); table.set_fontsize(10); table.scale(1.2, 1.2)
 
-    for j in range(len(df.columns)):
-        table[0, j].set_facecolor("#dddddd")
-        table[0, j].set_text_props(weight='bold')
-    
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
-    return buf.getvalue()
+        if "Tarih" in df.columns:
+            idx = df.columns.get_loc("Tarih")
+            for i, row_data in enumerate(df['Tarih']):
+                color = "white"
+                if "Cmt" in row_data or "Paz" in row_data: color = "#dbeafe"
+                for j in range(len(df.columns)):
+                    table[i+1, j].set_facecolor(color)
+                    if j == idx: table[i+1, j].set_text_props(ha='left')
+
+        for j in range(len(df.columns)):
+            table[0, j].set_facecolor("#dddddd")
+            table[0, j].set_text_props(weight='bold')
+
+        buf = BytesIO()
+        fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+        return buf.getvalue()
+    finally:
+        plt.close(fig)
 
 def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance):
     """Convert dataframes to Excel with multiple sheets"""
@@ -247,7 +256,7 @@ def create_print_html(df_liste, df_stats_load, yil, ay):
     <html>
     <head>
         <meta charset="utf-8">
-        <title>Nöbet Listesi - {ay_isimleri[ay]} {yil}</title>
+        <title>Nöbet Listesi - {escape_html(ay_isimleri[ay])} {yil}</title>
         <style>
             body {{ font-family: Arial, sans-serif; padding: 20px; }}
             h1 {{ text-align: center; color: #333; }}
@@ -263,23 +272,23 @@ def create_print_html(df_liste, df_stats_load, yil, ay):
         </style>
     </head>
     <body>
-        <h1>Nöbet Listesi - {ay_isimleri[ay]} {yil}</h1>
+        <h1>Nöbet Listesi - {escape_html(ay_isimleri[ay])} {yil}</h1>
         <table>
-            <tr>{''.join(f'<th>{col}</th>' for col in df_liste.columns)}</tr>
+            <tr>{''.join(f'<th>{escape_html(col)}</th>' for col in df_liste.columns)}</tr>
     """
     
     for _, row in df_liste.iterrows():
         css_class = 'weekend' if 'Cmt' in str(row.get('Tarih', '')) or 'Paz' in str(row.get('Tarih', '')) else ''
-        html += f"<tr class='{css_class}'>{''.join(f'<td>{val}</td>' for val in row)}</tr>"
+        html += f"<tr class='{css_class}'>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
     
     html += """
         </table>
         <h2>Nöbet Yükü Özeti</h2>
         <table>
-            <tr><th>İsim</th>""" + ''.join(f'<th>{col}</th>' for col in df_stats_load.columns) + "</tr>"
+            <tr><th>İsim</th>""" + ''.join(f'<th>{escape_html(col)}</th>' for col in df_stats_load.columns) + "</tr>"
     
     for idx, row in df_stats_load.iterrows():
-        html += f"<tr><td><strong>{idx}</strong></td>{''.join(f'<td>{val}</td>' for val in row)}</tr>"
+        html += f"<tr><td><strong>{escape_html(idx)}</strong></td>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
     
     html += """
         </table>
@@ -353,8 +362,10 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         isimler = [x.strip() for x in isimler_input.split(",") if x.strip()]
         st.session_state.isimler_cache = isimler
         
-        # Save team to localStorage (always sync, even when cleared)
-        local_storage.setItem("nobet_team", isimler_input)
+        # Tarayıcı deposuna yalnızca ekip listesi değiştiğinde yaz.
+        if st.session_state.get("last_stored_team_text") != isimler_input:
+            local_storage.setItem("nobet_team", isimler_input)
+            st.session_state.last_stored_team_text = isimler_input
     
     with set_col2:
         _now = datetime.now()
@@ -611,6 +622,7 @@ if 'redo_history' not in st.session_state: st.session_state.redo_history = []
 if 'last_auto_save' not in st.session_state: st.session_state.last_auto_save = time.time()
 if 'auto_save_failed' not in st.session_state: st.session_state.auto_save_failed = False
 if 'sim_pending_confirm' not in st.session_state: st.session_state.sim_pending_confirm = False
+if 'reset_pending' not in st.session_state: st.session_state.reset_pending = False
 if 'preferences' not in st.session_state: st.session_state.preferences = {}
 if 'person_preferences' not in st.session_state: st.session_state.person_preferences = {}
 for i in isimler:
@@ -730,8 +742,7 @@ with tab_grid:
                 st.session_state.run_simulation = True
     with action_cols[1]:
         if st.button("🔄 Sıfırla", use_container_width=True):
-            st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
-            st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+            st.session_state.reset_pending = True
             st.rerun()
     with action_cols[2]:
         if st.button("↩️ Geri", use_container_width=True, disabled=len(st.session_state.undo_history)==0):
@@ -779,6 +790,23 @@ with tab_grid:
                 st.rerun()
 
     # Simülasyon onay dialogu
+    if st.session_state.get("reset_pending", False):
+        st.warning("⚠️ Çizelge ve tüm tercihler silinecek. Devam etmek istediğinizden emin misiniz?")
+        _reset_cols = st.columns(2)
+        with _reset_cols[0]:
+            if st.button("🗑️ Evet, çizelgeyi sıfırla", type="primary", use_container_width=True):
+                save_undo_state()
+                st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
+                st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+                st.session_state.cached_rows_liste = None
+                st.session_state.should_regenerate_assignments = True
+                st.session_state.reset_pending = False
+                st.rerun()
+        with _reset_cols[1]:
+            if st.button("Vazgeç", use_container_width=True):
+                st.session_state.reset_pending = False
+                st.rerun()
+
     if st.session_state.sim_pending_confirm:
         st.warning("⚠️ Mevcut çizelgede el ile yapılan değişiklikler var. Simülasyon bunları silip yeniden hesaplayacak.")
         _conf_cols = st.columns(2)
@@ -899,7 +927,7 @@ with tab_grid:
                 f"display:flex;align-items:center;gap:4px;min-height:30px;'>"
                 f"<span style='flex-shrink:0;width:11px;height:11px;border-radius:50%;"
                 f"background:{pc};border:1px solid rgba(0,0,0,0.12);'></span>"
-                f"<b>{person}</b>"
+                f"<b>{escape_html(person)}</b>"
                 f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
                 f"</div>",
                 unsafe_allow_html=True
@@ -1040,8 +1068,8 @@ with tab_cal:
             f"<span style='background:{dp_color};border-radius:50%;width:36px;height:36px;"
             f"display:inline-flex;align-items:center;justify-content:center;"
             f"font-size:16px;font-weight:800;color:#1f2937;border:2px solid rgba(0,0,0,0.1);'>"
-            f"{dp[0].upper()}</span>"
-            f"<span style='font-size:20px;font-weight:800;color:#1f2937;'>{dp}</span>"
+            f"{escape_html(dp[0].upper())}</span>"
+            f"<span style='font-size:20px;font-weight:800;color:#1f2937;'>{escape_html(dp)}</span>"
             f"<span style='font-size:13px;color:#6b7280;margin-left:4px;'>"
             f"— {ay} / {yil}</span></div>"
             f"<div style='display:flex;flex-wrap:wrap;gap:10px;'>"
@@ -1191,8 +1219,8 @@ with tab_cal:
                             f"<div style='display:flex;align-items:center;gap:3px;margin:2px 0;'>"
                             f"<span style='background:{pc};border-radius:8px;padding:2px 8px;"
                             f"font-size:12px;font-weight:700;color:#1f2937;white-space:nowrap;"
-                            f"outline:{outline};'>{p}</span>"
-                            f"<span style='font-size:10px;color:#6b7280;white-space:nowrap;'>{rl}</span>"
+                            f"outline:{outline};'>{escape_html(p)}</span>"
+                            f"<span style='font-size:10px;color:#6b7280;white-space:nowrap;'>{escape_html(rl)}</span>"
                             f"</div>"
                         )
 
@@ -1498,10 +1526,14 @@ for isim in isimler:
     _p_lim_s = st.session_state.get('person_limits', {}).get(isim, {})
     _min_s = _p_lim_s.get('min', 0)
     _max_s = _p_lim_s.get('max', 999)
-    _limit_str = (
-        f"{_min_s}-{_max_s}" if _min_s or _max_s < 999
-        else "-"
-    )
+    if _min_s > 0 and _max_s < 999:
+        _limit_str = f"{_min_s}-{_max_s}"
+    elif _min_s > 0:
+        _limit_str = f"≥{_min_s}"
+    elif _max_s < 999:
+        _limit_str = f"≤{_max_s}"
+    else:
+        _limit_str = "-"
     _limit_ok = (int(toplam) >= _min_s) and (int(toplam) <= _max_s)
     stats_load.append({
         "İsim": isim,
@@ -1639,6 +1671,7 @@ with dl6:
                                 _empty[_rn] = "-"
                             _new_rows.append(_empty)
                     if _matched > 0:
+                        save_undo_state()
                         st.session_state.schedule_bool = _new_sched
                         st.session_state.cached_rows_liste = _new_rows
                         st.session_state.cached_role_names = role_names

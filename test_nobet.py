@@ -433,6 +433,27 @@ class TestCreatePrintHtml(unittest.TestCase):
         self.assertIn("<table>", html)
         self.assertIn("</table>", html)
 
+    def test_html_ozel_karakterli_isimleri_escape_eder(self):
+        df_liste = pd.DataFrame({
+            "<Rol>": ["<script>alert('x')</script>"],
+            "Tarih": ["1 Oca Çar"],
+        })
+        df_stats = pd.DataFrame({"<Toplam>": [1]}, index=["Ali & Ayşe"])
+
+        html = create_print_html(df_liste, df_stats, 2025, 1)
+
+        self.assertIn("&lt;Rol&gt;", html)
+        self.assertIn("&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;", html)
+        self.assertNotIn("<script>alert('x')</script>", html)
+
+    def test_html_sayisal_hucreleri_yazdirir(self):
+        df_liste = pd.DataFrame({"Tarih": ["1 Oca Çar"], "Görev1": [1]})
+        df_stats = pd.DataFrame({"Toplam": [2]}, index=["Ali"])
+
+        html = create_print_html(df_liste, df_stats, 2025, 1)
+
+        self.assertIn("<td>1</td>", html)
+
     def test_tum_aylar_calisir(self):
         df_liste, df_stats = self._sample_dfs()
         ay_isimleri = {1:"Ocak",2:"Şubat",3:"Mart",4:"Nisan",5:"Mayıs",6:"Haziran",
