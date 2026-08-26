@@ -7,6 +7,7 @@ import unittest
 import pandas as pd
 import numpy as np
 import random
+import time
 from nobet_core import (
     parse_unwanted_days,
     parse_holiday_days,
@@ -14,7 +15,12 @@ from nobet_core import (
     parse_forbidden_pairs,
     parse_person_limits,
     build_gun_detaylari,
+    build_schedule_analysis,
+    changed_schedule_columns,
+    normalize_preference_grid,
     run_scheduling_core,
+    schedule_fingerprint,
+    use_compact_schedule_editor,
     create_print_html,
 )
 
@@ -480,6 +486,66 @@ class TestRunSchedulingCore(unittest.TestCase):
         avg = schedule.values.sum() / len(isimler)
         self.assertGreaterEqual(ali_total, avg * 0.8,
                                 f"Ali yeşil tercih koymasına rağmen beklenenden az nöbet aldı: {ali_total}")
+
+
+class TestLargeSchedulePerformance(unittest.TestCase):
+    def _large_schedule(self):
+        isimler = [f"Kişi {number}" for number in range(50)]
+        gun_detaylari = build_gun_detaylari(2025, 1, 31, [])
+        sutunlar = list(gun_detaylari.keys())
+        schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+        rows_liste = []
+        for index, column in enumerate(sutunlar):
+            assigned = [isimler[index % len(isimler)], isimler[(index + 1) % len(isimler)]]
+            schedule.loc[assigned, column] = True
+            rows_liste.append({
+                "Tarih": gun_detaylari[column]["full_date"],
+                "Görev1": assigned[0],
+                "Görev2": assigned[1],
+            })
+        return isimler, sutunlar, gun_detaylari, schedule, rows_liste
+
+    def test_tek_hucre_yalnizca_etkilenen_gunu_bildirir(self):
+        _, sutunlar, _, schedule, _ = self._large_schedule()
+        previous = schedule.copy(deep=True)
+        schedule.at[schedule.index[0], sutunlar[15]] = not schedule.at[schedule.index[0], sutunlar[15]]
+
+        self.assertEqual(changed_schedule_columns(previous, schedule), [sutunlar[15]])
+        self.assertEqual(changed_schedule_columns(schedule, schedule), [])
+
+    def test_elli_kisi_otuzbir_gun_analizi_hizli_kalir(self):
+        isimler, _, gun_detaylari, schedule, rows_liste = self._large_schedule()
+
+        started = time.perf_counter()
+        stats_load, stats_finance, pair_display = build_schedule_analysis(
+            schedule, rows_liste, ["Görev1", "Görev2"], isimler,
+            gun_detaylari, {}, zorunlu_saat=160, nobet_ucreti=1.0,
+        )
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 1.0, f"Büyük çizelge analizi çok yavaş: {elapsed:.3f}s")
+        self.assertEqual(stats_load.shape[0], 50)
+        self.assertEqual(stats_finance.shape[0], 50)
+        self.assertEqual(pair_display.shape, (50, 50))
+        self.assertTrue(schedule_fingerprint(schedule))
+
+    def test_buyuk_cizelge_hizli_duzenleyiciye_gecer(self):
+        self.assertTrue(use_compact_schedule_editor(50, 31))
+        self.assertFalse(use_compact_schedule_editor(10, 31))
+
+    def test_hizli_tercih_duzenleyicisi_gecersiz_kodlari_reddeder(self):
+        valid = pd.DataFrame(
+            [[0, 1], [2, 3]],
+            index=["Ali", "Ayşe"],
+            columns=["G01", "G02"],
+            dtype=object,
+        )
+        self.assertTrue(normalize_preference_grid(valid).equals(valid.astype(int)))
+
+        for invalid_value in [None, 1.5, 4, -1]:
+            invalid = valid.copy()
+            invalid.at["Ali", "G01"] = invalid_value
+            self.assertIsNone(normalize_preference_grid(invalid))
 
 
 # ==============================================================================

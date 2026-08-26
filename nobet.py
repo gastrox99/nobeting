@@ -12,7 +12,15 @@ import json
 from html import escape as _escape_html
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
 from streamlit_local_storage import LocalStorage
-from nobet_core import run_scheduling_core, parse_holiday_days
+from nobet_core import (
+    build_schedule_analysis,
+    changed_schedule_columns,
+    normalize_preference_grid,
+    parse_holiday_days,
+    run_scheduling_core,
+    schedule_fingerprint,
+    use_compact_schedule_editor,
+)
 
 # Excel export
 try:
@@ -628,6 +636,9 @@ else:
 
 if 'inputs' not in st.session_state: st.session_state.inputs = {i: "" for i in isimler}
 if 'cached_rows_liste' not in st.session_state: st.session_state.cached_rows_liste = None
+if 'cached_role_schedule' not in st.session_state: st.session_state.cached_role_schedule = None
+if 'cached_analysis_key' not in st.session_state: st.session_state.cached_analysis_key = None
+if 'cached_analysis_tables' not in st.session_state: st.session_state.cached_analysis_tables = None
 if 'cached_ayb_counts' not in st.session_state: st.session_state.cached_ayb_counts = None
 if 'last_edited_hash' not in st.session_state: st.session_state.last_edited_hash = None
 if 'should_regenerate_assignments' not in st.session_state: st.session_state.should_regenerate_assignments = False
@@ -932,51 +943,83 @@ with tab_grid:
                 unsafe_allow_html=True
             )
 
-    _person_limits = st.session_state.get('person_limits', {})
-    for person in isimler:
-        row_cols = st.columns([2] + [1] * len(sutunlar))
-        with row_cols[0]:
-            count = int(st.session_state.schedule_bool.loc[person].sum()) if person in st.session_state.schedule_bool.index else 0
-            p_lim = _person_limits.get(person, {})
-            min_l = p_lim.get('min', 0)
-            max_l = p_lim.get('max', 999)
-            badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
-            pc = person_colors.get(person, "#e2e8f0")
-            st.markdown(
-                f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;"
-                f"display:flex;align-items:center;gap:4px;min-height:30px;'>"
-                f"<span style='flex-shrink:0;width:11px;height:11px;border-radius:50%;"
-                f"background:{pc};border:1px solid rgba(0,0,0,0.12);'></span>"
-                f"<b>{escape_html(person)}</b>"
-                f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
-                f"</div>",
-                unsafe_allow_html=True
+    if use_compact_schedule_editor(len(isimler), len(sutunlar)):
+        st.caption(
+            "⚡ Büyük çizelge hızlı düzenleme modunda. Hücre başına ayrı buton yerine "
+            "tek tablo kullanılır; bu nedenle düzenlemeler daha akıcı kalır."
+        )
+        if st.session_state.edit_mode == "tercih":
+            st.caption("Tercih kodları: 0 = boş, 1 = tercih, 2 = kaçınma, 3 = yasak")
+            _compact_pref = st.data_editor(
+                st.session_state.pref_df,
+                use_container_width=True,
+                key="large_schedule_preference_editor",
+                num_rows="fixed",
             )
-        for i, col in enumerate(sutunlar):
-            with row_cols[i + 1]:
-                pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
-                is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
-                has_conflict = (person, col) in conflict_cells
-                if is_assigned:
-                    if has_conflict:
-                        label = "🔺"
-                    elif pref_val == 1:
-                        label = "✅"
-                    elif pref_val == 2:
-                        label = "⚠️"
-                    elif pref_val == 3:
-                        label = "🚫"
+            _normalized_pref = normalize_preference_grid(_compact_pref)
+            if _normalized_pref is None:
+                st.error("Tercih hücrelerinde yalnızca 0, 1, 2 veya 3 tam sayıları kullanılabilir.")
+            elif not _normalized_pref.equals(st.session_state.pref_df):
+                save_undo_state()
+                st.session_state.pref_df = _normalized_pref
+                st.rerun()
+        else:
+            _compact_schedule = st.data_editor(
+                st.session_state.schedule_bool,
+                use_container_width=True,
+                key="large_schedule_assignment_editor",
+                num_rows="fixed",
+            )
+            if not _compact_schedule.equals(st.session_state.schedule_bool):
+                save_undo_state()
+                st.session_state.schedule_bool = _compact_schedule.astype(bool)
+                st.rerun()
+    else:
+        _person_limits = st.session_state.get('person_limits', {})
+        for person in isimler:
+            row_cols = st.columns([2] + [1] * len(sutunlar))
+            with row_cols[0]:
+                count = int(st.session_state.schedule_bool.loc[person].sum()) if person in st.session_state.schedule_bool.index else 0
+                p_lim = _person_limits.get(person, {})
+                min_l = p_lim.get('min', 0)
+                max_l = p_lim.get('max', 999)
+                badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
+                pc = person_colors.get(person, "#e2e8f0")
+                st.markdown(
+                    f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;"
+                    f"display:flex;align-items:center;gap:4px;min-height:30px;'>"
+                    f"<span style='flex-shrink:0;width:11px;height:11px;border-radius:50%;"
+                    f"background:{pc};border:1px solid rgba(0,0,0,0.12);'></span>"
+                    f"<b>{escape_html(person)}</b>"
+                    f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+            for i, col in enumerate(sutunlar):
+                with row_cols[i + 1]:
+                    pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
+                    is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
+                    has_conflict = (person, col) in conflict_cells
+                    if is_assigned:
+                        if has_conflict:
+                            label = "🔺"
+                        elif pref_val == 1:
+                            label = "✅"
+                        elif pref_val == 2:
+                            label = "⚠️"
+                        elif pref_val == 3:
+                            label = "🚫"
+                        else:
+                            label = "●"
                     else:
-                        label = "●"
-                else:
-                    label = "🟢" if pref_val == 1 else ("🟡" if pref_val == 2 else ("🔴" if pref_val == 3 else "○"))
-                if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
-                    save_undo_state()
-                    if st.session_state.edit_mode == "tercih":
-                        st.session_state.pref_df.at[person, col] = st.session_state.paint_color
-                    else:
-                        st.session_state.schedule_bool.at[person, col] = not st.session_state.schedule_bool.at[person, col]
-                    st.rerun()
+                        label = "🟢" if pref_val == 1 else ("🟡" if pref_val == 2 else ("🔴" if pref_val == 3 else "○"))
+                    if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
+                        save_undo_state()
+                        if st.session_state.edit_mode == "tercih":
+                            st.session_state.pref_df.at[person, col] = st.session_state.paint_color
+                        else:
+                            st.session_state.schedule_bool.at[person, col] = not st.session_state.schedule_bool.at[person, col]
+                        st.rerun()
 
     st.markdown('</div></div>', unsafe_allow_html=True)
 
@@ -1438,8 +1481,9 @@ if _liste_swap_dn is not None and st.session_state.get('cached_rows_liste'):
             st.rerun()
 
 # --- VERİ HAZIRLIĞI ---
-# Only regenerate assignments when AI button is clicked, not on manual edits
-_cache_key = (yil, ay, tuple(isimler), tuple(sutunlar))
+# Only regenerate assignments when AI button is clicked, not on manual edits.
+# Rol isimleri/sırası da satır yapısının parçasıdır.
+_cache_key = (yil, ay, tuple(isimler), tuple(sutunlar), tuple(role_names))
 if (st.session_state.should_regenerate_assignments
         or st.session_state.cached_rows_liste is None
         or st.session_state.get('cached_key') != _cache_key):
@@ -1466,54 +1510,46 @@ if (st.session_state.should_regenerate_assignments
     st.session_state.cached_first_role_counts = first_role_counts
     st.session_state.cached_role_names = role_names
     st.session_state.cached_key = _cache_key
+    st.session_state.cached_role_schedule = edited_df.copy(deep=True)
     st.session_state.should_regenerate_assignments = False
 else:
-    # If we are not regenerating (manual edits happened), sync rows_liste from
-    # the latest schedule dataframe while preserving existing role positions.
-    # to allow editing roles (swapping people between Görev1, Görev2, etc.)
     rows_liste = st.session_state.cached_rows_liste
-    first_role_counts = {i: 0 for i in isimler}
-    
-    # We update rows_liste based on current edited state, but keep the role structure
-    new_rows_liste = []
-    for i, col in enumerate(sutunlar):
-        # Güvenli indeks erişimi: rows_liste eksik olabilir (örn. Excel kısmi yükleme)
-        current_row = rows_liste[i] if i < len(rows_liste) else {"Tarih": gun_detaylari[col]['full_date']}
-        nobetciler_in_df = edited_df.index[edited_df[col]].tolist()
-        
-        # Update names in the row based on what's in the boolean dataframe
-        # If someone was removed, they should be '-' in all role columns
-        # If someone was added, they should be in the first available '-' slot
-        new_row = {"Tarih": current_row["Tarih"]}
-        
-        # Track who is already in the row to avoid duplicates
-        people_already_assigned = []
-        for role_name in role_names:
-            p = current_row.get(role_name, "-")
-            if p in nobetciler_in_df and p != "-":
-                new_row[role_name] = p
-                people_already_assigned.append(p)
-                if role_name == role_names[0]:
-                    first_role_counts[p] += 1
+    changed_columns = changed_schedule_columns(
+        st.session_state.get("cached_role_schedule"),
+        edited_df,
+    )
+    if changed_columns:
+        # Tek hücre düzenlemesinde yalnızca ilgili günün rol satırını eşle.
+        rows_liste = [dict(row) for row in rows_liste]
+        for col in changed_columns:
+            row_index = sutunlar.index(col)
+            current_row = (
+                rows_liste[row_index]
+                if row_index < len(rows_liste)
+                else {"Tarih": gun_detaylari[col]["full_date"]}
+            )
+            assigned_people = edited_df.index[edited_df[col]].tolist()
+            new_row = {"Tarih": current_row.get("Tarih", gun_detaylari[col]["full_date"])}
+            assigned_in_roles = []
+            for role_name in role_names:
+                person = current_row.get(role_name, "-")
+                if person in assigned_people and person != "-":
+                    new_row[role_name] = person
+                    assigned_in_roles.append(person)
+                else:
+                    new_row[role_name] = "-"
+            for person in assigned_people:
+                if person not in assigned_in_roles:
+                    for role_name in role_names:
+                        if new_row[role_name] == "-":
+                            new_row[role_name] = person
+                            break
+            if row_index < len(rows_liste):
+                rows_liste[row_index] = new_row
             else:
-                new_row[role_name] = "-"
-        
-        # Add people who are in nobetciler_in_df but not yet in new_row
-        for p in nobetciler_in_df:
-            if p not in people_already_assigned:
-                # Find first '-' slot
-                for role_name in role_names:
-                    if new_row[role_name] == "-":
-                        new_row[role_name] = p
-                        if role_name == role_names[0]:
-                            first_role_counts[p] += 1
-                        break
-        
-        new_rows_liste.append(new_row)
-    
-    rows_liste = new_rows_liste
-    st.session_state.cached_rows_liste = rows_liste
-    st.session_state.cached_first_role_counts = first_role_counts
+                rows_liste.append(new_row)
+        st.session_state.cached_rows_liste = rows_liste
+        st.session_state.cached_role_schedule = edited_df.copy(deep=True)
     role_names = st.session_state.get('cached_role_names', role_names)
 
 # Display and allow manual editing of ROLES (swapping people)
@@ -1523,73 +1559,34 @@ else:
 
 df_liste = pd.DataFrame(rows_liste)
 
-# Tüm roller için kişi başı sayım tablosu
-all_role_counts = {rn: {isim: 0 for isim in isimler} for rn in role_names}
-for _row in rows_liste:
-    for rn in role_names:
-        _p = _row.get(rn, '-')
-        if _p in isimler:
-            all_role_counts[rn][_p] += 1
+_rows_key = tuple(tuple(row.get(role, "-") for role in role_names) for row in rows_liste)
+_analysis_key = (
+    schedule_fingerprint(edited_df),
+    _rows_key,
+    tuple(role_names),
+    tuple(sorted((person, limits.get("min", 0), limits.get("max", 999))
+                 for person, limits in st.session_state.get("person_limits", {}).items())),
+    zorunlu_saat,
+    nobet_ucreti,
+    tuple((column, gun_detaylari[column]["weekend"], gun_detaylari[column]["holiday"]) for column in sutunlar),
+)
+if (
+    st.session_state.get("cached_analysis_key") != _analysis_key
+    or st.session_state.get("cached_analysis_tables") is None
+):
+    st.session_state.cached_analysis_tables = build_schedule_analysis(
+        edited_df,
+        rows_liste,
+        role_names,
+        isimler,
+        gun_detaylari,
+        st.session_state.get("person_limits", {}),
+        zorunlu_saat,
+        nobet_ucreti,
+    )
+    st.session_state.cached_analysis_key = _analysis_key
 
-stats_load = []
-stats_finance = []
-pair_matrix = pd.DataFrame(0, index=isimler, columns=isimler, dtype=int)
-
-for isim in isimler:
-    toplam = edited_df.loc[isim].sum()
-    haftasonu = 0
-    ozel_gun = 0
-    for col in sutunlar:
-        if edited_df.at[isim, col]:
-            if gun_detaylari[col]['weekend']: haftasonu += 1
-            if gun_detaylari[col]['weekend'] or gun_detaylari[col]['holiday']: ozel_gun += 1
-    
-    saat = toplam * 24
-    fm_saat = max(0, saat - zorunlu_saat)
-    ucret = fm_saat * nobet_ucreti
-    
-    _p_lim_s = st.session_state.get('person_limits', {}).get(isim, {})
-    _min_s = _p_lim_s.get('min', 0)
-    _max_s = _p_lim_s.get('max', 999)
-    if _min_s > 0 and _max_s < 999:
-        _limit_str = f"{_min_s}-{_max_s}"
-    elif _min_s > 0:
-        _limit_str = f"≥{_min_s}"
-    elif _max_s < 999:
-        _limit_str = f"≤{_max_s}"
-    else:
-        _limit_str = "-"
-    _limit_ok = (int(toplam) >= _min_s) and (int(toplam) <= _max_s)
-    stats_load.append({
-        "İsim": isim,
-        "Toplam": int(toplam),
-        "Özel": int(ozel_gun),
-        **{rn: all_role_counts[rn].get(isim, 0) for rn in role_names},
-        "Limit": _limit_str,
-        "✓": "🟢" if _limit_ok else "🔴",
-    })
-    stats_finance.append({
-        "İsim": isim,
-        "Nöbet": int(saat),
-        "Mesai": int(zorunlu_saat),
-        "FM": int(fm_saat),
-        "Ücret (TL)": round(ucret, 2)
-    })
-
-for col in sutunlar:
-    n = edited_df.index[edited_df[col]].tolist()
-    if len(n) >= 2:
-        for i in range(len(n)):
-            for j in range(i+1, len(n)):
-                pair_matrix.loc[n[i], n[j]] = pair_matrix.loc[n[i], n[j]] + 1
-                pair_matrix.loc[n[j], n[i]] = pair_matrix.loc[n[j], n[i]] + 1
-
-# Convert pair_matrix to strings for clean display (self-pairs as "-")
-pair_display = pair_matrix.astype(str)
-for i in isimler: pair_display.loc[i,i] = "-" 
-
-df_stats_load = pd.DataFrame(stats_load).set_index("İsim")
-df_stats_finance = pd.DataFrame(stats_finance).set_index("İsim")
+df_stats_load, df_stats_finance, pair_display = st.session_state.cached_analysis_tables
 
 # --- GÖRÜNÜM ---
 st.divider()
@@ -1700,7 +1697,7 @@ with dl6:
                         st.session_state.schedule_bool = _new_sched
                         st.session_state.cached_rows_liste = _new_rows
                         st.session_state.cached_role_names = role_names
-                        st.session_state.cached_key = (yil, ay, tuple(isimler), tuple(sutunlar))
+                        st.session_state.cached_key = (yil, ay, tuple(isimler), tuple(sutunlar), tuple(role_names))
                         st.session_state.should_regenerate_assignments = False
                         _xl_save_ok = save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched,
                                                     pref_df=st.session_state.get('pref_df'))

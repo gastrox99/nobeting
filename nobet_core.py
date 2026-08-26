@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import random
 import calendar
+import hashlib
 from io import BytesIO
 from datetime import datetime
 from itertools import combinations as _combinations
@@ -86,6 +87,122 @@ def parse_holiday_days(text_input, max_day):
             invalid_parts.append(part)
 
     return sorted(valid_days), invalid_parts
+
+
+def schedule_fingerprint(schedule):
+    """Bir çizelgenin içerik ve eksenlerini kapsayan sabit kimliğini döner."""
+    axis = repr((tuple(schedule.index), tuple(schedule.columns))).encode("utf-8")
+    values = pd.util.hash_pandas_object(schedule, index=True).values.tobytes()
+    return hashlib.sha256(axis + values).hexdigest()
+
+
+def changed_schedule_columns(previous_schedule, current_schedule):
+    """İki çizelge arasındaki değişen gün sütunlarını döner."""
+    if (
+        previous_schedule is None
+        or list(previous_schedule.index) != list(current_schedule.index)
+        or list(previous_schedule.columns) != list(current_schedule.columns)
+    ):
+        return list(current_schedule.columns)
+    return [
+        column for column in current_schedule.columns
+        if not previous_schedule[column].equals(current_schedule[column])
+    ]
+
+
+def use_compact_schedule_editor(person_count, day_count, threshold=500):
+    """Çok büyük çizelgelerde hücre başına bileşen yerine tek tablo kullanılır."""
+    return person_count * day_count > threshold
+
+
+def normalize_preference_grid(preferences):
+    """Tercih tablosunu yalnızca geçerli 0-3 tam sayı kodlarıyla normalleştirir."""
+    normalized = preferences.apply(pd.to_numeric, errors="coerce")
+    invalid = (
+        normalized.isna().any().any()
+        or ((normalized < 0) | (normalized > 3)).any().any()
+        or (normalized % 1 != 0).any().any()
+    )
+    return None if invalid else normalized.astype(int)
+
+
+def build_schedule_analysis(
+    schedule,
+    rows_liste,
+    role_names,
+    isimler,
+    gun_detaylari,
+    person_limits,
+    zorunlu_saat,
+    nobet_ucreti,
+):
+    """Çizelge görünümünde kullanılan saf analiz tablolarını üretir."""
+    all_role_counts = {role: {isim: 0 for isim in isimler} for role in role_names}
+    for row in rows_liste:
+        for role in role_names:
+            person = row.get(role, "-")
+            if person in all_role_counts[role]:
+                all_role_counts[role][person] += 1
+
+    weekend_columns = [column for column in schedule.columns if gun_detaylari[column]["weekend"]]
+    special_columns = [
+        column for column in schedule.columns
+        if gun_detaylari[column]["weekend"] or gun_detaylari[column]["holiday"]
+    ]
+    totals = schedule.sum(axis=1)
+    weekend_totals = schedule[weekend_columns].sum(axis=1) if weekend_columns else pd.Series(0, index=isimler)
+    special_totals = schedule[special_columns].sum(axis=1) if special_columns else pd.Series(0, index=isimler)
+
+    stats_load = []
+    stats_finance = []
+    for isim in isimler:
+        toplam = int(totals.get(isim, 0))
+        saat = toplam * 24
+        fm_saat = max(0, saat - zorunlu_saat)
+        ucret = fm_saat * nobet_ucreti
+        limits = person_limits.get(isim, {})
+        min_limit = limits.get("min", 0)
+        max_limit = limits.get("max", 999)
+        if min_limit > 0 and max_limit < 999:
+            limit_text = f"{min_limit}-{max_limit}"
+        elif min_limit > 0:
+            limit_text = f"≥{min_limit}"
+        elif max_limit < 999:
+            limit_text = f"≤{max_limit}"
+        else:
+            limit_text = "-"
+
+        stats_load.append({
+            "İsim": isim,
+            "Toplam": toplam,
+            "Özel": int(special_totals.get(isim, 0)),
+            **{role: all_role_counts[role].get(isim, 0) for role in role_names},
+            "Limit": limit_text,
+            "✓": "🟢" if min_limit <= toplam <= max_limit else "🔴",
+        })
+        stats_finance.append({
+            "İsim": isim,
+            "Nöbet": int(saat),
+            "Mesai": int(zorunlu_saat),
+            "FM": int(fm_saat),
+            "Ücret (TL)": round(ucret, 2),
+        })
+
+    pair_matrix = pd.DataFrame(0, index=isimler, columns=isimler, dtype=int)
+    for column in schedule.columns:
+        assigned = schedule.index[schedule[column]].tolist()
+        for first, second in _combinations(assigned, 2):
+            pair_matrix.loc[first, second] += 1
+            pair_matrix.loc[second, first] += 1
+    pair_display = pair_matrix.astype(str)
+    for isim in isimler:
+        pair_display.loc[isim, isim] = "-"
+
+    return (
+        pd.DataFrame(stats_load).set_index("İsim"),
+        pd.DataFrame(stats_finance).set_index("İsim"),
+        pair_display,
+    )
 
 
 def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kisi_sayisi=2):
