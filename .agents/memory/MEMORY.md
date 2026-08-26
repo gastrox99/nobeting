@@ -1,1 +1,2 @@
 - [Scheduling gotchas](scheduling-gotchas.md) — display cache must invalidate on full input identity (not size); weekend consecutiveness needs a monotonic Monday-ordinal week index, not ISO week number (year-boundary reset) or day//7 blocks.
+- [Streamlit widget styling](streamlit-widget-styling.md) — style widget groups through keyed Streamlit containers; Markdown wrapper divs do not contain separately rendered widgets, and mobile overrides must follow shared CSS.

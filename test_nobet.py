@@ -4,6 +4,7 @@ test_nobet.py - Nöbet Yönetimi Uygulaması Unit Testleri
 Çalıştırmak için: python -m pytest test_nobet.py -v
 """
 import unittest
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import random
@@ -612,6 +613,47 @@ class TestCreatePrintHtml(unittest.TestCase):
         for ay, isim in ay_isimleri.items():
             html = create_print_html(df_liste, df_stats, 2025, ay)
             self.assertIn(isim, html, f"{ay}. ay için '{isim}' HTML'de bulunamadı")
+
+class TestPreferenceGridAccessibility(unittest.TestCase):
+    """Streamlit widget'larını hedefleyen mobil tercih stillerini korur."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app_source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+
+    def test_tercih_grid_gercek_anahtarli_container_kullanir(self):
+        self.assertIn('grid_key = "preference-grid"', self.app_source)
+        self.assertIn("grid_container = st.container(", self.app_source)
+        self.assertIn("key=grid_key", self.app_source)
+        self.assertIn('legend_container = st.container(key="preference-legend"', self.app_source)
+        self.assertIn(".st-key-preference-grid", self.app_source)
+        self.assertIn(".st-key-preference-legend", self.app_source)
+
+    def test_mobil_hucreler_44px_ve_renk_anlamli_etiketler_tasir(self):
+        mobile_rule = (
+            "@media (max-width: 768px) {{\n"
+            "    /*\n"
+            "     * This must follow the shared grid-button rule above."
+        )
+        self.assertIn(mobile_rule, self.app_source)
+        mobile_rule_position = self.app_source.index(mobile_rule)
+        shared_button_position = self.app_source.index(
+            ".st-key-schedule-grid .stButton > button,"
+        )
+        shared_hover_position = self.app_source.index(
+            ".st-key-schedule-grid .stButton > button:hover,"
+        )
+        self.assertGreater(mobile_rule_position, shared_button_position)
+        self.assertGreater(mobile_rule_position, shared_hover_position)
+        mobile_css = self.app_source[mobile_rule_position:]
+        self.assertIn("min-width: 44px !important", mobile_css)
+        self.assertIn("min-height: 44px !important", mobile_css)
+        self.assertIn("transform: none !important", mobile_css)
+        for color in ("#166534", "#92400e", "#991b1b"):
+            self.assertIn(color, self.app_source)
+        self.assertIn('label = "T"', self.app_source)
+        self.assertIn('"K" if pref_val == 2', self.app_source)
+        self.assertIn('"Y" if pref_val == 3', self.app_source)
 
 
 # ==============================================================================

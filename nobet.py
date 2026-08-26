@@ -56,8 +56,9 @@ if 'localStorage_loaded' not in st.session_state:
 # --- GLOBAL RESPONSIVE CSS ---
 st.markdown("""
 <style>
-/* Schedule grid wrapper - horizontal scroll on mobile */
-.schedule-grid-wrapper {
+/* Keyed Streamlit containers keep day columns usable with horizontal scroll. */
+.st-key-schedule-grid,
+.st-key-preference-grid {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     padding-bottom: 8px;
@@ -84,15 +85,15 @@ st.markdown("""
     }
     
     /* Grid wrapper - enable scroll */
-    .schedule-grid-wrapper {
+    .st-key-schedule-grid {
         max-width: 100vw;
         overflow-x: scroll !important;
     }
-    .schedule-grid-wrapper [data-testid="stHorizontalBlock"] {
+    .st-key-schedule-grid [data-testid="stHorizontalBlock"] {
         flex-wrap: nowrap !important;
         min-width: max-content;
     }
-    .schedule-grid-wrapper [data-testid="column"] {
+    .st-key-schedule-grid [data-testid="column"] {
         flex-shrink: 0 !important;
         min-width: 32px !important;
     }
@@ -117,6 +118,35 @@ st.markdown("""
     /* Make expander title smaller */
     [data-testid="stExpander"] summary {
         font-size: 13px !important;
+    }
+
+    /* Keep preference cells at a comfortable touch size instead of
+       shrinking them until the green/yellow/red states become unclear. */
+    .st-key-preference-grid {
+        max-width: 100vw;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+        padding: 4px 0 12px;
+    }
+    .st-key-preference-grid [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        min-width: max-content;
+    }
+    .st-key-preference-grid [data-testid="column"] {
+        flex-shrink: 0 !important;
+        min-width: 44px !important;
+    }
+    .st-key-preference-grid [data-testid="column"]:first-child {
+        min-width: 112px !important;
+    }
+
+    /* Four legend items per row keeps each state label readable on mobile. */
+    .st-key-preference-legend [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+    }
+    .st-key-preference-legend [data-testid="column"] {
+        flex: 1 1 25% !important;
+        min-width: 25% !important;
     }
 }
 
@@ -853,37 +883,45 @@ with tab_grid:
 
     # Dynamic column background CSS
     col_bg_css_parts = []
+    grid_css_selector = (
+        ".st-key-preference-grid"
+        if st.session_state.edit_mode == "tercih"
+        else ".st-key-schedule-grid"
+    )
     for _i, _col in enumerate(sutunlar):
         _idx = _i + 2
         _info = gun_detaylari[_col]
         _is_today = (date(yil, ay, _info['day_num']) == today_date)
         if _is_today:
             col_bg_css_parts.append(
-                f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
                 f"{{ background:rgba(254,243,199,0.75)!important; border-radius:6px; outline:2px solid #f59e0b; }}"
             )
         elif _info['holiday']:
             col_bg_css_parts.append(
-                f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
                 f"{{ background:rgba(254,226,226,0.55)!important; border-radius:6px; }}"
             )
         elif _info['weekend']:
             col_bg_css_parts.append(
-                f".schedule-grid [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
                 f"{{ background:rgba(219,234,254,0.5)!important; border-radius:6px; }}"
             )
     col_bg_css = "\n".join(col_bg_css_parts)
 
     st.markdown(f"""
 <style>
-.schedule-grid [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1) {{
+.st-key-schedule-grid [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1),
+.st-key-preference-grid [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1) {{
     background: #f8fafc !important;
     border-right: 2px solid #e2e8f0;
     min-width: 80px;
 }}
 {col_bg_css}
-.schedule-grid div[data-testid="column"] {{ padding: 0 1px !important; }}
-.schedule-grid .stButton > button {{
+.st-key-schedule-grid div[data-testid="column"],
+.st-key-preference-grid div[data-testid="column"] {{ padding: 0 1px !important; }}
+.st-key-schedule-grid .stButton > button,
+.st-key-preference-grid .stButton > button {{
     padding: 0px !important;
     min-height: 30px !important;
     font-size: 14px !important;
@@ -896,19 +934,82 @@ with tab_grid:
     align-items: center !important;
     justify-content: center !important;
 }}
-.schedule-grid .stButton > button:hover {{
+.st-key-schedule-grid .stButton > button:hover,
+.st-key-preference-grid .stButton > button:hover {{
     transform: scale(1.15);
     box-shadow: 0 2px 8px rgba(0,0,0,0.18);
     z-index: 20;
     position: relative;
 }}
+.st-key-preference-grid .preference-state {{
+    display: none !important;
+}}
+.st-key-preference-grid .stButton > button {{
+    color: #ffffff !important;
+    border-width: 2px !important;
+    font-weight: 800 !important;
+}}
+.st-key-preference-grid [data-testid="column"]:has(.preference-state-0) .stButton > button {{
+    background: #475569 !important;
+    border-color: #334155 !important;
+}}
+.st-key-preference-grid [data-testid="column"]:has(.preference-state-1) .stButton > button {{
+    background: #166534 !important;
+    border-color: #14532d !important;
+}}
+.st-key-preference-grid [data-testid="column"]:has(.preference-state-2) .stButton > button {{
+    background: #92400e !important;
+    border-color: #78350f !important;
+}}
+.st-key-preference-grid [data-testid="column"]:has(.preference-state-3) .stButton > button {{
+    background: #991b1b !important;
+    border-color: #7f1d1d !important;
+}}
+.st-key-preference-grid [data-testid="column"]:has(.preference-state-conflict) .stButton > button {{
+    background: #7f1d1d !important;
+    border-color: #450a0a !important;
+}}
+.st-key-preference-grid .stButton > button:focus-visible {{
+    outline: 3px solid #0f172a !important;
+    outline-offset: 2px;
+}}
+@media (max-width: 768px) {{
+    /*
+     * This must follow the shared grid-button rule above. Otherwise its
+     * min-height:30px declaration wins in the mobile cascade.
+     */
+    .st-key-preference-grid .stButton > button {{
+        min-width: 44px !important;
+        min-height: 44px !important;
+        width: 44px !important;
+        padding: 0 !important;
+        font-size: 16px !important;
+        font-weight: 800 !important;
+        border-radius: 7px !important;
+    }}
+    .st-key-preference-grid .stButton > button:hover {{
+        transform: none !important;
+    }}
+}}
+.st-key-preference-legend .preference-legend-swatch {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+    color: #ffffff !important;
+    font-weight: 800;
+    line-height: 1;
+}}
 </style>
 """, unsafe_allow_html=True)
 
-    st.markdown('<div class="schedule-grid-wrapper"><div class="schedule-grid">', unsafe_allow_html=True)
+    grid_key = "preference-grid" if st.session_state.edit_mode == "tercih" else "schedule-grid"
+    grid_container = st.container(key=grid_key, border=False)
 
     tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
-    header_cols = st.columns([2] + [1] * len(sutunlar))
+    header_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
     with header_cols[0]:
         st.markdown("<div style='font-size:13px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
     for i, col in enumerate(sutunlar):
@@ -977,7 +1078,7 @@ with tab_grid:
     else:
         _person_limits = st.session_state.get('person_limits', {})
         for person in isimler:
-            row_cols = st.columns([2] + [1] * len(sutunlar))
+            row_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
             with row_cols[0]:
                 count = int(st.session_state.schedule_bool.loc[person].sum()) if person in st.session_state.schedule_bool.index else 0
                 p_lim = _person_limits.get(person, {})
@@ -1003,17 +1104,44 @@ with tab_grid:
                     if is_assigned:
                         if has_conflict:
                             label = "🔺"
+                            state_class = "preference-state-conflict"
+                            state_description = "Çakışma"
                         elif pref_val == 1:
-                            label = "✅"
+                            label = "✓"
+                            state_class = "preference-state-1"
+                            state_description = "Atandı ve tercih edildi"
                         elif pref_val == 2:
-                            label = "⚠️"
+                            label = "!"
+                            state_class = "preference-state-2"
+                            state_description = "Atandı ancak kaçınılması tercih edildi"
                         elif pref_val == 3:
-                            label = "🚫"
+                            label = "×"
+                            state_class = "preference-state-3"
+                            state_description = "Atandı ancak müsait değil"
                         else:
-                            label = "●"
+                            label = "•"
+                            state_class = "preference-state-0"
+                            state_description = "Atandı"
                     else:
-                        label = "🟢" if pref_val == 1 else ("🟡" if pref_val == 2 else ("🔴" if pref_val == 3 else "○"))
-                    if st.button(label, key=f"g_{person}_{col}", use_container_width=True):
+                        label = "T" if pref_val == 1 else ("K" if pref_val == 2 else ("Y" if pref_val == 3 else "·"))
+                        state_class = f"preference-state-{pref_val if pref_val in (1, 2, 3) else 0}"
+                        state_description = {
+                            0: "Nötr",
+                            1: "Tercih",
+                            2: "Kaçınma",
+                            3: "Müsait değil",
+                        }.get(pref_val, "Nötr")
+                    st.markdown(
+                        f'<span class="preference-state {state_class}" aria-hidden="true"></span>',
+                        unsafe_allow_html=True
+                    )
+                    if st.button(
+                        label,
+                        key=f"g_{person}_{col}",
+                        use_container_width=True,
+                        help=f"{escape_html(person)} — {escape_html(col)}: {state_description}. "
+                             "Değiştirmek için dokunun."
+                    ):
                         save_undo_state()
                         if st.session_state.edit_mode == "tercih":
                             st.session_state.pref_df.at[person, col] = st.session_state.paint_color
@@ -1021,22 +1149,26 @@ with tab_grid:
                             st.session_state.schedule_bool.at[person, col] = not st.session_state.schedule_bool.at[person, col]
                         st.rerun()
 
-    st.markdown('</div></div>', unsafe_allow_html=True)
-
-    legend_cols = st.columns(8)
+    legend_container = st.container(key="preference-legend", border=False)
+    legend_cols = legend_container.columns(8, gap=None)
     legends = [
-        ("●", "#374151", "Atandı"),
-        ("✅", "#16a34a", "Atandı+İstedi"),
-        ("⚠️", "#d97706", "Atandı+Kaçın"),
-        ("🚫", "#dc2626", "Atandı+Yasak"),
-        ("🔺", "#dc2626", "Çakışma"),
-        ("🟢", "#16a34a", "Tercih"),
-        ("🟡", "#d97706", "Kaçınma"),
-        ("🔴", "#dc2626", "Yasak"),
+        ("•", "#475569", "Atandı"),
+        ("✓", "#166534", "Atandı+İstedi"),
+        ("!", "#92400e", "Atandı+Kaçın"),
+        ("×", "#991b1b", "Atandı+Yasak"),
+        ("!", "#7f1d1d", "Çakışma"),
+        ("T", "#166534", "Tercih"),
+        ("K", "#92400e", "Kaçınma"),
+        ("Y", "#991b1b", "Yasak"),
     ]
     for lc, (icon, color, desc) in zip(legend_cols, legends):
         with lc:
-            st.markdown(f"<div style='text-align:center;font-size:16px;color:{color};'>{icon}<br/><span style='color:#6b7280;font-size:12px;font-weight:500;'>{desc}</span></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='text-align:center;font-size:16px;'>"
+                f"<span class='preference-legend-swatch' style='background:{color};'>{icon}</span><br/>"
+                f"<span style='color:#374151;font-size:12px;font-weight:600;'>{desc}</span></div>",
+                unsafe_allow_html=True
+            )
 
     st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
 
