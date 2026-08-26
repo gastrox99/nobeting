@@ -35,6 +35,7 @@ from nobet_core import (
     parse_schedule_import_date,
     undo_history_state,
     redo_history_state,
+    update_persistence_feedback,
 )
 
 
@@ -459,6 +460,30 @@ class TestAutoScheduleRestore(unittest.TestCase):
         self.assertEqual(session_state["cached_role_names"], ["Başrol", "Destek"])
         self.assertFalse(session_state["should_regenerate_assignments"])
 
+    def test_yukleme_hatasi_callback_ile_bildirilebilir_ve_state_degismez(self):
+        session_state = SessionStateMock({"existing": "state"})
+        errors = []
+
+        def failing_load_schedule(*_):
+            raise RuntimeError("database unavailable")
+
+        restored = restore_auto_saved_schedule(
+            session_state,
+            failing_load_schedule,
+            "Otomatik_2025_01",
+            2025,
+            1,
+            self.isimler,
+            self.sutunlar,
+            self.gun_detaylari,
+            on_error=errors.append,
+        )
+
+        self.assertFalse(restored)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], RuntimeError)
+        self.assertEqual(session_state, {"existing": "state"})
+
 
 class TestRedoHistory(unittest.TestCase):
     def test_undo_current_stateyi_redoya_tasiyip_onceki_snapshoti_dondurur(self):
@@ -486,6 +511,32 @@ class TestRedoHistory(unittest.TestCase):
         self.assertEqual(restored, "after-current")
         self.assertEqual(session_state["undo_history"], ["before-current", "current"])
         self.assertEqual(session_state["redo_history"], [])
+
+
+class TestPersistenceFeedback(unittest.TestCase):
+    def test_excel_kaydi_basarisiz_oldugunda_hata_sonraki_rerunda_kalir(self):
+        session_state = SessionStateMock()
+        message = (
+            "❌ Excel verisi yüklendi ancak çizelge kaydedilemedi. "
+            "Veritabanı bağlantısını kontrol edin."
+        )
+
+        update_persistence_feedback(session_state, False, message)
+
+        # Aynı session state, Streamlit'in st.rerun() çağrısından sonra da kullanılır.
+        self.assertTrue(session_state["auto_save_failed"])
+        self.assertEqual(session_state["persistence_error"], message)
+
+    def test_basariyla_kaydedilince_bekleyen_hata_temizlenir(self):
+        session_state = SessionStateMock(
+            auto_save_failed=True,
+            persistence_error="önceki hata",
+        )
+
+        update_persistence_feedback(session_state, True)
+
+        self.assertFalse(session_state["auto_save_failed"])
+        self.assertNotIn("persistence_error", session_state)
 
 
 # ------------------------------------------------------------------------------
@@ -940,6 +991,46 @@ if __name__ == "__main__":
     unittest.main(verbosity=2)
 
 class TestSchedulePersistence(unittest.TestCase):
+    def test_load_db_hatasi_istenirse_yukari_tasinir(self):
+        with patch.object(
+            db.psycopg2,
+            "connect",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+                db.load_schedule("Ocak", 2025, 1, raise_on_error=True)
+
+    def test_load_db_hatasi_legacy_cagriyi_bozmaz(self):
+        with patch.object(
+            db.psycopg2,
+            "connect",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            self.assertEqual(
+                db.load_schedule("Ocak", 2025, 1),
+                (None, None, None, None, None),
+            )
+
+    def test_save_db_hatasi_basarisizlik_dondurur(self):
+        schedule = pd.DataFrame([[False]], index=["Ali"], columns=["1 Çar"])
+
+        with patch.object(
+            db.psycopg2,
+            "connect",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            self.assertFalse(
+                db.save_schedule("Ocak", 2025, 1, ["Ali"], schedule)
+            )
+
+    def test_delete_db_hatasi_basarisizlik_dondurur(self):
+        with patch.object(
+            db.psycopg2,
+            "connect",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            self.assertFalse(db.delete_schedule("Ocak", 2025, 1))
+
     def test_save_serializes_role_rows_alongside_schedule(self):
         cursor = _FakeDbCursor()
         connection = _FakeDbConnection(cursor)

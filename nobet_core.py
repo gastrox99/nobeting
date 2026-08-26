@@ -407,6 +407,19 @@ def redo_history_state(session_state, current_snapshot):
     return session_state["redo_history"].pop()
 
 
+def update_persistence_feedback(session_state, saved, error_message=None):
+    """Keep database persistence feedback visible across a Streamlit rerun."""
+    if saved:
+        session_state["auto_save_failed"] = False
+        session_state.pop("persistence_error", None)
+        return None
+
+    message = error_message or "❌ Çizelge kaydedilemedi. Veritabanı bağlantısını kontrol edin."
+    session_state["auto_save_failed"] = True
+    session_state["persistence_error"] = message
+    return message
+
+
 def restore_auto_saved_schedule(
     session_state,
     load_schedule_fn,
@@ -417,11 +430,19 @@ def restore_auto_saved_schedule(
     sutunlar,
     gun_detaylari,
     role_names=None,
+    on_error=None,
 ):
-    """Otomatik kaydı session state'e geri yükler; başarısız olursa state'e dokunmaz."""
+    """Otomatik kaydı session state'e geri yükler; başarısız olursa state'e dokunmaz.
+
+    ``on_error`` yalnızca yükleyici bir istisna oluşturduğunda çağrılır. Böylece
+    veritabanında henüz otomatik kayıt bulunmaması ile gerçek bir DB hatası
+    birbirinden ayrılabilir.
+    """
     try:
         loaded = load_schedule_fn(schedule_name, yil, ay)
-    except Exception:
+    except Exception as exc:
+        if on_error is not None:
+            on_error(exc)
         return False
 
     if not isinstance(loaded, tuple) or len(loaded) < 4:

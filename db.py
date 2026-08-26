@@ -136,10 +136,14 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
         if conn is not None:
             conn.close()
 
-def load_schedule(name, year, month):
+def load_schedule(name, year, month, raise_on_error=False):
     """Load a schedule from database.
     Returns (team_members, schedule_df, pref_df, settings_dict, rows_liste).
     pref_df, settings_dict, and rows_liste are None when not saved.
+
+    ``raise_on_error`` is intended for interactive callers that need to
+    distinguish a missing schedule from a database failure. The default keeps
+    the legacy tuple-on-error behavior for non-interactive callers.
     """
     conn = None
     try:
@@ -220,6 +224,8 @@ def load_schedule(name, year, month):
 
     except Exception as e:
         print(f"Load schedule error: {e}")
+        if raise_on_error:
+            raise
         return None, None, None, None, None
     finally:
         if conn is not None:

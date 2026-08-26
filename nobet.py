@@ -30,6 +30,7 @@ from nobet_core import (
     build_limit_violation_messages,
     undo_history_state,
     redo_history_state,
+    update_persistence_feedback,
 )
 
 # Excel export
@@ -612,9 +613,15 @@ zorunlu_saat = calisma_gunu * 8
 if 'schedule_bool' not in st.session_state:
     # Sayfa yenilenmesinde otomatik geri yükle
     _auto_name = f"Otomatik_{yil}_{ay:02d}"
+
+    def _load_auto_schedule(name, year, month):
+        # Keep "no saved schedule yet" distinct from a database failure so the
+        # first visit does not show a misleading error.
+        return load_schedule(name, year, month, raise_on_error=True)
+
     if not restore_auto_saved_schedule(
         st.session_state,
-        load_schedule,
+        _load_auto_schedule,
         _auto_name,
         yil,
         ay,
@@ -622,6 +629,10 @@ if 'schedule_bool' not in st.session_state:
         sutunlar,
         gun_detaylari,
         role_names,
+        on_error=lambda _error: st.warning(
+            "⚠️ Çizelge yüklenemedi. Veritabanı bağlantısını kontrol edip "
+            "sayfayı yenileyin."
+        ),
     ):
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
 else:
@@ -670,6 +681,7 @@ if 'undo_history' not in st.session_state: st.session_state.undo_history = []
 if 'redo_history' not in st.session_state: st.session_state.redo_history = []
 if 'last_auto_save' not in st.session_state: st.session_state.last_auto_save = time.time()
 if 'auto_save_failed' not in st.session_state: st.session_state.auto_save_failed = False
+if 'persistence_error' not in st.session_state: st.session_state.persistence_error = None
 if 'reset_pending' not in st.session_state: st.session_state.reset_pending = False
 if 'simulation_success_pending' not in st.session_state: st.session_state.simulation_success_pending = False
 if 'preferences' not in st.session_state: st.session_state.preferences = {}
@@ -1588,12 +1600,17 @@ if elapsed >= 30:
         _saved_ok = False
     if _saved_ok:
         st.session_state.last_auto_save = time.time()
-        st.session_state.auto_save_failed = False
+        update_persistence_feedback(st.session_state, True)
     else:
-        st.session_state.auto_save_failed = True
+        update_persistence_feedback(
+            st.session_state,
+            False,
+            "❌ Çizelge kaydedilemedi — otomatik kayıt veritabanına yazılamıyor! "
+            "Sayfayı yenilemeden önce Excel/PNG olarak indirin.",
+        )
 
-if st.session_state.auto_save_failed:
-    st.error("🔴 Otomatik kayıt başarısız oldu — çizelgeniz veritabanına kaydedilemiyor! Sayfayı yenilemeden önce Excel/PNG olarak indirin.")
+if st.session_state.get("persistence_error"):
+    st.error(st.session_state.persistence_error)
 
 _rows_key = tuple(tuple(row.get(role, "-") for role in role_names) for row in rows_liste)
 _analysis_key = (
@@ -1747,7 +1764,14 @@ with dl6:
                                                     pref_df=st.session_state.get('pref_df'),
                                                     rows_liste=_new_rows)
                         if not _xl_save_ok:
-                            st.warning("⚠️ Excel verisi yüklendi ancak otomatik kayıt başarısız oldu.")
+                            update_persistence_feedback(
+                                st.session_state,
+                                False,
+                                "❌ Excel verisi yüklendi ancak çizelge "
+                                "kaydedilemedi. Veritabanı bağlantısını kontrol edin.",
+                            )
+                        else:
+                            update_persistence_feedback(st.session_state, True)
                         if _skipped_names:
                             st.warning(f"⚠️ {len(_skipped_names)} isim mevcut ekipte bulunamadığı için atlandı: {', '.join(sorted(_skipped_names))}")
                         if _matched < len(sutunlar):
@@ -1761,7 +1785,8 @@ with dl6:
                                 f"⚠️ {_unreadable_date_rows} satırın tarihi okunamadığı "
                                 "için atlandı."
                             )
-                        st.success(f"{_matched}/{len(sutunlar)} gün yüklendi!")
+                        if _xl_save_ok:
+                            st.success(f"{_matched}/{len(sutunlar)} gün yüklendi ve kaydedildi!")
                         st.rerun()
                     else:
                         if _unreadable_date_rows:
