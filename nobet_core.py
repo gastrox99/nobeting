@@ -11,6 +11,7 @@ from io import BytesIO
 from datetime import datetime
 from itertools import combinations as _combinations
 from html import escape as _escape_html
+from numbers import Integral
 
 
 def escape_html(value):
@@ -204,11 +205,16 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
     """
     Saf zamanlama algoritması (Streamlit bağımsız).
     progress_callback(int) isteğe bağlı ilerleme bildirimi için kullanılır.
+
+    simulation_count pozitif bir tamsayı olmalıdır; aksi halde ValueError yükseltilir.
     """
+    if isinstance(simulation_count, bool) or not isinstance(simulation_count, Integral) or simulation_count <= 0:
+        raise ValueError("Simülasyon sayısı pozitif bir tamsayı olmalıdır.")
+
     best_schedule = None
     best_score = float('inf')
 
-    for attempt in range(simulation_count):
+    for attempt in range(int(simulation_count)):
         if progress_callback:
             progress_callback(attempt + 1)
 

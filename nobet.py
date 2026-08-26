@@ -332,15 +332,23 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
     def _progress(n):
         if n % 10 == 0:
             progress_bar.progress(n)
-    best_schedule, _ = run_scheduling_core(
-        isimler, sutunlar, df_unwanted_bool, gun_detaylari,
-        min_bosluk, kisi_sayisi, forbidden_pairs, person_limits, df_preferred,
-        simulation_count=100, progress_callback=_progress
-    )
-    progress_bar.empty()
-    if best_schedule is not None:
-        st.session_state.schedule_bool = best_schedule
-    st.toast("100 Simülasyon yapıldı. En adil sonuç seçildi!", icon="🧠")
+    try:
+        best_schedule, _ = run_scheduling_core(
+            isimler, sutunlar, df_unwanted_bool, gun_detaylari,
+            min_bosluk, kisi_sayisi, forbidden_pairs, person_limits, df_preferred,
+            simulation_count=100, progress_callback=_progress
+        )
+    except ValueError as exc:
+        st.error(f"🚨 Simülasyon başlatılamadı: {exc}")
+        return None
+    finally:
+        progress_bar.empty()
+
+    if best_schedule is None:
+        st.error("🚨 Simülasyon sonuç üretemedi. Mevcut çizelge değiştirilmedi.")
+        return None
+
+    return best_schedule
 
 
 # --- AYARLAR (Ana Sayfada Açılır Panel) ---
@@ -623,6 +631,7 @@ if 'last_auto_save' not in st.session_state: st.session_state.last_auto_save = t
 if 'auto_save_failed' not in st.session_state: st.session_state.auto_save_failed = False
 if 'sim_pending_confirm' not in st.session_state: st.session_state.sim_pending_confirm = False
 if 'reset_pending' not in st.session_state: st.session_state.reset_pending = False
+if 'simulation_success_pending' not in st.session_state: st.session_state.simulation_success_pending = False
 if 'preferences' not in st.session_state: st.session_state.preferences = {}
 if 'person_preferences' not in st.session_state: st.session_state.person_preferences = {}
 for i in isimler:
@@ -635,6 +644,9 @@ for _stale in [k for k in list(st.session_state.inputs.keys()) if k not in isiml
     del st.session_state.inputs[_stale]
 for _stale in [k for k in list(st.session_state.person_preferences.keys()) if k not in isimler]:
     del st.session_state.person_preferences[_stale]
+
+if st.session_state.pop("simulation_success_pending", False):
+    st.toast("100 Simülasyon yapıldı. En adil sonuç seçildi!", icon="🧠")
 
 # --- KİŞİ RENK PALETİ (20 pastel ton) ---
 PASTEL_COLORS = [
@@ -1288,17 +1300,19 @@ if sim_clicked:
             for warn in warnings:
                 st.warning(warn)
         
-        save_undo_state(st.session_state.schedule_bool)
-        
-        run_scheduling_algorithm_v98(
+        _new_schedule = run_scheduling_algorithm_v98(
             isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk, 
             kişi_sayısı,
             st.session_state.forbidden_pairs,
             st.session_state.get('person_limits', {}),
             df_preferred
         )
-        st.session_state.should_regenerate_assignments = True
-        st.rerun()
+        if _new_schedule is not None:
+            save_undo_state(st.session_state.schedule_bool)
+            st.session_state.schedule_bool = _new_schedule
+            st.session_state.should_regenerate_assignments = True
+            st.session_state.simulation_success_pending = True
+            st.rerun()
 
 # Auto-save functionality
 elapsed = time.time() - st.session_state.last_auto_save

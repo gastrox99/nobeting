@@ -300,6 +300,39 @@ class TestRunSchedulingCore(unittest.TestCase):
         self.assertEqual(list(schedule.index), isimler)
         self.assertEqual(list(schedule.columns), sutunlar)
 
+    def test_sifir_simulasyon_reddedilir_ve_girdiyi_degistirmez(self):
+        isimler, sutunlar, df_unwanted, gun_detaylari, kisi_sayisi = self._build_test_env()
+        previous_schedule = pd.DataFrame(True, index=isimler, columns=sutunlar)
+        previous_snapshot = previous_schedule.copy(deep=True)
+
+        with self.assertRaisesRegex(ValueError, "pozitif bir tamsayı"):
+            run_scheduling_core(
+                isimler, sutunlar, df_unwanted, gun_detaylari,
+                min_bosluk=1, kisi_sayisi=kisi_sayisi, simulation_count=0
+            )
+
+        pd.testing.assert_frame_equal(previous_schedule, previous_snapshot)
+
+    def test_negatif_simulasyon_reddedilir(self):
+        isimler, sutunlar, df_unwanted, gun_detaylari, kisi_sayisi = self._build_test_env()
+
+        with self.assertRaisesRegex(ValueError, "pozitif bir tamsayı"):
+            run_scheduling_core(
+                isimler, sutunlar, df_unwanted, gun_detaylari,
+                min_bosluk=1, kisi_sayisi=kisi_sayisi, simulation_count=-1
+            )
+
+    def test_normal_simulasyon_cizelge_uretmege_devam_eder(self):
+        isimler, sutunlar, df_unwanted, gun_detaylari, kisi_sayisi = self._build_test_env()
+
+        schedule, score = run_scheduling_core(
+            isimler, sutunlar, df_unwanted, gun_detaylari,
+            min_bosluk=1, kisi_sayisi=kisi_sayisi, simulation_count=1
+        )
+
+        self.assertIsInstance(schedule, pd.DataFrame)
+        self.assertTrue(np.isfinite(score))
+
     def test_her_gun_dogru_kisi_sayisi(self):
         isimler, sutunlar, df_unwanted, gun_detaylari, kisi_sayisi = self._build_test_env(
             isimler=["Ali","Ayşe","Mehmet","Fatma","Can","Zeynep"]
