@@ -110,6 +110,21 @@ def changed_schedule_columns(previous_schedule, current_schedule):
     ]
 
 
+def find_person_role(rows_liste, role_names, day_index, person):
+    """Return the role assigned to a person on a schedule day, if any."""
+    if not rows_liste or day_index < 0 or day_index >= len(rows_liste):
+        return None
+
+    row = rows_liste[day_index]
+    if not isinstance(row, dict):
+        return None
+
+    return next(
+        (role_name for role_name in (role_names or []) if row.get(role_name) == person),
+        None,
+    )
+
+
 def build_limit_violation_messages(schedule, names, person_limits):
     """Return the user-facing messages for personal shift-limit violations."""
     messages = []

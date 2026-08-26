@@ -15,6 +15,7 @@ from streamlit_local_storage import LocalStorage
 from nobet_core import (
     build_schedule_analysis,
     changed_schedule_columns,
+    find_person_role,
     normalize_preference_grid,
     parse_holiday_days,
     run_scheduling_core,
@@ -1238,6 +1239,8 @@ with tab_cal:
         dp_total_h = len(dp_shifts) * 24
         dp_fm_h = max(0, dp_total_h - zorunlu_saat)
         dp_pay = dp_fm_h * nobet_ucreti
+        _dp_rows = st.session_state.get('cached_rows_liste') or []
+        _dp_role_names = st.session_state.get('cached_role_names', _cal_role_names)
         # Tercih istatistikleri (sadece nöbet tutulan günler)
         dp_pref_on_shift = {0: 0, 1: 0, 2: 0, 3: 0}
         dp_pref_all = {0: 0, 1: 0, 2: 0, 3: 0}
@@ -1309,6 +1312,8 @@ with tab_cal:
                 inf = gun_detaylari[c]
                 dn2 = inf['day_num']
                 dn2_name = tr_gunler[date(yil, ay, dn2).weekday()]
+                dp_role = find_person_role(_dp_rows, _dp_role_names, sutunlar.index(c), dp)
+                dp_role_label = f" · {escape_html(dp_role)}" if dp_role else ""
                 if inf['holiday']:
                     pill_bg = "#fee2e2"; pill_tc = "#dc2626"
                 elif inf['weekend']:
@@ -1318,7 +1323,7 @@ with tab_cal:
                 day_pills += (
                     f"<span style='display:inline-block;background:{pill_bg};color:{pill_tc};"
                     f"border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;"
-                    f"margin:2px;white-space:nowrap;'>{dn2} {dn2_name}</span>"
+                    f"margin:2px;white-space:nowrap;'>{dn2} {dn2_name}{dp_role_label}</span>"
                 )
             st.markdown(
                 f"<div style='margin:6px 0 12px 0;line-height:2;'>{day_pills}</div>",
@@ -1397,13 +1402,7 @@ with tab_cal:
                             continue
                         pc = person_colors.get(p, '#e2e8f0')
                         # cached_rows_liste'den kişinin gerçek görev yerini bul
-                        rl = None
-                        if _cal_rows and 0 <= dn - 1 < len(_cal_rows):
-                            _drow = _cal_rows[dn - 1]
-                            for _rn in _cal_crnames:
-                                if _drow.get(_rn) == p:
-                                    rl = _rn
-                                    break
+                        rl = find_person_role(_cal_rows, _cal_crnames, dn - 1, p)
                         if rl is None:
                             rl = _cal_role_names[role_idx] if role_idx < len(_cal_role_names) else f"G{role_idx+1}"
                         # Müsaitlik rengi kenarlık olarak

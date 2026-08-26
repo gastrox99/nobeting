@@ -18,6 +18,7 @@ from nobet_core import (
     build_gun_detaylari,
     build_schedule_analysis,
     changed_schedule_columns,
+    find_person_role,
     normalize_preference_grid,
     run_scheduling_core,
     schedule_fingerprint,
@@ -620,6 +621,29 @@ class TestLargeSchedulePerformance(unittest.TestCase):
             invalid = valid.copy()
             invalid.at["Ali", "G01"] = invalid_value
             self.assertIsNone(normalize_preference_grid(invalid))
+
+
+class TestPersonRoleDisplay(unittest.TestCase):
+    def test_kisinin_gundeki_gorevini_doner(self):
+        rows = [
+            {"Tarih": "01.01.2025 Çar", "Görev1": "Ali", "Görev2": "Ayşe"},
+            {"Tarih": "02.01.2025 Per", "Görev1": "Ayşe", "Görev2": "Ali"},
+        ]
+
+        self.assertEqual(find_person_role(rows, ["Görev1", "Görev2"], 0, "Ali"), "Görev1")
+        self.assertEqual(find_person_role(rows, ["Görev1", "Görev2"], 1, "Ali"), "Görev2")
+
+    def test_gorev_yeri_degistiginde_guncel_rolu_doner(self):
+        rows = [{"Tarih": "01.01.2025 Çar", "Görev1": "Ali", "Görev2": "Ayşe"}]
+
+        rows[0]["Görev1"], rows[0]["Görev2"] = rows[0]["Görev2"], rows[0]["Görev1"]
+
+        self.assertEqual(find_person_role(rows, ["Görev1", "Görev2"], 0, "Ali"), "Görev2")
+
+    def test_eslesmeyen_kisi_icin_rol_donmez(self):
+        rows = [{"Tarih": "01.01.2025 Çar", "Görev1": "Ali"}]
+
+        self.assertIsNone(find_person_role(rows, ["Görev1", "Görev2"], 0, "Mehmet"))
 
 
 # ==============================================================================
