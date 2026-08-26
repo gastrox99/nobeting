@@ -9,6 +9,7 @@ import numpy as np
 import random
 from nobet_core import (
     parse_unwanted_days,
+    parse_holiday_days,
     validate_inputs,
     parse_forbidden_pairs,
     parse_person_limits,
@@ -59,6 +60,44 @@ class TestParseUnwantedDays(unittest.TestCase):
     def test_bosluklu_girdi(self):
         result = parse_unwanted_days("  3 , 5 , 10  ", 30)
         self.assertEqual(sorted(result), [3, 5, 10])
+
+
+class TestParseHolidayDays(unittest.TestCase):
+    def test_gecerli_ve_gecersiz_karisik_girdi(self):
+        days, invalid = parse_holiday_days("1,5-7,32,abc,9-4", 31)
+
+        self.assertEqual(days, [1, 5, 6, 7])
+        self.assertEqual(invalid, ["32", "abc", "9-4"])
+
+    def test_ay_sinirini_asan_aralik_sessizce_kirpilmiyor(self):
+        days, invalid = parse_holiday_days("30-32", 31)
+
+        self.assertEqual(days, [])
+        self.assertEqual(invalid, ["30-32"])
+
+    def test_gecersiz_tek_gun_ve_hatali_metin_bildirilir(self):
+        days, invalid = parse_holiday_days("0,35,izin", 31)
+
+        self.assertEqual(days, [])
+        self.assertEqual(invalid, ["0", "35", "izin"])
+
+    def test_unicode_rakam_tek_gun_olarak_gecersizdir(self):
+        days, invalid = parse_holiday_days("1,²,3", 31)
+
+        self.assertEqual(days, [1, 3])
+        self.assertEqual(invalid, ["²"])
+
+    def test_unicode_rakam_aralik_ucunda_gecersizdir(self):
+        days, invalid = parse_holiday_days("1,4-²,7", 31)
+
+        self.assertEqual(days, [1, 7])
+        self.assertEqual(invalid, ["4-²"])
+
+    def test_tekrarlanan_gunler_tekilleştirilir(self):
+        days, invalid = parse_holiday_days("1,1,2-3,3", 31)
+
+        self.assertEqual(days, [1, 2, 3])
+        self.assertEqual(invalid, [])
 
 
 # ==============================================================================
@@ -116,6 +155,19 @@ class TestValidateInputs(unittest.TestCase):
         is_valid, errors, _ = validate_inputs(**self._base_params(tatil_gunleri=[1, 15, 31]))
         self.assertTrue(is_valid)
         self.assertEqual(errors, [])
+
+    def test_tekrarlanan_tatil_fizibiliteyi_iki_kez_etkilemez(self):
+        is_valid, errors, warnings = validate_inputs(
+            **self._base_params(
+                isimler=["Ali", "Ayşe", "Mehmet", "Fatma", "Can"],
+                gun_sayisi=3,
+                tatil_gunleri=[1, 1],
+            )
+        )
+
+        self.assertTrue(is_valid)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("4 pozisyon" in warning for warning in warnings))
 
     def test_yetersiz_ekip(self):
         is_valid, errors, _ = validate_inputs(**self._base_params(isimler=["Ali"], kisi_sayisi=2))

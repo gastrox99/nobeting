@@ -12,7 +12,7 @@ import json
 from html import escape as _escape_html
 from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
 from streamlit_local_storage import LocalStorage
-from nobet_core import run_scheduling_core
+from nobet_core import run_scheduling_core, parse_holiday_days
 
 # Excel export
 try:
@@ -396,7 +396,15 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     
     with set_col3:
         min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, 1)
-        tatil_gunleri = parse_unwanted_days(st.text_input("🎉 Tatiller:", placeholder="1,2,5-10,23"), gun_sayisi)
+        holiday_input = st.text_input("🎉 Tatiller:", placeholder="1,2,5-10,23")
+        tatil_gunleri, invalid_holiday_parts = parse_holiday_days(holiday_input, gun_sayisi)
+        if invalid_holiday_parts:
+            invalid_text = ", ".join(f"'{part}'" for part in invalid_holiday_parts)
+            st.warning(
+                f"⚠️ Şu tatil girdileri uygulanmadı: {invalid_text}. "
+                f"Geçerli günler uygulanmaya devam ediyor. Günleri 1-{gun_sayisi} "
+                "arasında tek gün (5) veya aralık (5-10) biçiminde yazın."
+            )
         nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", value=1.0)
     
     # Additional settings row

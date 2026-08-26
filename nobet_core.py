@@ -45,6 +45,49 @@ def parse_unwanted_days(text_input, max_day):
     return sorted(days)
 
 
+def parse_holiday_days(text_input, max_day):
+    """Tatil metnini (geçerli günler, geçersiz parçalar) olarak ayrıştırır.
+
+    Bir aralıkta uçlardan biri ay sınırını aşıyorsa aralığın tamamı geçersiz
+    sayılır; böylece hatalı giriş sessizce ay içine kırpılmaz.
+    """
+    if not text_input or (isinstance(text_input, float) and pd.isna(text_input)):
+        return [], []
+
+    valid_days = set()
+    invalid_parts = []
+    for raw_part in str(text_input).split(','):
+        part = raw_part.strip()
+        if not part:
+            continue
+
+        if '-' in part:
+            range_parts = [item.strip() for item in part.split('-')]
+            if (
+                len(range_parts) != 2
+                or not all(item.isascii() and item.isdecimal() for item in range_parts)
+            ):
+                invalid_parts.append(part)
+                continue
+            start, end = map(int, range_parts)
+            if start < 1 or end > max_day or start > end:
+                invalid_parts.append(part)
+                continue
+            valid_days.update(range(start, end + 1))
+            continue
+
+        if not part.isascii() or not part.isdecimal():
+            invalid_parts.append(part)
+            continue
+        day = int(part)
+        if 1 <= day <= max_day:
+            valid_days.add(day)
+        else:
+            invalid_parts.append(part)
+
+    return sorted(valid_days), invalid_parts
+
+
 def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kisi_sayisi=2):
     """Tüm girdileri doğrular, (is_valid, errors, warnings) döner."""
     errors = []
@@ -67,7 +110,8 @@ def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, m
         warnings.append("⚠️ Saatlik ücret 0 TL")
 
     # Tatil günü doğrulama
-    invalid_holidays = [h for h in tatil_gunleri if h < 1 or h > gun_sayisi]
+    unique_holidays = sorted(set(tatil_gunleri))
+    invalid_holidays = [h for h in unique_holidays if h < 1 or h > gun_sayisi]
     if invalid_holidays:
         errors.append(f"❌ Geçersiz tatil günleri: {invalid_holidays}")
 
@@ -76,7 +120,7 @@ def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, m
         errors.append("❌ Dinlenme süresi 0-7 gün arasında olmalı")
 
     # Fizibilite uyarıları
-    working_days = gun_sayisi - len(tatil_gunleri)
+    working_days = gun_sayisi - len([h for h in unique_holidays if 1 <= h <= gun_sayisi])
     total_positions_needed = working_days * kisi_sayisi
     team_size = len(isimler)
 
