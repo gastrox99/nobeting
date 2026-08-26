@@ -160,6 +160,66 @@ def redo_history_state(session_state, current_snapshot):
     return session_state["redo_history"].pop()
 
 
+def restore_auto_saved_schedule(
+    session_state,
+    load_schedule_fn,
+    schedule_name,
+    yil,
+    ay,
+    isimler,
+    sutunlar,
+    gun_detaylari,
+):
+    """Otomatik kaydı session state'e geri yükler; başarısız olursa state'e dokunmaz."""
+    try:
+        _, saved_schedule, saved_preferences, _ = load_schedule_fn(schedule_name, yil, ay)
+    except Exception:
+        return False
+
+    if saved_schedule is None or saved_schedule.empty:
+        return False
+
+    restored_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+    saved_days = {}
+    for saved_column in saved_schedule.columns:
+        try:
+            saved_days[int(str(saved_column).split()[0])] = saved_column
+        except (ValueError, IndexError):
+            continue
+
+    for person in isimler:
+        if person not in saved_schedule.index:
+            continue
+        for column in sutunlar:
+            saved_column = saved_days.get(gun_detaylari[column]["day_num"])
+            if saved_column is not None:
+                try:
+                    restored_schedule.at[person, column] = bool(saved_schedule.at[person, saved_column])
+                except Exception:
+                    continue
+
+    session_state["schedule_bool"] = restored_schedule
+    session_state["should_regenerate_assignments"] = True
+
+    if saved_preferences is not None:
+        restored_preferences = pd.DataFrame(0, index=isimler, columns=sutunlar)
+        for person in isimler:
+            if person not in saved_preferences.index:
+                continue
+            for column in sutunlar:
+                saved_column = saved_days.get(gun_detaylari[column]["day_num"])
+                if saved_column is not None and saved_column in saved_preferences.columns:
+                    try:
+                        restored_preferences.at[person, column] = int(
+                            saved_preferences.at[person, saved_column]
+                        )
+                    except Exception:
+                        continue
+        session_state["pref_df"] = restored_preferences
+
+    return True
+
+
 def use_compact_schedule_editor(person_count, day_count, threshold=500):
     """Çok büyük çizelgelerde hücre başına bileşen yerine tek tablo kullanılır."""
     return person_count * day_count > threshold

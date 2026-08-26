@@ -15,6 +15,7 @@ from nobet_core import (
     validate_inputs,
     parse_forbidden_pairs,
     parse_person_limits,
+    restore_auto_saved_schedule,
     build_gun_detaylari,
     build_schedule_analysis,
     changed_schedule_columns,
@@ -329,6 +330,63 @@ class TestLimitViolationMessages(unittest.TestCase):
 
 class SessionStateMock(dict):
     """Minimal stand-in for Streamlit's session state in history tests."""
+
+
+class TestAutoScheduleRestore(unittest.TestCase):
+    def setUp(self):
+        self.isimler = ["Ali", "Ayşe"]
+        self.sutunlar = ["1 Pzt", "2 Sal"]
+        self.gun_detaylari = {
+            "1 Pzt": {"day_num": 1},
+            "2 Sal": {"day_num": 2},
+        }
+
+    def test_yukleyici_cizelge_ve_tercihleri_session_statee_aktarir(self):
+        saved_schedule = pd.DataFrame(
+            [[True, False], [False, True]],
+            index=self.isimler,
+            columns=["1 Çar", "2 Per"],
+        )
+        saved_preferences = pd.DataFrame(
+            [[1, 3], [2, 0]],
+            index=self.isimler,
+            columns=["1 Çar", "2 Per"],
+        )
+        session_state = SessionStateMock()
+
+        def mock_load_schedule(name, year, month):
+            self.assertEqual((name, year, month), ("Otomatik_2025_01", 2025, 1))
+            return self.isimler, saved_schedule, saved_preferences, {}
+
+        restored = restore_auto_saved_schedule(
+            session_state, mock_load_schedule, "Otomatik_2025_01", 2025, 1,
+            self.isimler, self.sutunlar, self.gun_detaylari,
+        )
+
+        self.assertTrue(restored)
+        pd.testing.assert_frame_equal(
+            session_state["schedule_bool"],
+            pd.DataFrame([[True, False], [False, True]], index=self.isimler, columns=self.sutunlar),
+        )
+        pd.testing.assert_frame_equal(
+            session_state["pref_df"],
+            pd.DataFrame([[1, 3], [2, 0]], index=self.isimler, columns=self.sutunlar),
+        )
+        self.assertTrue(session_state["should_regenerate_assignments"])
+
+    def test_yukleyici_yanlis_sayida_deger_dondururse_state_temiz_kalir(self):
+        session_state = SessionStateMock()
+
+        def mock_load_schedule(*_):
+            return None, None, None
+
+        restored = restore_auto_saved_schedule(
+            session_state, mock_load_schedule, "Otomatik_2025_01", 2025, 1,
+            self.isimler, self.sutunlar, self.gun_detaylari,
+        )
+
+        self.assertFalse(restored)
+        self.assertEqual(session_state, {})
 
 
 class TestRedoHistory(unittest.TestCase):
