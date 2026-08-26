@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import random
 import calendar
+import re
 import matplotlib.pyplot as plt
 from io import BytesIO
 from datetime import date, datetime
@@ -19,6 +20,7 @@ from nobet_core import (
     get_preference_grid_legend,
     get_preference_grid_state,
     normalize_preference_grid,
+    parse_schedule_import_date,
     parse_holiday_days,
     restore_auto_saved_schedule,
     run_scheduling_core,
@@ -265,11 +267,26 @@ def convert_df_to_png(df):
     finally:
         plt.close(fig)
 
-def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance):
-    """Convert dataframes to Excel with multiple sheets"""
+def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance, yil=None):
+    """Convert dataframes to Excel with multiple sheets.
+
+    Include the year in exported schedule labels when it is known so a later
+    import can reject a schedule from the same month in the wrong year.
+    """
     output = BytesIO()
+    _excel_list = df_liste.copy()
+    if yil is not None and "Tarih" in _excel_list.columns:
+        def _add_year_to_date_label(value):
+            _parsed = parse_schedule_import_date(value)
+            if not _parsed or _parsed["month"] is None or _parsed["year"] is not None:
+                return value
+            _match = re.match(r"^(\d{1,2}\s+[^\W\d_]+)(.*)$", str(value).strip())
+            return f"{_match.group(1)} {yil}{_match.group(2)}" if _match else value
+
+        _excel_list["Tarih"] = _excel_list["Tarih"].map(_add_year_to_date_label)
+
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_liste.to_excel(writer, sheet_name='Günlük Liste', index=False)
+        _excel_list.to_excel(writer, sheet_name='Günlük Liste', index=False)
         df_stats_load.to_excel(writer, sheet_name='Nöbet Yükü')
         df_stats_finance.to_excel(writer, sheet_name='Ücret Özeti')
         
@@ -1616,7 +1633,9 @@ excel_key = f"excel_{yil}_{ay}"
 hash_key = f"excel_hash_{yil}_{ay}"
 if EXCEL_AVAILABLE:
     if excel_key not in st.session_state or st.session_state.get(hash_key) != data_hash:
-        st.session_state[excel_key] = convert_df_to_excel(df_liste, df_stats_load, df_stats_finance)
+        st.session_state[excel_key] = convert_df_to_excel(
+            df_liste, df_stats_load, df_stats_finance, yil=yil
+        )
         st.session_state[hash_key] = data_hash
 
 png_key = f"png_{yil}_{ay}"
@@ -1662,22 +1681,22 @@ with dl6:
                     _new_sched = pd.DataFrame(False, index=isimler, columns=sutunlar)
                     _day_rows_dict = {}  # day_num -> row_data (Excel sırasından bağımsız)
                     _skipped_names = set()
+                    _date_mismatches = []
+                    _unreadable_date_rows = 0
                     for _, _irow in _df_imp.iterrows():
-                        _tarih_str = str(_irow.get("Tarih", ""))
-                        try:
-                            # dd.mm.yyyy veya "1 Oca Pzt" gibi formatları dene
-                            _ts = _tarih_str.strip()
-                            if "." in _ts:
-                                _day_num = int(_ts.split(".")[0])
-                            elif "/" in _ts:
-                                _day_num = int(_ts.split("/")[0])
-                            elif "-" in _ts:
-                                # yyyy-mm-dd
-                                _day_num = int(_ts.split("-")[2].split()[0])
-                            else:
-                                # Sadece sayı (Excel integer tarihi) veya "15 Haz Pzt" formatı
-                                _day_num = int(float(_ts.split()[0]))
-                        except Exception:
+                        _parsed_date = parse_schedule_import_date(_irow.get("Tarih"))
+                        if _parsed_date is None:
+                            _unreadable_date_rows += 1
+                            continue
+                        _day_num = _parsed_date["day"]
+                        # Month/year-bearing dates must belong to the selected
+                        # period. Do this before changing any session state.
+                        if (
+                            (_parsed_date["month"] is not None and _parsed_date["month"] != ay)
+                            or (_parsed_date["year"] is not None and _parsed_date["year"] != yil)
+                            or _day_num > gun_sayisi
+                        ):
+                            _date_mismatches.append(_parsed_date)
                             continue
                         # Sutunlar içinde eşleşen kolonu bul
                         _match_col = None
@@ -1711,7 +1730,13 @@ with dl6:
                             for _rn in role_names:
                                 _empty[_rn] = "-"
                             _new_rows.append(_empty)
-                    if _matched > 0:
+                    if _date_mismatches:
+                        st.warning(
+                            f"⚠️ Excel tarihleri seçili dönemle uyuşmuyor "
+                            f"({ay:02d}/{yil}). {_date_mismatches[0]['day']} günü için "
+                            "farklı ay/yıl veya geçersiz gün bulundu; yükleme iptal edildi."
+                        )
+                    elif _matched > 0:
                         save_undo_state()
                         st.session_state.schedule_bool = _new_sched
                         st.session_state.cached_rows_liste = _new_rows
@@ -1725,10 +1750,30 @@ with dl6:
                             st.warning("⚠️ Excel verisi yüklendi ancak otomatik kayıt başarısız oldu.")
                         if _skipped_names:
                             st.warning(f"⚠️ {len(_skipped_names)} isim mevcut ekipte bulunamadığı için atlandı: {', '.join(sorted(_skipped_names))}")
-                        st.success(f"{_matched} gün yüklendi!")
+                        if _matched < len(sutunlar):
+                            st.warning(
+                                f"⚠️ Excel'de {len(sutunlar)} çalışma gününden "
+                                f"{_matched} gün eşleşti; {len(sutunlar) - _matched} gün "
+                                "boş bırakıldı."
+                            )
+                        if _unreadable_date_rows:
+                            st.warning(
+                                f"⚠️ {_unreadable_date_rows} satırın tarihi okunamadığı "
+                                "için atlandı."
+                            )
+                        st.success(f"{_matched}/{len(sutunlar)} gün yüklendi!")
                         st.rerun()
                     else:
-                        st.warning("Eşleşen gün bulunamadı. Ekip isimleri ve ay/yıl ayarlarının uyumlu olduğunu kontrol edin.")
+                        if _unreadable_date_rows:
+                            st.warning(
+                                "Eşleşen gün bulunamadı; Excel tarihleri okunamadı. "
+                                "Tarih sütununda gün/ay/yıl bilgilerinin bulunduğunu kontrol edin."
+                            )
+                        else:
+                            st.warning(
+                                f"Eşleşen gün bulunamadı. Excel tarihleri seçili "
+                                f"dönemle ({ay:02d}/{yil}) uyumlu değil; yükleme iptal edildi."
+                            )
             except Exception as _e:
                 st.error(
                     "Dosya okunamadı. Lütfen uygulamadan indirilen Excel formatını "

@@ -32,6 +32,7 @@ from nobet_core import (
     use_compact_schedule_editor,
     create_print_html,
     build_limit_violation_messages,
+    parse_schedule_import_date,
     undo_history_state,
     redo_history_state,
 )
@@ -116,6 +117,41 @@ class TestParseHolidayDays(unittest.TestCase):
 
         self.assertEqual(days, [1, 2, 3])
         self.assertEqual(invalid, [])
+
+
+class TestParseScheduleImportDate(unittest.TestCase):
+    def test_tarih_yil_ve_ay_bilgisiyle_parse_edilir(self):
+        self.assertEqual(
+            parse_schedule_import_date("01.06.2026 Paz"),
+            {"day": 1, "month": 6, "year": 2026},
+        )
+
+    def test_iso_tarih_parse_edilir(self):
+        self.assertEqual(
+            parse_schedule_import_date("2026-07-15"),
+            {"day": 15, "month": 7, "year": 2026},
+        )
+
+    def test_turkce_ay_etiketi_parse_edilir(self):
+        self.assertEqual(
+            parse_schedule_import_date("15 Haziran 2026 Pzt"),
+            {"day": 15, "month": 6, "year": 2026},
+        )
+
+    def test_eski_sadece_gun_bicimi_korunur(self):
+        self.assertEqual(
+            parse_schedule_import_date("15"),
+            {"day": 15, "month": None, "year": None},
+        )
+
+    def test_excel_seri_tarihi_parse_edilir(self):
+        self.assertEqual(
+            parse_schedule_import_date(46174),
+            {"day": 1, "month": 6, "year": 2026},
+        )
+
+    def test_gecersiz_tarih_parse_edilmez(self):
+        self.assertIsNone(parse_schedule_import_date("31.02.2026"))
 
 
 # ------------------------------------------------------------------------------

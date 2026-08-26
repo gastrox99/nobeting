@@ -8,8 +8,10 @@ import numpy as np
 import random
 import calendar
 import hashlib
+import math
+import re
 from io import BytesIO
-from datetime import datetime
+from datetime import date, datetime
 from itertools import combinations as _combinations
 from html import escape as _escape_html
 from numbers import Integral
@@ -18,6 +20,105 @@ from numbers import Integral
 def escape_html(value):
     """Convert any displayed value to safe HTML text."""
     return _escape_html(str(value), quote=True)
+
+
+_TR_MONTHS = {
+    "oca": 1, "ocak": 1,
+    "şub": 2, "sub": 2, "şubat": 2, "subat": 2,
+    "mar": 3, "mart": 3,
+    "nis": 4, "nisan": 4,
+    "may": 5, "mayıs": 5, "mayis": 5,
+    "haz": 6, "haziran": 6,
+    "tem": 7, "temmuz": 7,
+    "ağu": 8, "agu": 8, "ağustos": 8, "agustos": 8,
+    "eyl": 9, "eylül": 9, "eylul": 9,
+    "eki": 10, "ekim": 10,
+    "kas": 11, "kasım": 11, "kasim": 11,
+    "ara": 12, "aralık": 12, "aralik": 12,
+}
+
+
+def _valid_import_date(day, month=None, year=None):
+    """Return date components only when an explicitly supplied date is valid."""
+    if month is None:
+        return {"day": day, "month": None, "year": None} if 1 <= day <= 31 else None
+    if year is None:
+        return {"day": day, "month": month, "year": None} if 1 <= day <= 31 else None
+    try:
+        datetime(year, month, day)
+    except (TypeError, ValueError):
+        return None
+    return {"day": day, "month": month, "year": year}
+
+
+def parse_schedule_import_date(value):
+    """Parse dates used by imported schedule spreadsheets.
+
+    The exported schedule historically used ``1 Haz Çar`` (without a year),
+    while users may upload real Excel dates or strings such as
+    ``01.06.2026``.  The return value keeps missing month/year information as
+    ``None`` so the caller can preserve support for the legacy format without
+    pretending that its year was verified.
+    """
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, (pd.Timestamp, datetime, date)):
+        return _valid_import_date(value.day, value.month, value.year)
+
+    if isinstance(value, (Integral, float, np.integer, np.floating)) and not isinstance(value, bool):
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            numeric_value = math.nan
+        if math.isfinite(numeric_value):
+            if numeric_value.is_integer() and 1 <= int(numeric_value) <= 31:
+                return _valid_import_date(int(numeric_value))
+            # Excel's serial date representation (1899-12-30 origin).
+            if numeric_value > 31:
+                try:
+                    timestamp = pd.Timestamp("1899-12-30") + pd.to_timedelta(
+                        numeric_value, unit="D"
+                    )
+                    return _valid_import_date(
+                        timestamp.day, timestamp.month, timestamp.year
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Numeric date forms: dd.mm.yyyy, dd/mm/yyyy, yyyy-mm-dd and yyyy/mm/dd.
+    match = re.match(r"^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:\s|$)", text)
+    if match:
+        day, month, year = (int(part) for part in match.groups())
+        return _valid_import_date(day, month, year)
+    match = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s|$)", text)
+    if match:
+        year, month, day = (int(part) for part in match.groups())
+        return _valid_import_date(day, month, year)
+
+    # Localized labels: "1 Haz Çar", "1 Haziran 2026 Çar".
+    match = re.match(r"^(\d{1,2})\s+([^\W\d_]+)(?:\s+(\d{4}))?", text, re.IGNORECASE)
+    if match:
+        day = int(match.group(1))
+        month = _TR_MONTHS.get(match.group(2).casefold())
+        year = int(match.group(3)) if match.group(3) else None
+        if month is not None:
+            return _valid_import_date(day, month, year)
+
+    # Keep accepting manually prepared sheets that contain only a day number.
+    match = re.match(r"^(\d{1,2})(?:\s|$)", text)
+    if match:
+        return _valid_import_date(int(match.group(1)))
+    return None
 
 
 PREFERENCE_GRID_STATES = (
