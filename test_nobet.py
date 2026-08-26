@@ -23,6 +23,9 @@ from nobet_core import (
     schedule_fingerprint,
     use_compact_schedule_editor,
     create_print_html,
+    build_limit_violation_messages,
+    undo_history_state,
+    redo_history_state,
 )
 
 
@@ -283,6 +286,76 @@ class TestParsePersonLimits(unittest.TestCase):
         self.assertIn("Ali", result)
         self.assertNotIn("Ayşe", result)  # min > max
         self.assertIn("Mehmet", result)
+
+
+class TestLimitViolationMessages(unittest.TestCase):
+    def test_minimum_limit_ihlali_mesaji_uretilir(self):
+        schedule = pd.DataFrame(
+            [[True, False], [False, False]],
+            index=["Ali", "Ayşe"],
+            columns=["G01", "G02"],
+        )
+
+        messages = build_limit_violation_messages(
+            schedule,
+            ["Ali", "Ayşe"],
+            {"Ali": {"min": 2, "max": 5}},
+        )
+
+        self.assertEqual(
+            messages,
+            ["🔻 **Ali**: Min 2 nöbet gerekli, şu an 1 atanmış."],
+        )
+
+    def test_maksimum_limit_ihlali_mesaji_uretilir(self):
+        schedule = pd.DataFrame(
+            [[True, True], [False, False]],
+            index=["Ali", "Ayşe"],
+            columns=["G01", "G02"],
+        )
+
+        messages = build_limit_violation_messages(
+            schedule,
+            ["Ali", "Ayşe"],
+            {"Ali": {"min": 0, "max": 1}},
+        )
+
+        self.assertEqual(
+            messages,
+            ["🔺 **Ali**: Max 1 nöbet aşıldı, şu an 2 atanmış."],
+        )
+
+
+class SessionStateMock(dict):
+    """Minimal stand-in for Streamlit's session state in history tests."""
+
+
+class TestRedoHistory(unittest.TestCase):
+    def test_undo_current_stateyi_redoya_tasiyip_onceki_snapshoti_dondurur(self):
+        session_state = SessionStateMock(
+            undo_history=["before-current"],
+            redo_history=[],
+        )
+        current_snapshot = "current"
+
+        restored = undo_history_state(session_state, current_snapshot)
+
+        self.assertEqual(restored, "before-current")
+        self.assertEqual(session_state["undo_history"], [])
+        self.assertEqual(session_state["redo_history"], ["current"])
+
+    def test_redo_current_stateyi_undoya_tasiyip_redo_snapshotini_dondurur(self):
+        session_state = SessionStateMock(
+            undo_history=["before-current"],
+            redo_history=["after-current"],
+        )
+        current_snapshot = "current"
+
+        restored = redo_history_state(session_state, current_snapshot)
+
+        self.assertEqual(restored, "after-current")
+        self.assertEqual(session_state["undo_history"], ["before-current", "current"])
+        self.assertEqual(session_state["redo_history"], [])
 
 
 # ==============================================================================

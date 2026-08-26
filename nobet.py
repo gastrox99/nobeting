@@ -20,6 +20,9 @@ from nobet_core import (
     run_scheduling_core,
     schedule_fingerprint,
     use_compact_schedule_editor,
+    build_limit_violation_messages,
+    undo_history_state,
+    redo_history_state,
 )
 
 # Excel export
@@ -807,9 +810,8 @@ with tab_grid:
             st.rerun()
     with action_cols[2]:
         if st.button("↩️ Geri", use_container_width=True, disabled=len(st.session_state.undo_history)==0):
-            if st.session_state.undo_history:
-                st.session_state.redo_history.append(_current_state_snapshot())
-                _snap = st.session_state.undo_history.pop()
+            _snap = undo_history_state(st.session_state, _current_state_snapshot())
+            if _snap is not None:
                 if isinstance(_snap, dict):
                     if _snap.get('schedule') is not None:
                         st.session_state.schedule_bool = _snap['schedule']
@@ -829,9 +831,8 @@ with tab_grid:
                 st.rerun()
     with action_cols[3]:
         if st.button("↪️ İleri", use_container_width=True, disabled=len(st.session_state.redo_history)==0):
-            if st.session_state.redo_history:
-                st.session_state.undo_history.append(_current_state_snapshot())
-                _snap = st.session_state.redo_history.pop()
+            _snap = redo_history_state(st.session_state, _current_state_snapshot())
+            if _snap is not None:
                 if isinstance(_snap, dict):
                     if _snap.get('schedule') is not None:
                         st.session_state.schedule_bool = _snap['schedule']
@@ -1557,17 +1558,8 @@ for col in sutunlar:
                     forbidden_msg.append(f"🚫 **{gun_no}. Gün**: {nobetciler[i]} ve {nobetciler[j]} birlikte çalışamaz!")
 
 # Kişisel limit ihlali kontrolü
-limit_msg = []
 _pl = st.session_state.get('person_limits', {})
-for isim in isimler:
-    _lim = _pl.get(isim, {})
-    _min_l = _lim.get('min', 0)
-    _max_l = _lim.get('max', 999)
-    _tot = int(edited_df.loc[isim].sum())
-    if _min_l > 0 and _tot < _min_l:
-        limit_msg.append(f"🔻 **{isim}**: Min {_min_l} nöbet gerekli, şu an {_tot} atanmış.")
-    if _max_l < 999 and _tot > _max_l:
-        limit_msg.append(f"🔺 **{isim}**: Max {_max_l} nöbet aşıldı, şu an {_tot} atanmış.")
+limit_msg = build_limit_violation_messages(edited_df, isimler, _pl)
 
 # Giriş doğrulama uyarıları (yasak çift / limit — bilinmeyen isimler)
 _fp_unk = st.session_state.get('fp_unknown_names', [])

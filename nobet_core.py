@@ -110,6 +110,41 @@ def changed_schedule_columns(previous_schedule, current_schedule):
     ]
 
 
+def build_limit_violation_messages(schedule, names, person_limits):
+    """Return the user-facing messages for personal shift-limit violations."""
+    messages = []
+    for name in names:
+        limits = person_limits.get(name, {})
+        min_limit = limits.get("min", 0)
+        max_limit = limits.get("max", 999)
+        total = int(schedule.loc[name].sum())
+        if min_limit > 0 and total < min_limit:
+            messages.append(
+                f"🔻 **{name}**: Min {min_limit} nöbet gerekli, şu an {total} atanmış."
+            )
+        if max_limit < 999 and total > max_limit:
+            messages.append(
+                f"🔺 **{name}**: Max {max_limit} nöbet aşıldı, şu an {total} atanmış."
+            )
+    return messages
+
+
+def undo_history_state(session_state, current_snapshot):
+    """Move the current state to redo history and return the undo snapshot."""
+    if not session_state.get("undo_history"):
+        return None
+    session_state.setdefault("redo_history", []).append(current_snapshot)
+    return session_state["undo_history"].pop()
+
+
+def redo_history_state(session_state, current_snapshot):
+    """Move the current state to undo history and return the redo snapshot."""
+    if not session_state.get("redo_history"):
+        return None
+    session_state.setdefault("undo_history", []).append(current_snapshot)
+    return session_state["redo_history"].pop()
+
+
 def use_compact_schedule_editor(person_count, day_count, threshold=500):
     """Çok büyük çizelgelerde hücre başına bileşen yerine tek tablo kullanılır."""
     return person_count * day_count > threshold
