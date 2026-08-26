@@ -1333,10 +1333,12 @@ if elapsed >= 30:
 if st.session_state.auto_save_failed:
     st.error("🔴 Otomatik kayıt başarısız oldu — çizelgeniz veritabanına kaydedilemiyor! Sayfayı yenilemeden önce Excel/PNG olarak indirin.")
 
-# Use the current schedule for all calculations
-# In Fast Mode, we allow direct editing of the main grid
+# Use the latest schedule state for every calculation below.
+# Grid buttons update schedule_bool and trigger a rerun. Taking this snapshot
+# after those interactions prevents analysis from reading a cached list of
+# assignments instead of the schedule currently being edited.
 # REMOVED: Redundant Müsaitlik editor as requested
-edited = st.session_state.schedule_bool.copy()
+edited_df = st.session_state.schedule_bool.copy(deep=True)
 
 # --- HATA KONTROL ---
 violations = []
@@ -1348,7 +1350,7 @@ last_shift_check = {i: -10 for i in isimler}
 
 for col in sutunlar:
     gun_no = gun_detaylari[col]['day_num']
-    nobetciler = edited.index[edited[col]].tolist()
+    nobetciler = edited_df.index[edited_df[col]].tolist()
     
     if len(nobetciler) > kişi_sayısı:
         max_person_msg.append(f"🔴 **{gun_no}. Gün**: {len(nobetciler)} kişi atanmış! (Max {kişi_sayısı})")
@@ -1378,7 +1380,7 @@ for isim in isimler:
     _lim = _pl.get(isim, {})
     _min_l = _lim.get('min', 0)
     _max_l = _lim.get('max', 999)
-    _tot = int(edited.loc[isim].sum())
+    _tot = int(edited_df.loc[isim].sum())
     if _min_l > 0 and _tot < _min_l:
         limit_msg.append(f"🔻 **{isim}**: Min {_min_l} nöbet gerekli, şu an {_tot} atanmış.")
     if _max_l < 999 and _tot > _max_l:
@@ -1436,7 +1438,7 @@ if (st.session_state.should_regenerate_assignments
     rows_liste = []
     first_role_counts = {i: 0 for i in isimler}
     for col in sutunlar:
-        nobetciler = edited.index[edited[col]].tolist()
+        nobetciler = edited_df.index[edited_df[col]].tolist()
         random.shuffle(nobetciler) 
         nobetciler.sort(key=lambda x: first_role_counts[x]) 
         
@@ -1458,7 +1460,8 @@ if (st.session_state.should_regenerate_assignments
     st.session_state.cached_key = _cache_key
     st.session_state.should_regenerate_assignments = False
 else:
-    # If we are not regenerating (manual edits happened), we need to SYNC rows_liste from the edited dataframe
+    # If we are not regenerating (manual edits happened), sync rows_liste from
+    # the latest schedule dataframe while preserving existing role positions.
     # to allow editing roles (swapping people between Görev1, Görev2, etc.)
     rows_liste = st.session_state.cached_rows_liste
     first_role_counts = {i: 0 for i in isimler}
@@ -1468,7 +1471,7 @@ else:
     for i, col in enumerate(sutunlar):
         # Güvenli indeks erişimi: rows_liste eksik olabilir (örn. Excel kısmi yükleme)
         current_row = rows_liste[i] if i < len(rows_liste) else {"Tarih": gun_detaylari[col]['full_date']}
-        nobetciler_in_df = edited.index[edited[col]].tolist()
+        nobetciler_in_df = edited_df.index[edited_df[col]].tolist()
         
         # Update names in the row based on what's in the boolean dataframe
         # If someone was removed, they should be '-' in all role columns
@@ -1525,11 +1528,11 @@ stats_finance = []
 pair_matrix = pd.DataFrame(0, index=isimler, columns=isimler, dtype=int)
 
 for isim in isimler:
-    toplam = edited.loc[isim].sum()
+    toplam = edited_df.loc[isim].sum()
     haftasonu = 0
     ozel_gun = 0
     for col in sutunlar:
-        if edited.at[isim, col]:
+        if edited_df.at[isim, col]:
             if gun_detaylari[col]['weekend']: haftasonu += 1
             if gun_detaylari[col]['weekend'] or gun_detaylari[col]['holiday']: ozel_gun += 1
     
@@ -1566,7 +1569,7 @@ for isim in isimler:
     })
 
 for col in sutunlar:
-    n = edited.index[edited[col]].tolist()
+    n = edited_df.index[edited_df[col]].tolist()
     if len(n) >= 2:
         for i in range(len(n)):
             for j in range(i+1, len(n)):
@@ -1782,8 +1785,8 @@ with st.expander("✏️ Görev Yerlerini Düzenle (Gelişmiş)", expanded=False
                 _new_r = dict(_orow)
                 _day_col = sutunlar[_ri] if _ri < len(sutunlar) else None
                 _assigned_today = (
-                    edited.index[edited[_day_col]].tolist()
-                    if _day_col and _day_col in edited.columns else []
+                    edited_df.index[edited_df[_day_col]].tolist()
+                    if _day_col and _day_col in edited_df.columns else []
                 )
                 for _rn in role_names:
                     _val = str(getattr(_erow, _rn, "-")).strip()
