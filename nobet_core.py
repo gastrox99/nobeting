@@ -20,6 +20,107 @@ def escape_html(value):
     return _escape_html(str(value), quote=True)
 
 
+PREFERENCE_GRID_STATES = (
+    {
+        "key": "assigned_neutral",
+        "symbol": "•",
+        "color": "#475569",
+        "css_class": "preference-state-0",
+        "description": "Atandı",
+    },
+    {
+        "key": "assigned_preferred",
+        "symbol": "✓",
+        "color": "#166534",
+        "css_class": "preference-state-1",
+        "description": "Atandı + Tercih",
+    },
+    {
+        "key": "assigned_avoid",
+        "symbol": "!",
+        "color": "#92400e",
+        "css_class": "preference-state-2",
+        "description": "Atandı + Kaçınma",
+    },
+    {
+        "key": "assigned_unavailable",
+        "symbol": "×",
+        "color": "#991b1b",
+        "css_class": "preference-state-3",
+        "description": "Atandı + Yasak",
+    },
+    {
+        "key": "conflict",
+        "symbol": "🔺",
+        "color": "#7f1d1d",
+        "css_class": "preference-state-conflict",
+        "description": "Çakışma",
+    },
+    {
+        "key": "neutral",
+        "symbol": "·",
+        "color": "#475569",
+        "css_class": "preference-state-0",
+        "description": "Nötr",
+    },
+    {
+        "key": "preferred",
+        "symbol": "T",
+        "color": "#166534",
+        "css_class": "preference-state-1",
+        "description": "Tercih",
+    },
+    {
+        "key": "avoid",
+        "symbol": "K",
+        "color": "#92400e",
+        "css_class": "preference-state-2",
+        "description": "Kaçınma",
+    },
+    {
+        "key": "unavailable",
+        "symbol": "Y",
+        "color": "#991b1b",
+        "css_class": "preference-state-3",
+        "description": "Yasak",
+    },
+)
+
+_PREFERENCE_GRID_STATE_BY_KEY = {
+    state["key"]: state for state in PREFERENCE_GRID_STATES
+}
+
+
+def get_preference_grid_state(is_assigned, preference_value, has_conflict=False):
+    """Return the canonical symbol and styling for one schedule-grid cell."""
+    try:
+        preference_value = int(preference_value)
+    except (TypeError, ValueError):
+        preference_value = 0
+
+    if has_conflict:
+        state_key = "conflict"
+    elif is_assigned:
+        state_key = {
+            1: "assigned_preferred",
+            2: "assigned_avoid",
+            3: "assigned_unavailable",
+        }.get(preference_value, "assigned_neutral")
+    else:
+        state_key = {
+            1: "preferred",
+            2: "avoid",
+            3: "unavailable",
+        }.get(preference_value, "neutral")
+
+    return dict(_PREFERENCE_GRID_STATE_BY_KEY[state_key])
+
+
+def get_preference_grid_legend():
+    """Return the legend entries in the same order as the cell states."""
+    return [dict(state) for state in PREFERENCE_GRID_STATES]
+
+
 def parse_unwanted_days(text_input, max_day):
     """Müsait olmayan günlerin metin girdisini listeye çevirir."""
     if not text_input or (isinstance(text_input, float) and pd.isna(text_input)):

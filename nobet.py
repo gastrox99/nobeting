@@ -16,6 +16,8 @@ from nobet_core import (
     build_schedule_analysis,
     changed_schedule_columns,
     find_person_role,
+    get_preference_grid_legend,
+    get_preference_grid_state,
     normalize_preference_grid,
     parse_holiday_days,
     restore_auto_saved_schedule,
@@ -649,7 +651,6 @@ if 'undo_history' not in st.session_state: st.session_state.undo_history = []
 if 'redo_history' not in st.session_state: st.session_state.redo_history = []
 if 'last_auto_save' not in st.session_state: st.session_state.last_auto_save = time.time()
 if 'auto_save_failed' not in st.session_state: st.session_state.auto_save_failed = False
-if 'sim_pending_confirm' not in st.session_state: st.session_state.sim_pending_confirm = False
 if 'reset_pending' not in st.session_state: st.session_state.reset_pending = False
 if 'simulation_success_pending' not in st.session_state: st.session_state.simulation_success_pending = False
 if 'preferences' not in st.session_state: st.session_state.preferences = {}
@@ -666,7 +667,7 @@ for _stale in [k for k in list(st.session_state.person_preferences.keys()) if k 
     del st.session_state.person_preferences[_stale]
 
 if st.session_state.pop("simulation_success_pending", False):
-    st.toast("100 Simülasyon yapıldı. En adil sonuç seçildi!", icon="🧠")
+    st.toast("En adil sonuç seçildi.", icon="🧠")
 
 # --- KİŞİ RENK PALETİ (20 pastel ton) ---
 PASTEL_COLORS = [
@@ -766,12 +767,7 @@ with tab_grid:
     action_cols = st.columns(4)
     with action_cols[0]:
         if st.button("⚡ Simülasyon", type="primary", use_container_width=True):
-            _has_edits = bool(st.session_state.schedule_bool.values.sum())
-            if _has_edits:
-                st.session_state.sim_pending_confirm = True
-                st.rerun()
-            else:
-                st.session_state.run_simulation = True
+            st.session_state.run_simulation = True
     with action_cols[1]:
         if st.button("🔄 Sıfırla", use_container_width=True):
             st.session_state.reset_pending = True
@@ -819,7 +815,6 @@ with tab_grid:
                     st.session_state.should_regenerate_assignments = True
                 st.rerun()
 
-    # Simülasyon onay dialogu
     if st.session_state.get("reset_pending", False):
         st.warning("⚠️ Çizelge ve tüm tercihler silinecek. Devam etmek istediğinizden emin misiniz?")
         _reset_cols = st.columns(2)
@@ -835,19 +830,6 @@ with tab_grid:
         with _reset_cols[1]:
             if st.button("Vazgeç", use_container_width=True):
                 st.session_state.reset_pending = False
-                st.rerun()
-
-    if st.session_state.sim_pending_confirm:
-        st.warning("⚠️ Mevcut çizelgede el ile yapılan değişiklikler var. Simülasyon bunları silip yeniden hesaplayacak.")
-        _conf_cols = st.columns(2)
-        with _conf_cols[0]:
-            if st.button("✅ Devam Et — Simülasyonu Çalıştır", type="primary", use_container_width=True):
-                st.session_state.sim_pending_confirm = False
-                st.session_state.run_simulation = True
-                st.rerun()
-        with _conf_cols[1]:
-            if st.button("❌ İptal", use_container_width=True):
-                st.session_state.sim_pending_confirm = False
                 st.rerun()
 
     # Dynamic column background CSS
@@ -1070,46 +1052,19 @@ with tab_grid:
                     pref_val = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index else 0
                     is_assigned = st.session_state.schedule_bool.at[person, col] if person in st.session_state.schedule_bool.index else False
                     has_conflict = (person, col) in conflict_cells
-                    if is_assigned:
-                        if has_conflict:
-                            label = "🔺"
-                            state_class = "preference-state-conflict"
-                            state_description = "Çakışma"
-                        elif pref_val == 1:
-                            label = "✓"
-                            state_class = "preference-state-1"
-                            state_description = "Atandı ve tercih edildi"
-                        elif pref_val == 2:
-                            label = "!"
-                            state_class = "preference-state-2"
-                            state_description = "Atandı ancak kaçınılması tercih edildi"
-                        elif pref_val == 3:
-                            label = "×"
-                            state_class = "preference-state-3"
-                            state_description = "Atandı ancak müsait değil"
-                        else:
-                            label = "•"
-                            state_class = "preference-state-0"
-                            state_description = "Atandı"
-                    else:
-                        label = "T" if pref_val == 1 else ("K" if pref_val == 2 else ("Y" if pref_val == 3 else "·"))
-                        state_class = f"preference-state-{pref_val if pref_val in (1, 2, 3) else 0}"
-                        state_description = {
-                            0: "Nötr",
-                            1: "Tercih",
-                            2: "Kaçınma",
-                            3: "Müsait değil",
-                        }.get(pref_val, "Nötr")
+                    cell_state = get_preference_grid_state(
+                        is_assigned,
+                        pref_val,
+                        has_conflict,
+                    )
                     st.markdown(
-                        f'<span class="preference-state {state_class}" aria-hidden="true"></span>',
+                        f'<span class="preference-state {cell_state["css_class"]}" aria-hidden="true"></span>',
                         unsafe_allow_html=True
                     )
                     if st.button(
-                        label,
+                        cell_state["symbol"],
                         key=f"g_{person}_{col}",
                         use_container_width=True,
-                        help=f"{escape_html(person)} — {escape_html(col)}: {state_description}. "
-                             "Değiştirmek için dokunun."
                     ):
                         save_undo_state()
                         if st.session_state.edit_mode == "tercih":
@@ -1119,23 +1074,14 @@ with tab_grid:
                         st.rerun()
 
     legend_container = st.container(key="preference-legend", border=False)
-    legend_cols = legend_container.columns(8, gap=None)
-    legends = [
-        ("•", "#475569", "Atandı"),
-        ("✓", "#166534", "Atandı+İstedi"),
-        ("!", "#92400e", "Atandı+Kaçın"),
-        ("×", "#991b1b", "Atandı+Yasak"),
-        ("!", "#7f1d1d", "Çakışma"),
-        ("T", "#166534", "Tercih"),
-        ("K", "#92400e", "Kaçınma"),
-        ("Y", "#991b1b", "Yasak"),
-    ]
-    for lc, (icon, color, desc) in zip(legend_cols, legends):
+    legends = get_preference_grid_legend()
+    legend_cols = legend_container.columns(len(legends), gap=None)
+    for lc, legend in zip(legend_cols, legends):
         with lc:
             st.markdown(
                 f"<div style='text-align:center;font-size:16px;'>"
-                f"<span class='preference-legend-swatch' style='background:{color};'>{icon}</span><br/>"
-                f"<span style='color:#374151;font-size:12px;font-weight:600;'>{desc}</span></div>",
+                f"<span class='preference-legend-swatch' style='background:{legend['color']};'>{legend['symbol']}</span><br/>"
+                f"<span style='color:#374151;font-size:12px;font-weight:600;'>{legend['description']}</span></div>",
                 unsafe_allow_html=True
             )
 

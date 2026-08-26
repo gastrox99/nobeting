@@ -20,6 +20,8 @@ from nobet_core import (
     build_schedule_analysis,
     changed_schedule_columns,
     find_person_role,
+    get_preference_grid_legend,
+    get_preference_grid_state,
     normalize_preference_grid,
     run_scheduling_core,
     schedule_fingerprint,
@@ -806,9 +808,44 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
         self.assertIn("transform: none !important", mobile_css)
         for color in ("#166534", "#92400e", "#991b1b"):
             self.assertIn(color, self.app_source)
-        self.assertIn('label = "T"', self.app_source)
-        self.assertIn('"K" if pref_val == 2', self.app_source)
-        self.assertIn('"Y" if pref_val == 3', self.app_source)
+        self.assertIn("get_preference_grid_state(", self.app_source)
+
+    def test_hucre_ve_lejant_ayni_durum_sozlugunu_kullanir(self):
+        legend = get_preference_grid_legend()
+        self.assertEqual(len(legend), 9)
+
+        for legend_state in legend:
+            cell_state = get_preference_grid_state(
+                legend_state["key"].startswith("assigned_"),
+                {
+                    "assigned_neutral": 0,
+                    "assigned_preferred": 1,
+                    "assigned_avoid": 2,
+                    "assigned_unavailable": 3,
+                    "conflict": 3,
+                    "neutral": 0,
+                    "preferred": 1,
+                    "avoid": 2,
+                    "unavailable": 3,
+                }[legend_state["key"]],
+                legend_state["key"] == "conflict",
+            )
+            self.assertEqual(cell_state, legend_state)
+
+        self.assertEqual(
+            get_preference_grid_state(True, 3, True)["symbol"],
+            "🔺",
+        )
+
+    def test_grid_hucrelerinde_istenmeyen_tooltip_yoktur(self):
+        self.assertNotIn("Değiştirmek için dokunun", self.app_source)
+        self.assertNotIn('help=f"{escape_html(person)}', self.app_source)
+
+    def test_simulasyon_manuel_degisiklikte_onay_istemez(self):
+        self.assertNotIn("sim_pending_confirm", self.app_source)
+        self.assertIn('st.session_state.run_simulation = True', self.app_source)
+        self.assertNotIn("100 Simülasyon yapıldı", self.app_source)
+        self.assertIn('st.toast("En adil sonuç seçildi."', self.app_source)
 
 
 # ==============================================================================
