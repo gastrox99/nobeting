@@ -23,6 +23,7 @@ from nobet_core import (
     restore_auto_saved_schedule,
     run_scheduling_core,
     schedule_fingerprint,
+    synchronize_changed_role_rows,
     use_compact_schedule_editor,
     build_limit_violation_messages,
     undo_history_state,
@@ -603,6 +604,7 @@ if 'schedule_bool' not in st.session_state:
         isimler,
         sutunlar,
         gun_detaylari,
+        role_names,
     ):
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
 else:
@@ -1410,25 +1412,6 @@ if sim_clicked:
             st.session_state.simulation_success_pending = True
             st.rerun()
 
-# Auto-save functionality
-elapsed = time.time() - st.session_state.last_auto_save
-if elapsed >= 30:
-    auto_name = f"Otomatik_{yil}_{ay:02d}"
-    _saved_ok = False
-    try:
-        _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
-                                  pref_df=st.session_state.get('pref_df'))
-    except Exception:
-        _saved_ok = False
-    if _saved_ok:
-        st.session_state.last_auto_save = time.time()
-        st.session_state.auto_save_failed = False
-    else:
-        st.session_state.auto_save_failed = True
-
-if st.session_state.auto_save_failed:
-    st.error("🔴 Otomatik kayıt başarısız oldu — çizelgeniz veritabanına kaydedilemiyor! Sayfayı yenilemeden önce Excel/PNG olarak indirin.")
-
 # Use the latest schedule state for every calculation below.
 # Grid buttons update schedule_bool and trigger a rerun. Taking this snapshot
 # after those interactions prevents analysis from reading a cached list of
@@ -1550,43 +1533,22 @@ if (st.session_state.should_regenerate_assignments
     st.session_state.should_regenerate_assignments = False
 else:
     rows_liste = st.session_state.cached_rows_liste
-    changed_columns = changed_schedule_columns(
+    role_names = st.session_state.get('cached_role_names', role_names)
+    if changed_schedule_columns(
         st.session_state.get("cached_role_schedule"),
         edited_df,
-    )
-    if changed_columns:
+    ):
         # Tek hücre düzenlemesinde yalnızca ilgili günün rol satırını eşle.
-        rows_liste = [dict(row) for row in rows_liste]
-        for col in changed_columns:
-            row_index = sutunlar.index(col)
-            current_row = (
-                rows_liste[row_index]
-                if row_index < len(rows_liste)
-                else {"Tarih": gun_detaylari[col]["full_date"]}
-            )
-            assigned_people = edited_df.index[edited_df[col]].tolist()
-            new_row = {"Tarih": current_row.get("Tarih", gun_detaylari[col]["full_date"])}
-            assigned_in_roles = []
-            for role_name in role_names:
-                person = current_row.get(role_name, "-")
-                if person in assigned_people and person != "-":
-                    new_row[role_name] = person
-                    assigned_in_roles.append(person)
-                else:
-                    new_row[role_name] = "-"
-            for person in assigned_people:
-                if person not in assigned_in_roles:
-                    for role_name in role_names:
-                        if new_row[role_name] == "-":
-                            new_row[role_name] = person
-                            break
-            if row_index < len(rows_liste):
-                rows_liste[row_index] = new_row
-            else:
-                rows_liste.append(new_row)
+        rows_liste = synchronize_changed_role_rows(
+            rows_liste,
+            st.session_state.get("cached_role_schedule"),
+            edited_df,
+            role_names,
+            sutunlar,
+            gun_detaylari,
+        )
         st.session_state.cached_rows_liste = rows_liste
         st.session_state.cached_role_schedule = edited_df.copy(deep=True)
-    role_names = st.session_state.get('cached_role_names', role_names)
 
 # Display and allow manual editing of ROLES (swapping people)
 # REMOVED: Manual list editing as requested. Using autonomous redistribution instead.
@@ -1594,6 +1556,27 @@ else:
 # Re-distribution logic moved to Analiz section as requested.
 
 df_liste = pd.DataFrame(rows_liste)
+
+# Auto-save only after role rows have been generated or reconciled with the
+# current schedule, so both database payloads describe the same snapshot.
+elapsed = time.time() - st.session_state.last_auto_save
+if elapsed >= 30:
+    auto_name = f"Otomatik_{yil}_{ay:02d}"
+    _saved_ok = False
+    try:
+        _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
+                                  pref_df=st.session_state.get('pref_df'),
+                                  rows_liste=rows_liste)
+    except Exception:
+        _saved_ok = False
+    if _saved_ok:
+        st.session_state.last_auto_save = time.time()
+        st.session_state.auto_save_failed = False
+    else:
+        st.session_state.auto_save_failed = True
+
+if st.session_state.auto_save_failed:
+    st.error("🔴 Otomatik kayıt başarısız oldu — çizelgeniz veritabanına kaydedilemiyor! Sayfayı yenilemeden önce Excel/PNG olarak indirin.")
 
 _rows_key = tuple(tuple(row.get(role, "-") for role in role_names) for row in rows_liste)
 _analysis_key = (
@@ -1736,7 +1719,8 @@ with dl6:
                         st.session_state.cached_key = (yil, ay, tuple(isimler), tuple(sutunlar), tuple(role_names))
                         st.session_state.should_regenerate_assignments = False
                         _xl_save_ok = save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched,
-                                                    pref_df=st.session_state.get('pref_df'))
+                                                    pref_df=st.session_state.get('pref_df'),
+                                                    rows_liste=_new_rows)
                         if not _xl_save_ok:
                             st.warning("⚠️ Excel verisi yüklendi ancak otomatik kayıt başarısız oldu.")
                         if _skipped_names:

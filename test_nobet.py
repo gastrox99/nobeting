@@ -4,11 +4,14 @@ test_nobet.py - Nöbet Yönetimi Uygulaması Unit Testleri
 Çalıştırmak için: python -m pytest test_nobet.py -v
 """
 import unittest
+import json
 from pathlib import Path
 import pandas as pd
 import numpy as np
 import random
 import time
+from unittest.mock import patch
+import db
 from nobet_core import (
     parse_unwanted_days,
     parse_holiday_days,
@@ -25,6 +28,7 @@ from nobet_core import (
     normalize_preference_grid,
     run_scheduling_core,
     schedule_fingerprint,
+    synchronize_changed_role_rows,
     use_compact_schedule_editor,
     create_print_html,
     build_limit_violation_messages,
@@ -33,9 +37,9 @@ from nobet_core import (
 )
 
 
-# ==============================================================================
+# ------------------------------------------------------------------------------
 # 1. parse_unwanted_days testleri
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class TestParseUnwantedDays(unittest.TestCase):
 
     def test_bos_girdi(self):
@@ -114,9 +118,9 @@ class TestParseHolidayDays(unittest.TestCase):
         self.assertEqual(invalid, [])
 
 
-# ==============================================================================
+# ------------------------------------------------------------------------------
 # 2. validate_inputs testleri
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class TestValidateInputs(unittest.TestCase):
 
     def _base_params(self, **overrides):
@@ -203,9 +207,9 @@ class TestValidateInputs(unittest.TestCase):
         self.assertTrue(any("fazla kişi" in w for w in warnings))
 
 
-# ==============================================================================
+# ------------------------------------------------------------------------------
 # 3. parse_forbidden_pairs testleri
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class TestParseForbiddenPairs(unittest.TestCase):
 
     def test_bos_girdi(self):
@@ -234,9 +238,9 @@ class TestParseForbiddenPairs(unittest.TestCase):
         self.assertEqual(result, set())
 
 
-# ==============================================================================
+# ------------------------------------------------------------------------------
 # 4. parse_person_limits testleri
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class TestParsePersonLimits(unittest.TestCase):
 
     def test_bos_girdi(self):
@@ -390,6 +394,35 @@ class TestAutoScheduleRestore(unittest.TestCase):
         self.assertFalse(restored)
         self.assertEqual(session_state, {})
 
+    def test_yukleyici_kayitli_rol_atamalarini_aynen_geri_yukler(self):
+        saved_schedule = pd.DataFrame(
+            [[True, False], [False, True]],
+            index=self.isimler,
+            columns=["1 Çar", "2 Per"],
+        )
+        saved_rows = [
+            {"Tarih": "01.01.2025 Çar", "Başrol": "Ayşe", "Destek": "Ali"},
+            {"Tarih": "02.01.2025 Per", "Başrol": "Ayşe", "Destek": "Ali"},
+        ]
+        session_state = SessionStateMock()
+        day_details = {
+            "1 Pzt": {"day_num": 1, "full_date": "01.01.2025 Çar"},
+            "2 Sal": {"day_num": 2, "full_date": "02.01.2025 Per"},
+        }
+
+        def mock_load_schedule(*_):
+            return self.isimler, saved_schedule, None, {}, saved_rows
+
+        restored = restore_auto_saved_schedule(
+            session_state, mock_load_schedule, "Otomatik_2025_01", 2025, 1,
+            self.isimler, self.sutunlar, day_details, ["Görev1", "Görev2"],
+        )
+
+        self.assertTrue(restored)
+        self.assertEqual(session_state["cached_rows_liste"], saved_rows)
+        self.assertEqual(session_state["cached_role_names"], ["Başrol", "Destek"])
+        self.assertFalse(session_state["should_regenerate_assignments"])
+
 
 class TestRedoHistory(unittest.TestCase):
     def test_undo_current_stateyi_redoya_tasiyip_onceki_snapshoti_dondurur(self):
@@ -419,9 +452,9 @@ class TestRedoHistory(unittest.TestCase):
         self.assertEqual(session_state["redo_history"], [])
 
 
-# ==============================================================================
+# ------------------------------------------------------------------------------
 # 5. build_gun_detaylari testleri
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class TestBuildGunDetaylari(unittest.TestCase):
 
     def test_ocak_2025_gun_sayisi(self):
@@ -468,9 +501,9 @@ class TestBuildGunDetaylari(unittest.TestCase):
         self.assertEqual(result["G08"]["week"] - result["G01"]["week"], 1)
 
 
-# ==============================================================================
+# ------------------------------------------------------------------------------
 # 6. run_scheduling_core testleri (algoritma)
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class TestRunSchedulingCore(unittest.TestCase):
 
     def _build_test_env(self, isimler=None, gun_sayisi=7, kisi_sayisi=2):
@@ -705,10 +738,26 @@ class TestPersonRoleDisplay(unittest.TestCase):
 
         self.assertIsNone(find_person_role(rows, ["Görev1", "Görev2"], 0, "Mehmet"))
 
+class _FakeDbCursor:
+    def __init__(self, schedule_row=None, data_rows=None):
+        self.schedule_row = schedule_row
+        self.data_rows = data_rows or []
+        self.executed = []
 
-# ==============================================================================
-# 7. create_print_html testleri
-# ==============================================================================
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def execute(self, query, params=None):
+        self.executed.append((query, params))
+
+    def fetchone(self):
+        return self.schedule_row if self.schedule_row is not None else (1,)
+
+    def fetchall(self):
+        return self.data_rows
 class TestCreatePrintHtml(unittest.TestCase):
 
     def _sample_dfs(self):
@@ -848,8 +897,146 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
         self.assertIn('st.toast("En adil sonuç seçildi."', self.app_source)
 
 
-# ==============================================================================
+# ------------------------------------------------------------------------------
 # Çalıştır
-# ==============================================================================
+# ------------------------------------------------------------------------------
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+class TestSchedulePersistence(unittest.TestCase):
+    def test_save_serializes_role_rows_alongside_schedule(self):
+        cursor = _FakeDbCursor()
+        connection = _FakeDbConnection(cursor)
+        schedule = pd.DataFrame(
+            [[True, False], [False, True]],
+            index=["Ali", "Ayşe"],
+            columns=["1 Çar", "2 Per"],
+        )
+        rows = [
+            {"Tarih": "01.01.2025 Çar", "Görev1": "Ali", "Görev2": "Ayşe"},
+            {"Tarih": "02.01.2025 Per", "Görev1": "Ayşe", "Görev2": "Ali"},
+        ]
+
+        with patch.object(db.psycopg2, "connect", return_value=connection), \
+                patch.object(db, "execute_values"):
+            self.assertTrue(db.save_schedule(
+                "Ocak", 2025, 1, ["Ali", "Ayşe"], schedule, rows_liste=rows
+            ))
+
+        insert_params = cursor.executed[0][1]
+        self.assertEqual(json.loads(insert_params[6]), rows)
+        self.assertIn("rows_liste_json", cursor.executed[0][0])
+
+    def test_load_restores_role_rows_exactly(self):
+        rows = [
+            {"Tarih": "01.01.2025 Çar", "Görev1": "Ali", "Görev2": "Ayşe"},
+            {"Tarih": "02.01.2025 Per", "Görev1": "Ayşe", "Görev2": "Ali"},
+        ]
+        cursor = _FakeDbCursor(
+            schedule_row={
+                "id": 7,
+                "team_members": json.dumps(["Ali", "Ayşe"]),
+                "rows_liste_json": json.dumps(rows, ensure_ascii=False),
+            },
+            data_rows=[
+                {"person": "Ali", "day_col": "1 Çar", "assigned": True},
+                {"person": "Ayşe", "day_col": "2 Per", "assigned": True},
+            ],
+        )
+        connection = _FakeDbConnection(cursor)
+
+        with patch.object(db.psycopg2, "connect", return_value=connection):
+            loaded_team, loaded_schedule, _, _, loaded_rows = db.load_schedule("Ocak", 2025, 1)
+
+        self.assertEqual(loaded_team, ["Ali", "Ayşe"])
+        self.assertEqual(loaded_rows, rows)
+        self.assertTrue(loaded_schedule.at["Ali", "1 Çar"])
+
+    def test_load_legacy_schedule_has_no_role_rows(self):
+        cursor = _FakeDbCursor(
+            schedule_row={
+                "id": 8,
+                "team_members": json.dumps(["Ali"]),
+            },
+            data_rows=[
+                {"person": "Ali", "day_col": "1 Çar", "assigned": True},
+            ],
+        )
+        connection = _FakeDbConnection(cursor)
+
+        with patch.object(db.psycopg2, "connect", return_value=connection):
+            loaded = db.load_schedule("Eski", 2025, 1)
+
+        self.assertEqual(loaded[0], ["Ali"])
+        self.assertIsNone(loaded[4])
+
+    def test_schedule_edit_save_and_reload_uses_reconciled_role_rows(self):
+        columns = ["1 Çar"]
+        day_details = {"1 Çar": {"full_date": "01.01.2025 Çar"}}
+        previous_schedule = pd.DataFrame(
+            [[True], [True], [False]],
+            index=["Ali", "Ayşe", "Mehmet"],
+            columns=columns,
+        )
+        edited_schedule = pd.DataFrame(
+            [[False], [True], [True]],
+            index=["Ali", "Ayşe", "Mehmet"],
+            columns=columns,
+        )
+        reconciled_rows = synchronize_changed_role_rows(
+            [{"Tarih": "01.01.2025 Çar", "Görev1": "Ayşe", "Görev2": "Ali"}],
+            previous_schedule,
+            edited_schedule,
+            ["Görev1", "Görev2"],
+            columns,
+            day_details,
+        )
+        expected_rows = [
+            {"Tarih": "01.01.2025 Çar", "Görev1": "Ayşe", "Görev2": "Mehmet"},
+        ]
+        self.assertEqual(reconciled_rows, expected_rows)
+
+        save_cursor = _FakeDbCursor()
+        save_connection = _FakeDbConnection(save_cursor)
+        with patch.object(db.psycopg2, "connect", return_value=save_connection), \
+                patch.object(db, "execute_values"):
+            self.assertTrue(db.save_schedule(
+                "Düzenlenmiş", 2025, 1, ["Ali", "Ayşe", "Mehmet"],
+                edited_schedule, rows_liste=reconciled_rows,
+            ))
+
+        load_cursor = _FakeDbCursor(
+            schedule_row={
+                "id": 9,
+                "team_members": json.dumps(["Ali", "Ayşe", "Mehmet"]),
+                "rows_liste_json": save_cursor.executed[0][1][6],
+            },
+            data_rows=[
+                {"person": "Ayşe", "day_col": "1 Çar", "assigned": True},
+                {"person": "Mehmet", "day_col": "1 Çar", "assigned": True},
+            ],
+        )
+        with patch.object(
+            db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)
+        ):
+            _, loaded_schedule, _, _, loaded_rows = db.load_schedule("Düzenlenmiş", 2025, 1)
+
+        self.assertEqual(loaded_rows, expected_rows)
+        self.assertTrue(loaded_schedule.at["Ayşe", "1 Çar"])
+        self.assertTrue(loaded_schedule.at["Mehmet", "1 Çar"])
+
+class _FakeDbConnection:
+    def __init__(self, cursor):
+        self.fake_cursor = cursor
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def cursor(self, **kwargs):
+        return self.fake_cursor
+
+    def close(self):
+        pass

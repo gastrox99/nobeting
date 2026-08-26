@@ -211,6 +211,51 @@ def changed_schedule_columns(previous_schedule, current_schedule):
     ]
 
 
+def synchronize_changed_role_rows(
+    rows_liste,
+    previous_schedule,
+    current_schedule,
+    role_names,
+    day_columns,
+    day_details,
+):
+    """Keep role rows aligned with changed schedule columns.
+
+    Existing valid role placements are retained and newly assigned people fill
+    open roles. A copied list is returned so it can be saved atomically with
+    the current schedule.
+    """
+    synchronized_rows = [dict(row) for row in (rows_liste or [])]
+    for column in changed_schedule_columns(previous_schedule, current_schedule):
+        row_index = day_columns.index(column)
+        current_row = (
+            synchronized_rows[row_index]
+            if row_index < len(synchronized_rows)
+            else {"Tarih": day_details[column]["full_date"]}
+        )
+        assigned_people = current_schedule.index[current_schedule[column]].tolist()
+        new_row = {"Tarih": current_row.get("Tarih", day_details[column]["full_date"])}
+        assigned_in_roles = []
+        for role_name in role_names:
+            person = current_row.get(role_name, "-")
+            if person in assigned_people and person != "-":
+                new_row[role_name] = person
+                assigned_in_roles.append(person)
+            else:
+                new_row[role_name] = "-"
+        for person in assigned_people:
+            if person not in assigned_in_roles:
+                for role_name in role_names:
+                    if new_row[role_name] == "-":
+                        new_row[role_name] = person
+                        break
+        if row_index < len(synchronized_rows):
+            synchronized_rows[row_index] = new_row
+        else:
+            synchronized_rows.append(new_row)
+    return synchronized_rows
+
+
 def find_person_role(rows_liste, role_names, day_index, person):
     """Return the role assigned to a person on a schedule day, if any."""
     if not rows_liste or day_index < 0 or day_index >= len(rows_liste):
@@ -270,13 +315,19 @@ def restore_auto_saved_schedule(
     isimler,
     sutunlar,
     gun_detaylari,
+    role_names=None,
 ):
     """Otomatik kaydı session state'e geri yükler; başarısız olursa state'e dokunmaz."""
     try:
-        _, saved_schedule, saved_preferences, _ = load_schedule_fn(schedule_name, yil, ay)
+        loaded = load_schedule_fn(schedule_name, yil, ay)
     except Exception:
         return False
 
+    if not isinstance(loaded, tuple) or len(loaded) < 4:
+        return False
+
+    _, saved_schedule, saved_preferences, _ = loaded[:4]
+    saved_rows = loaded[4] if len(loaded) > 4 else None
     if saved_schedule is None or saved_schedule.empty:
         return False
 
@@ -300,7 +351,49 @@ def restore_auto_saved_schedule(
                     continue
 
     session_state["schedule_bool"] = restored_schedule
-    session_state["should_regenerate_assignments"] = True
+
+    restored_rows = None
+    if saved_rows:
+        saved_rows_by_day = {}
+        for saved_row in saved_rows:
+            try:
+                saved_day = int(str(saved_row.get("Tarih", "")).split(".")[0])
+            except (ValueError, TypeError, IndexError):
+                continue
+            saved_rows_by_day[saved_day] = dict(saved_row)
+
+        if saved_rows_by_day:
+            restored_rows = []
+            for column in sutunlar:
+                saved_row = saved_rows_by_day.get(gun_detaylari[column]["day_num"])
+                if saved_row is None:
+                    restored_rows = None
+                    break
+                saved_row["Tarih"] = gun_detaylari[column].get(
+                    "full_date", saved_row.get("Tarih", "")
+                )
+                restored_rows.append(saved_row)
+
+    if restored_rows:
+        restored_role_names = []
+        for restored_row in restored_rows:
+            for restored_role_name in restored_row:
+                if (
+                    restored_role_name != "Tarih"
+                    and restored_role_name not in restored_role_names
+                ):
+                    restored_role_names.append(restored_role_name)
+        active_role_names = role_names or restored_role_names
+        session_state["cached_rows_liste"] = restored_rows
+        session_state["cached_role_names"] = restored_role_names or active_role_names
+        session_state["cached_key"] = (
+            yil, ay, tuple(isimler), tuple(sutunlar), tuple(active_role_names)
+        )
+        session_state["cached_role_schedule"] = restored_schedule.copy(deep=True)
+        session_state["should_regenerate_assignments"] = False
+    else:
+        # Legacy schedules do not contain role rows; regenerate them normally.
+        session_state["should_regenerate_assignments"] = True
 
     if saved_preferences is not None:
         restored_preferences = pd.DataFrame(0, index=isimler, columns=sutunlar)

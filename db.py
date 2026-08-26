@@ -50,6 +50,11 @@ def init_db():
                 cur.execute('''
                     ALTER TABLE schedules ADD COLUMN IF NOT EXISTS settings_json TEXT
                 ''')
+
+                # Add role assignment rows if they don't exist (safe migration)
+                cur.execute('''
+                    ALTER TABLE schedules ADD COLUMN IF NOT EXISTS rows_liste_json TEXT
+                ''')
         return True
     except Exception as e:
         print(f"Database init error: {e}")
@@ -58,7 +63,7 @@ def init_db():
         if conn is not None:
             conn.close()
 
-def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None):
+def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None):
     """Save a schedule to database"""
     conn = None
     try:
@@ -83,19 +88,28 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
             except Exception:
                 settings_json_str = None
 
+        # Serialize the displayed role assignments so manual swaps survive reloads.
+        rows_liste_json = None
+        if rows_liste is not None:
+            try:
+                rows_liste_json = json.dumps(rows_liste, ensure_ascii=False)
+            except Exception:
+                rows_liste_json = None
+
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
                 # Insert or update schedule
                 cur.execute('''
-                    INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                     ON CONFLICT (name, year, month) DO UPDATE
                         SET updated_at = CURRENT_TIMESTAMP,
                             team_members = EXCLUDED.team_members,
                             pref_json = EXCLUDED.pref_json,
-                            settings_json = EXCLUDED.settings_json
+                            settings_json = EXCLUDED.settings_json,
+                            rows_liste_json = EXCLUDED.rows_liste_json
                     RETURNING id
-                ''', (name, year, month, team_str, pref_json, settings_json_str))
+                ''', (name, year, month, team_str, pref_json, settings_json_str, rows_liste_json))
 
                 schedule_id = cur.fetchone()[0]
 
@@ -124,8 +138,8 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
 
 def load_schedule(name, year, month):
     """Load a schedule from database.
-    Returns (team_members, schedule_df, pref_df, settings_dict).
-    pref_df and settings_dict are None when not saved.
+    Returns (team_members, schedule_df, pref_df, settings_dict, rows_liste).
+    pref_df, settings_dict, and rows_liste are None when not saved.
     """
     conn = None
     try:
@@ -138,7 +152,7 @@ def load_schedule(name, year, month):
 
             schedule_row = cur.fetchone()
             if not schedule_row:
-                return None, None, None, None  # finally still runs — conn will be closed
+                return None, None, None, None, None  # finally still runs — conn will be closed
 
             schedule_id = schedule_row['id']
 
@@ -167,6 +181,18 @@ def load_schedule(name, year, month):
                 except Exception:
                     settings_dict = None
 
+            # Decode role assignment rows if available. Older records do not have
+            # this value, so callers can fall back to automatic role generation.
+            rows_liste = None
+            raw_rows_liste = schedule_row.get('rows_liste_json')
+            if raw_rows_liste:
+                try:
+                    decoded_rows = json.loads(raw_rows_liste)
+                    if isinstance(decoded_rows, list) and all(isinstance(row, dict) for row in decoded_rows):
+                        rows_liste = decoded_rows
+                except Exception:
+                    rows_liste = None
+
             # Get schedule data
             cur.execute('''
                 SELECT person, day_col, assigned FROM schedule_data
@@ -176,7 +202,7 @@ def load_schedule(name, year, month):
             data_rows = cur.fetchall()
 
         if not data_rows:
-            return team_members, None, pref_df, settings_dict
+            return team_members, None, pref_df, settings_dict, rows_liste
 
         # Reconstruct dataframe
         schedule_dict = {}
@@ -190,11 +216,11 @@ def load_schedule(name, year, month):
             schedule_dict[day_col][person] = assigned
 
         df = pd.DataFrame(schedule_dict, index=team_members)
-        return team_members, df, pref_df, settings_dict
+        return team_members, df, pref_df, settings_dict, rows_liste
 
     except Exception as e:
         print(f"Load schedule error: {e}")
-        return None, None, None, None
+        return None, None, None, None, None
     finally:
         if conn is not None:
             conn.close()
