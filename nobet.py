@@ -797,14 +797,14 @@ with tab_grid:
     # Quick actions row
     action_cols = st.columns(4)
     with action_cols[0]:
-        if st.button("⚡ Simülasyon", type="primary", use_container_width=True):
+        if st.button("⚡ Simülasyon", type="primary", width="stretch"):
             st.session_state.run_simulation = True
     with action_cols[1]:
-        if st.button("🔄 Sıfırla", use_container_width=True):
+        if st.button("🔄 Sıfırla", width="stretch"):
             st.session_state.reset_pending = True
             st.rerun()
     with action_cols[2]:
-        if st.button("↩️ Geri", use_container_width=True, disabled=len(st.session_state.undo_history)==0):
+        if st.button("↩️ Geri", width="stretch", disabled=len(st.session_state.undo_history)==0):
             _snap = undo_history_state(st.session_state, _current_state_snapshot())
             if _snap is not None:
                 if isinstance(_snap, dict):
@@ -825,7 +825,7 @@ with tab_grid:
                     st.session_state.should_regenerate_assignments = True
                 st.rerun()
     with action_cols[3]:
-        if st.button("↪️ İleri", use_container_width=True, disabled=len(st.session_state.redo_history)==0):
+        if st.button("↪️ İleri", width="stretch", disabled=len(st.session_state.redo_history)==0):
             _snap = redo_history_state(st.session_state, _current_state_snapshot())
             if _snap is not None:
                 if isinstance(_snap, dict):
@@ -850,7 +850,7 @@ with tab_grid:
         st.warning("⚠️ Çizelge ve tüm tercihler silinecek. Devam etmek istediğinizden emin misiniz?")
         _reset_cols = st.columns(2)
         with _reset_cols[0]:
-            if st.button("🗑️ Evet, çizelgeyi sıfırla", type="primary", use_container_width=True):
+            if st.button("🗑️ Evet, çizelgeyi sıfırla", type="primary", width="stretch"):
                 save_undo_state()
                 st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
                 st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -859,7 +859,7 @@ with tab_grid:
                 st.session_state.reset_pending = False
                 st.rerun()
         with _reset_cols[1]:
-            if st.button("Vazgeç", use_container_width=True):
+            if st.button("Vazgeç", width="stretch"):
                 st.session_state.reset_pending = False
                 st.rerun()
 
@@ -1035,7 +1035,7 @@ with tab_grid:
             st.caption("Tercih kodları: 0 = boş, 1 = tercih, 2 = kaçınma, 3 = yasak")
             _compact_pref = st.data_editor(
                 st.session_state.pref_df,
-                use_container_width=True,
+                width="stretch",
                 key="large_schedule_preference_editor",
                 num_rows="fixed",
             )
@@ -1049,7 +1049,7 @@ with tab_grid:
         else:
             _compact_schedule = st.data_editor(
                 st.session_state.schedule_bool,
-                use_container_width=True,
+                width="stretch",
                 key="large_schedule_assignment_editor",
                 num_rows="fixed",
             )
@@ -1095,7 +1095,7 @@ with tab_grid:
                     if st.button(
                         cell_state["symbol"],
                         key=f"g_{person}_{col}",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         save_undo_state()
                         if st.session_state.edit_mode == "tercih":
@@ -1380,7 +1380,7 @@ with tab_cal:
                         unsafe_allow_html=True
                     )
                     if len(all_nobetciler) >= 2:
-                        if st.button("🔄", key=f"cal_swap_{dn}", help="Görev yerlerini değiştir", use_container_width=True):
+                        if st.button("🔄", key=f"cal_swap_{dn}", help="Görev yerlerini değiştir", width="stretch"):
                             st.session_state['cal_swap_day'] = dn
                             st.rerun()
                     cal_day_num += 1
@@ -1668,21 +1668,21 @@ if html_key not in st.session_state or st.session_state.get(html_hash_key) != da
 
 dl1, dl2, dl3, dl4, dl5, dl6 = st.columns(6)
 with dl1:
-    st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv", use_container_width=True)
+    st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv", width="stretch")
 with dl2:
-    st.download_button("🖼️ PNG", st.session_state[png_key], "liste.png", "image/png", use_container_width=True)
+    st.download_button("🖼️ PNG", st.session_state[png_key], "liste.png", "image/png", width="stretch")
 with dl3:
     if EXCEL_AVAILABLE:
-        st.download_button("📊 Excel", st.session_state[excel_key], f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        st.download_button("📊 Excel", st.session_state[excel_key], f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
     else:
         st.caption("Excel yok")
 with dl4:
-    with st.popover("💬 Metin", use_container_width=True):
+    with st.popover("💬 Metin", width="stretch"):
         st.text_area("Kopyala:", value=df_liste.to_markdown(index=False), height=200)
 with dl5:
-    st.download_button("🖨️ Yazdır", st.session_state[html_key].encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html", use_container_width=True)
+    st.download_button("🖨️ Yazdır", st.session_state[html_key].encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html", width="stretch")
 with dl6:
-    with st.popover("📂 Excel Yükle", use_container_width=True):
+    with st.popover("📂 Excel Yükle", width="stretch"):
         st.caption("Daha önce indirilen Excel dosyasını veya aynı formatta hazırladığınız listeyi yükleyin.")
         _uploaded = st.file_uploader("Excel dosyası seçin (.xlsx)", type=["xlsx"], key="excel_import_uploader", label_visibility="collapsed")
         if _uploaded is not None:
@@ -1829,7 +1829,7 @@ if rows_liste:
     _gl_edited = st.data_editor(
         _gl_df,
         column_config=_gl_cols_cfg,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         key="gunluk_liste_swap_editor",
         num_rows="fixed",
@@ -1868,7 +1868,7 @@ with st.expander("✏️ Görev Yerlerini Düzenle (Gelişmiş)", expanded=False
         _edited_roles = st.data_editor(
             _role_edit_df,
             column_config=_edit_col_cfg,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             key="role_editor_table",
             num_rows="fixed",
@@ -1909,9 +1909,9 @@ with an1:
     st.dataframe(
         df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
                            .background_gradient(cmap="Oranges", subset=["Özel"]),
-        use_container_width=True
+        width="stretch"
     )
-    if st.button("🤖 Görev Yerlerini Otomatik Dağıt", use_container_width=True, help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
+    if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
         if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
             rows_liste_to_redist = st.session_state.cached_rows_liste
             first_role_counts_to_redist = {i: 0 for i in isimler}
@@ -1965,7 +1965,7 @@ with an2:
     df_kisi = pd.DataFrame(kisi_rows)
     if not df_kisi.empty:
         h_kisi = min(len(df_kisi) * 35 + 38, 400)
-        st.dataframe(df_kisi, height=h_kisi, use_container_width=True, hide_index=True)
+        st.dataframe(df_kisi, height=h_kisi, width="stretch", hide_index=True)
     else:
         st.info("Nöbet yok.")
 
@@ -1979,9 +1979,9 @@ with an3:
     st.dataframe(
         df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
                               .format({"Ücret (TL)": "₺ {:,.2f}"}),
-        use_container_width=True
+        width="stretch"
     )
 
 with an4:
     st.markdown("**Eşleşme Matrisi**")
-    st.dataframe(pair_display, use_container_width=True)
+    st.dataframe(pair_display, width="stretch")
