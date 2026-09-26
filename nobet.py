@@ -25,6 +25,7 @@ from nobet_core import (
     restore_auto_saved_schedule,
     run_scheduling_core,
     schedule_fingerprint,
+    missing_shift_coverage,
     synchronize_changed_role_rows,
     use_compact_schedule_editor,
     build_limit_violation_messages,
@@ -684,6 +685,7 @@ if 'auto_save_failed' not in st.session_state: st.session_state.auto_save_failed
 if 'persistence_error' not in st.session_state: st.session_state.persistence_error = None
 if 'reset_pending' not in st.session_state: st.session_state.reset_pending = False
 if 'simulation_success_pending' not in st.session_state: st.session_state.simulation_success_pending = False
+if 'incomplete_simulation' not in st.session_state: st.session_state.incomplete_simulation = None
 if 'preferences' not in st.session_state: st.session_state.preferences = {}
 if 'person_preferences' not in st.session_state: st.session_state.person_preferences = {}
 for i in isimler:
@@ -1404,6 +1406,7 @@ sim_clicked = st.session_state.get('run_simulation', False)
 st.session_state.run_simulation = False
 
 if sim_clicked:
+    st.session_state.incomplete_simulation = None
     is_valid, errors, warnings = validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kişi_sayısı)
 
     # Min limit fizibilite kontrolü
@@ -1435,11 +1438,61 @@ if sim_clicked:
             df_preferred
         )
         if _new_schedule is not None:
-            save_undo_state(st.session_state.schedule_bool)
-            st.session_state.schedule_bool = _new_schedule
-            st.session_state.should_regenerate_assignments = True
-            st.session_state.simulation_success_pending = True
-            st.rerun()
+            _missing = missing_shift_coverage(_new_schedule, sutunlar, kişi_sayısı)
+            if _missing:
+                st.session_state.incomplete_simulation = {
+                    "schedule": _new_schedule,
+                    "missing": _missing,
+                    "context": (
+                        yil, ay, tuple(isimler), tuple(sutunlar), kişi_sayısı, min_bosluk,
+                        schedule_fingerprint(df_unwanted), schedule_fingerprint(df_preferred),
+                        tuple(sorted(st.session_state.forbidden_pairs)),
+                        tuple(sorted((p, tuple(sorted(limits.items())))
+                                     for p, limits in st.session_state.get('person_limits', {}).items())),
+                    ),
+                    "previous_fingerprint": schedule_fingerprint(st.session_state.schedule_bool),
+                }
+            else:
+                save_undo_state(st.session_state.schedule_bool)
+                st.session_state.schedule_bool = _new_schedule
+                st.session_state.should_regenerate_assignments = True
+                st.session_state.simulation_success_pending = True
+                st.rerun()
+
+_incomplete = st.session_state.incomplete_simulation
+if _incomplete is not None:
+    _context = (
+        yil, ay, tuple(isimler), tuple(sutunlar), kişi_sayısı, min_bosluk,
+        schedule_fingerprint(df_unwanted), schedule_fingerprint(df_preferred),
+        tuple(sorted(st.session_state.forbidden_pairs)),
+        tuple(sorted((p, tuple(sorted(limits.items())))
+                     for p, limits in st.session_state.get('person_limits', {}).items())),
+    )
+    if (_incomplete["context"] != _context
+            or _incomplete["previous_fingerprint"] != schedule_fingerprint(st.session_state.schedule_bool)):
+        st.session_state.incomplete_simulation = None
+        st.info("Çizelge veya ekip ayarları değiştiği için eksik simülasyon sonucu iptal edildi. Yeniden simülasyon çalıştırın.")
+    else:
+        _missing = _incomplete["missing"]
+        _slots = sum(kişi_sayısı - assigned for _, assigned in _missing)
+        _days = ", ".join(str(gun_detaylari[col]["day_num"]) for col, _ in _missing)
+        st.warning(
+            f"⚠️ Simülasyon tamamlandı ancak {_days}. gün(ler) için toplam {_slots} nöbetçi eksik "
+            f"({len(_missing)} gün). Sonuç kullanıma hazır değil; mevcut çizelge korunuyor. "
+            "Müsaitlik, dinlenme aralığı, yasak çift ve kişi limitlerini gözden geçirip yeniden deneyin."
+        )
+        _decision_cols = st.columns(2)
+        with _decision_cols[0]:
+            if st.button("Mevcut çizelgeyi koru", key="keep_incomplete_simulation"):
+                st.session_state.incomplete_simulation = None
+                st.rerun()
+        with _decision_cols[1]:
+            if st.button("Eksik sonuçla devam et", key="accept_incomplete_simulation"):
+                save_undo_state(st.session_state.schedule_bool)
+                st.session_state.schedule_bool = _incomplete["schedule"]
+                st.session_state.should_regenerate_assignments = True
+                st.session_state.incomplete_simulation = None
+                st.rerun()
 
 # Use the latest schedule state for every calculation below.
 # Grid buttons update schedule_bool and trigger a rerun. Taking this snapshot
@@ -1462,8 +1515,6 @@ for col in sutunlar:
     
     if len(nobetciler) > kişi_sayısı:
         max_person_msg.append(f"🔴 **{gun_no}. Gün**: {len(nobetciler)} kişi atanmış! (Max {kişi_sayısı})")
-    elif len(nobetciler) < kişi_sayısı:
-        min_person_msg.append(f"🟠 **{gun_no}. Gün**: Eksik nöbetçi! ({len(nobetciler)}/{kişi_sayısı} kişi)")
         
     for k in nobetciler:
         if df_unwanted.at[k, col]:
@@ -1480,6 +1531,11 @@ for col in sutunlar:
                 pair = tuple(sorted((nobetciler[i], nobetciler[j])))
                 if pair in st.session_state.forbidden_pairs:
                     forbidden_msg.append(f"🚫 **{gun_no}. Gün**: {nobetciler[i]} ve {nobetciler[j]} birlikte çalışamaz!")
+
+for col, assigned in missing_shift_coverage(edited_df, sutunlar, kişi_sayısı):
+    min_person_msg.append(
+        f"🟠 **{gun_detaylari[col]['day_num']}. Gün**: Eksik nöbetçi! ({assigned}/{kişi_sayısı} kişi)"
+    )
 
 # Kişisel limit ihlali kontrolü
 _pl = st.session_state.get('person_limits', {})

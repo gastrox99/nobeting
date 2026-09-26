@@ -298,6 +298,16 @@ def schedule_fingerprint(schedule):
     return hashlib.sha256(axis + values).hexdigest()
 
 
+def missing_shift_coverage(schedule, columns, required_people):
+    """Gerekli kişi sayısına ulaşmayan günleri (sütun, atanan kişi) olarak döner."""
+    missing = []
+    for column in columns:
+        assigned = int(schedule[column].sum())
+        if assigned < required_people:
+            missing.append((column, assigned))
+    return missing
+
+
 def changed_schedule_columns(previous_schedule, current_schedule):
     """İki çizelge arasındaki değişen gün sütunlarını döner."""
     if (

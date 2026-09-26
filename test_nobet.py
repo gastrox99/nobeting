@@ -27,6 +27,7 @@ from nobet_core import (
     get_preference_grid_state,
     normalize_preference_grid,
     run_scheduling_core,
+    missing_shift_coverage,
     schedule_fingerprint,
     synchronize_changed_role_rows,
     use_compact_schedule_editor,
@@ -657,6 +658,27 @@ class TestRunSchedulingCore(unittest.TestCase):
         for col in sutunlar:
             assigned = schedule[col].sum()
             self.assertEqual(assigned, 2, f"{col} gününde {assigned} kişi atandı, beklenen 2")
+
+    def test_eksik_simulasyon_sonucu_gun_ve_kisi_sayisiyla_saptanir(self):
+        isimler, sutunlar, df_unwanted, gun_detaylari, _ = self._build_test_env(
+            gun_sayisi=3
+        )
+        df_unwanted.loc[:, sutunlar[0]] = True
+        schedule, _ = run_scheduling_core(
+            isimler, sutunlar, df_unwanted, gun_detaylari,
+            min_bosluk=0, kisi_sayisi=2, simulation_count=3
+        )
+        self.assertEqual(missing_shift_coverage(schedule, sutunlar, 2), [(sutunlar[0], 0)])
+
+    def test_eksik_kapsama_kismi_atamayi_da_saptar(self):
+        schedule = pd.DataFrame({
+            "G1": [True, False, False],
+            "G2": [True, True, False],
+            "G3": [False, False, False],
+        }, index=["Ali", "Ayşe", "Can"])
+        self.assertEqual(missing_shift_coverage(schedule, list(schedule.columns), 2),
+                         [("G1", 1), ("G3", 0)])
+        self.assertEqual(missing_shift_coverage(schedule, ["G2"], 2), [])
 
     def test_yasak_cift_atanmasin(self):
         isimler = ["Ali", "Ayşe", "Mehmet", "Fatma", "Can", "Zeynep"]
