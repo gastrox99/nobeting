@@ -8,3 +8,4 @@ openpyxl
 xlsxwriter
 streamlit-aggrid
 streamlit-local-storage
+playwright

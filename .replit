@@ -4,7 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "pkg-config", "qhull", "tcl", "tk"]
+packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "gitFull", "glibcLocales", "gobject-introspection", "gtk3", "pkg-config", "playwright-driver", "qhull", "tcl", "tk"]
 
 [workflows]
 runButton = "Project"
@@ -21,6 +21,10 @@ args = "Streamlit App"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "unit-tests"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "browser-tests"
 
 [[workflows.workflow]]
 name = "Streamlit App"
@@ -41,6 +45,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python -m pytest test_nobet.py -v --tb=short"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "browser-tests"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -m pytest test_browser_nobet.py -v --tb=short"
 
 [workflows.workflow.metadata]
 isValidation = true
