@@ -19,6 +19,8 @@ from nobet_core import (
     validate_inputs,
     parse_forbidden_pairs,
     parse_person_limits,
+    parse_person_limits_with_issues,
+    unknown_names,
     restore_auto_saved_schedule,
     build_gun_detaylari,
     build_schedule_analysis,
@@ -557,44 +559,50 @@ class TestBuildGunDetaylari(unittest.TestCase):
         result = build_gun_detaylari(2025, 1, 31, [])
         self.assertEqual(len(result), 31)
 
-    def test_tatil_gunleri_dahil_degil(self):
+    def test_tatiller_nobet_gunu_olarak_isaretlenir(self):
+        # Uygulamada tatillerde de nöbet tutulur; gün çıkarılmaz, işaretlenir.
         result = build_gun_detaylari(2025, 1, 31, [1, 2, 3])
-        self.assertEqual(len(result), 28)
-        self.assertNotIn("G01", result)
+        self.assertEqual(len(result), 31)
+        self.assertTrue(result["1 Çar"]["holiday"])
+        self.assertFalse(result["4 Cmt"]["holiday"])
+
+    def test_anahtarlar_uygulamadaki_sutun_adlari(self):
+        result = build_gun_detaylari(2025, 1, 31, [])
+        self.assertEqual(list(result)[:3], ["1 Çar", "2 Per", "3 Cum"])
 
     def test_hafta_sonu_tespiti(self):
         # 2025 Ocak 4 = Cumartesi
         result = build_gun_detaylari(2025, 1, 31, [])
-        self.assertTrue(result["G04"]["weekend"])  # Cumartesi
+        self.assertTrue(result["4 Cmt"]["weekend"])  # Cumartesi
 
     def test_hafta_ici_tespiti(self):
         # 2025 Ocak 6 = Pazartesi
         result = build_gun_detaylari(2025, 1, 31, [])
-        self.assertFalse(result["G06"]["weekend"])  # Pazartesi
+        self.assertFalse(result["6 Pzt"]["weekend"])  # Pazartesi
 
     def test_gun_numarasi_dogru(self):
         result = build_gun_detaylari(2025, 1, 31, [])
-        self.assertEqual(result["G15"]["day_num"], 15)
+        self.assertEqual(result["15 Çar"]["day_num"], 15)
 
     def test_tarih_string_formatli(self):
         result = build_gun_detaylari(2025, 1, 31, [])
-        self.assertIn("Oca", result["G01"]["full_date"])
+        self.assertEqual(result["1 Çar"]["full_date"], "01.01.2025 Çar")
 
     def test_ayni_hafta_sonu_ayni_week(self):
         # Cmt ve Paz aynı hafta sonu -> aynı 'week' değeri olmalı
         result = build_gun_detaylari(2025, 1, 31, [])
-        self.assertEqual(result["G04"]["week"], result["G05"]["week"])  # 4 Cmt, 5 Paz
+        self.assertEqual(result["4 Cmt"]["week"], result["5 Paz"]["week"])
 
     def test_ardisik_hafta_sonu_week_farki_bir(self):
         # Ardışık hafta sonları tam olarak 1 fark etmeli
         result = build_gun_detaylari(2025, 1, 31, [])
-        self.assertEqual(result["G11"]["week"] - result["G04"]["week"], 1)  # 4 Cmt -> 11 Cmt
+        self.assertEqual(result["11 Cmt"]["week"] - result["4 Cmt"]["week"], 1)
 
     def test_yil_siniri_week_monoton(self):
         # Ocak 2022: 1 Cmt (ISO hafta 52/2021), 8 Cmt (ISO hafta 1/2022)
         # ISO hafta numarası kullanılsaydı 52 -> 1 olur, +1 mantığı kırılırdı.
         result = build_gun_detaylari(2022, 1, 31, [])
-        self.assertEqual(result["G08"]["week"] - result["G01"]["week"], 1)
+        self.assertEqual(result["8 Cmt"]["week"] - result["1 Cmt"]["week"], 1)
 
 
 # ------------------------------------------------------------------------------
@@ -1034,6 +1042,36 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+class TestSharedCoreFunctions(unittest.TestCase):
+    def test_limit_sorunlari_kullaniciya_gosterilmek_uzere_ayrilir(self):
+        limits, invalid, errors = parse_person_limits_with_issues(
+            "Ali:2-5\nbozuk satır\nAyşe:-1-3\nMehmet:6-2\n:1-2\nFatma:x-3"
+        )
+        self.assertEqual(limits, {"Ali": {"min": 2, "max": 5}})
+        self.assertEqual(invalid, ["bozuk satır", ":1-2", "Fatma:x-3"])
+        self.assertEqual(len(errors), 2)
+        self.assertIn("negatif", errors[0])
+        self.assertIn("min (6) > max (2)", errors[1])
+
+    def test_ekipte_olmayan_isimler(self):
+        self.assertEqual(unknown_names(["Zeynep", "Ali", "Zeynep", "Can"], ["Ali"]), ["Can", "Zeynep"])
+
+    def test_yazdirma_cizelge_ve_ozet_tablosunu_icerir(self):
+        df_liste = pd.DataFrame({"Tarih": ["04.01.2025 Cmt"], "Görev1": ["Ali"]})
+        df_stats = pd.DataFrame({"Toplam": [1]}, index=["Ali"])
+        html = create_print_html(df_liste, df_stats, 2025, 1)
+        self.assertIn("Nöbet Yükü Özeti", html)
+        self.assertIn("class='weekend'", html)
+
+    def test_uygulama_kopya_fonksiyon_tanimlamaz(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        for name in ("escape_html", "parse_unwanted_days", "validate_inputs", "create_print_html"):
+            self.assertNotIn(f"\ndef {name}(", source, f"{name} nobet_core'dan alınmalı")
+        self.assertIn("build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)", source)
+        self.assertIn("parse_person_limits_with_issues(limits_text)", source)
+        self.assertIn("parse_forbidden_pairs(forbidden_input)", source)
+
 
 class TestAssignmentWarnings(unittest.TestCase):
     def setUp(self):

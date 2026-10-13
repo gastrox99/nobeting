@@ -11,13 +11,20 @@ import numpy as np
 import time
 import json
 import os
-from html import escape as _escape_html
 from db import (
     init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
     save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
 )
 from streamlit_local_storage import LocalStorage
 from nobet_core import (
+    TR_GUN_KISA,
+    build_gun_detaylari,
+    create_print_html,
+    escape_html,
+    parse_forbidden_pairs,
+    parse_person_limits_with_issues,
+    unknown_names,
+    validate_inputs,
     normalize_owner_email,
     apply_app_settings,
     assignment_warnings,
@@ -271,74 +278,7 @@ if AUTH_ENABLED:
         st.button("Çıkış yap", on_click=st.logout, width="stretch")
 
 # --- YARDIMCI FONKSİYONLAR ---
-def escape_html(value):
-    """Convert any displayed value to safe HTML text."""
-    return _escape_html(str(value), quote=True)
-
-def parse_unwanted_days(text_input, max_day):
-    if not text_input or pd.isna(text_input): return []
-    days = set()
-    parts = str(text_input).split(',')
-    for part in parts:
-        part = part.strip()
-        if not part: continue
-        try:
-            if '-' in part:
-                start, end = map(int, part.split('-'))
-                start = max(1, start); end = min(max_day, end)
-                if start <= end: days.update(range(start, end + 1))
-            else:
-                d = int(part)
-                if 1 <= d <= max_day: days.add(d)
-        except ValueError: continue
-    return list(days)
-
-# --- VALIDATION ---
-def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, min_bosluk, kisi_sayisi=2):
-    """Validate all inputs and return (is_valid, errors, warnings)"""
-    errors = []
-    warnings = []
-    
-    # Team validation
-    if not isimler or len(isimler) == 0:
-        errors.append("❌ En az 1 kişi ekleyin")
-    elif len(isimler) > 50:
-        errors.append("❌ Maksimum 50 kişi ekleyebilirsiniz")
-    
-    # Check for duplicate names
-    if len(isimler) != len(set(isimler)):
-        errors.append("❌ Aynı isimde 2 kişi olamaz")
-    
-    # Pay validation
-    if nobet_ucreti < 0:
-        errors.append("❌ Saatlik ücret negatif olamaz")
-    elif nobet_ucreti == 0:
-        warnings.append("⚠️ Saatlik ücret 0 TL")
-    
-    # Holiday validation
-    invalid_holidays = [h for h in tatil_gunleri if h < 1 or h > gun_sayisi]
-    if invalid_holidays:
-        errors.append(f"❌ Geçersiz tatil günleri: {invalid_holidays}")
-    
-    # Rest period validation
-    if min_bosluk < 0 or min_bosluk > 7:
-        errors.append("❌ Dinlenme süresi 0-7 gün arasında olmalı")
-    
-    # Feasibility warnings
-    working_days = gun_sayisi - len(tatil_gunleri)
-    total_positions_needed = working_days * kisi_sayisi
-    team_size = len(isimler)
-    
-    if team_size < kisi_sayisi:
-        errors.append(f"❌ {kisi_sayisi} kişi nöbet için en az {kisi_sayisi} kişi gerekli")
-    elif team_size > 0 and total_positions_needed > team_size * 30:
-        avg_per_person = total_positions_needed / team_size
-        warnings.append(f"⚠️ Her kişiye ortalama {avg_per_person:.1f} nöbet düşecek (çok fazla)")
-    elif team_size > 0 and total_positions_needed < team_size:
-        warnings.append(f"⚠️ Nöbetleri dağıtmak için çok fazla kişi var ({team_size} kişi, {total_positions_needed} pozisyon)")
-    
-    return len(errors) == 0, errors, warnings
-
+# escape_html, validate_inputs ve create_print_html nobet_core'dan gelir.
 def convert_df_to_png(df):
     fig, ax = plt.subplots(figsize=(8, len(df) * 0.4 + 1))
     try:
@@ -407,59 +347,6 @@ def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance, yil=None):
             worksheet.set_column(f'A:{last_col}', 15)
     
     return output.getvalue()
-
-def create_print_html(df_liste, df_stats_load, yil, ay):
-    """Create print-friendly HTML"""
-    ay_isimleri = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran",
-                   7:"Temmuz", 8:"Ağustos", 9:"Eylül", 10:"Ekim", 11:"Kasım", 12:"Aralık"}
-    
-    html = f"""
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Nöbet Listesi - {escape_html(ay_isimleri[ay])} {yil}</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; padding: 20px; }}
-            h1 {{ text-align: center; color: #333; }}
-            table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
-            th {{ background-color: #4CAF50; color: white; }}
-            tr:nth-child(even) {{ background-color: #f2f2f2; }}
-            .weekend {{ background-color: #e3f2fd !important; }}
-            @media print {{
-                body {{ margin: 0; }}
-                button {{ display: none; }}
-            }}
-        </style>
-    </head>
-    <body>
-        <h1>Nöbet Listesi - {escape_html(ay_isimleri[ay])} {yil}</h1>
-        <table>
-            <tr>{''.join(f'<th>{escape_html(col)}</th>' for col in df_liste.columns)}</tr>
-    """
-    
-    for _, row in df_liste.iterrows():
-        css_class = 'weekend' if 'Cmt' in str(row.get('Tarih', '')) or 'Paz' in str(row.get('Tarih', '')) else ''
-        html += f"<tr class='{css_class}'>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
-    
-    html += """
-        </table>
-        <h2>Nöbet Yükü Özeti</h2>
-        <table>
-            <tr><th>İsim</th>""" + ''.join(f'<th>{escape_html(col)}</th>' for col in df_stats_load.columns) + "</tr>"
-    
-    for idx, row in df_stats_load.iterrows():
-        html += f"<tr><td><strong>{escape_html(idx)}</strong></td>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
-    
-    html += """
-        </table>
-        <p style="text-align: center; color: #666; margin-top: 30px;">
-            Oluşturulma: """ + datetime.now().strftime("%d.%m.%Y %H:%M") + """
-        </p>
-    </body>
-    </html>
-    """
-    return html
 
 def _current_state_snapshot():
     """Geri al/yinele için hem nöbet hem tercih hem de görev yeri atamalarını kaydeder."""
@@ -623,76 +510,24 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         )
         st.session_state.limits_text = limits_text
     
-    # Parse forbidden pairs
-    forbidden_pairs = set()
-    _fp_unknown = []
-    if forbidden_input.strip():
-        all_pairs = []
-        for line in forbidden_input.strip().split('\n'):
-            all_pairs.extend(line.split(','))
-        for pair_str in all_pairs:
-            pair_str = pair_str.strip()
-            if '-' in pair_str:
-                parts = pair_str.split('-', 1)
-                if len(parts) == 2:
-                    p1, p2 = parts[0].strip(), parts[1].strip()
-                    if p1 and p2:
-                        forbidden_pairs.add(tuple(sorted((p1, p2))))
-                        for _n in (p1, p2):
-                            if _n and _n not in isimler:
-                                _fp_unknown.append(_n)
+    # Yasak çiftler ve kişisel limitler (ayrıştırma nobet_core'da, test edilir)
+    forbidden_pairs = parse_forbidden_pairs(forbidden_input)
+    _fp_unknown = unknown_names([name for pair in forbidden_pairs for name in pair], isimler)
     st.session_state.forbidden_pairs = forbidden_pairs
-    st.session_state.fp_unknown_names = sorted(set(_fp_unknown))
+    st.session_state.fp_unknown_names = _fp_unknown
     if _fp_unknown:
-        st.warning(f"⚠️ Yasak çiftte ekip listesinde olmayan isim(ler): **{', '.join(sorted(set(_fp_unknown)))}** — kısıtlama uygulanmayacak.")
+        st.warning(f"⚠️ Yasak çiftte ekip listesinde olmayan isim(ler): **{', '.join(_fp_unknown)}** — kısıtlama uygulanmayacak.")
 
-    # Parse limits
-    person_limits = {}
-    _lim_unknown = []
-    _lim_invalid_lines = []
-    _lim_errors = []
-    if limits_text.strip():
-        for line in limits_text.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            if ':' not in line:
-                _lim_invalid_lines.append(line)
-                continue
-            name_part, _, range_part = line.partition(':')
-            name = name_part.strip()
-            range_part = range_part.strip()
-            if not name:
-                _lim_invalid_lines.append(line)
-                continue
-            if '-' not in range_part:
-                _lim_invalid_lines.append(line)
-                continue
-            try:
-                # rsplit so that a negative min like "-1-10" is handled correctly
-                min_str, max_str = range_part.rsplit('-', 1)
-                min_val = int(min_str)
-                max_val = int(max_str)
-            except ValueError:
-                _lim_invalid_lines.append(line)
-                continue
-            # Semantic validation
-            if min_val < 0 or max_val < 0:
-                _lim_errors.append(f"**{name}**: negatif değer ({range_part}) — atlandı")
-            elif min_val > max_val:
-                _lim_errors.append(f"**{name}**: min ({min_val}) > max ({max_val}) — atlandı")
-            else:
-                person_limits[name] = {'min': min_val, 'max': max_val}
-                if name not in isimler:
-                    _lim_unknown.append(name)
+    person_limits, _lim_invalid_lines, _lim_errors = parse_person_limits_with_issues(limits_text)
+    _lim_unknown = unknown_names(person_limits, isimler)
     st.session_state.person_limits = person_limits
-    st.session_state.lim_unknown_names = sorted(set(_lim_unknown))
+    st.session_state.lim_unknown_names = _lim_unknown
     if _lim_errors:
         st.error("❌ Geçersiz limit değerleri:\n" + "\n".join(_lim_errors))
     if _lim_invalid_lines:
         st.warning(f"⚠️ {len(_lim_invalid_lines)} satır geçersiz format (doğru format: `İsim:min-max`) — atlandı.")
     if _lim_unknown:
-        st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(sorted(set(_lim_unknown)))}** — limit uygulanmayacak.")
+        st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(_lim_unknown)}** — limit uygulanmayacak.")
 
 # Ekip ve ayarlar değiştiyse veritabanına yaz (sayfa yenilenince geri gelir).
 _current_settings = collect_app_settings(st.session_state)
@@ -710,26 +545,10 @@ if (
 if not isimler: st.stop()
 
 # --- GÜN VERİLERİ ---
-sutunlar = [] 
-gun_detaylari = {} 
-ozel_gun_sayisi = 0
-tr_gunler = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
-sutunlar_display = []
-
-for g in range(1, gun_sayisi + 1):
-    dt = date(yil, ay, g)
-    baslik = f"{g} {tr_gunler[dt.weekday()]}"
-    sutunlar.append(baslik)
-    is_we = dt.weekday() >= 5
-    is_hol = g in tatil_gunleri
-    if is_we or is_hol: ozel_gun_sayisi += 1
-    full_d = dt.strftime("%d.%m.%Y") + " " + tr_gunler[dt.weekday()]
-    week_val = (dt.toordinal() - dt.weekday()) // 7
-    gun_detaylari[baslik] = {"weekend": is_we, "holiday": is_hol, "day_num": g, "full_date": full_d, "week": week_val}
-    disp = str(g)
-    if is_hol: disp = f"🚨 {g}"
-    elif is_we: disp = f"🏖️ {g}"
-    sutunlar_display.append(disp)
+tr_gunler = TR_GUN_KISA
+gun_detaylari = build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)
+sutunlar = list(gun_detaylari)
+ozel_gun_sayisi = sum(1 for _d in gun_detaylari.values() if _d["weekend"] or _d["holiday"])
 
 calisma_gunu = gun_sayisi - ozel_gun_sayisi
 zorunlu_saat = calisma_gunu * 8
