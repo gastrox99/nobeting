@@ -14,7 +14,7 @@ import os
 from html import escape as _escape_html
 from db import (
     init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
-    save_app_settings, load_app_settings, claim_legacy_data,
+    save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
 )
 from streamlit_local_storage import LocalStorage
 from nobet_core import (
@@ -52,18 +52,30 @@ try:
 except ImportError:
     EXCEL_AVAILABLE = False
 
-# Initialize database once per server session (not on every rerun)
+# Veritabanını sunucu başına bir kez hazırla; başarısızsa sonucu kalıcı
+# saklama (eskiden "bağlanamadım" önbellekte kalıyor, Secrets'a adres
+# eklense bile yeniden başlatmaya kadar uyarı sürüyordu). Her yeni
+# oturumda bir kez yeniden denenir.
 @st.cache_resource
-def _init_db_once():
-    return init_db()
+def _db_init_state():
+    return {"ready": False, "error": None}
 
-_db_ready = _init_db_once()
+_db_state = _db_init_state()
+if not _db_state["ready"] and not st.session_state.get("_db_init_attempted"):
+    st.session_state["_db_init_attempted"] = True
+    _db_state["ready"] = init_db()
+    _db_state["error"] = get_last_error()
+_db_ready = _db_state["ready"]
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Adil Nöbet", layout="wide")
 
 if not _db_ready:
-    st.warning("⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt özellikleri şu an çalışmayabilir.")
+    _db_reason = f" Sebep: {_db_state['error']}" if _db_state.get("error") else ""
+    st.warning(
+        "⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt "
+        f"özellikleri şu an çalışmayabilir.{_db_reason}"
+    )
 
 # --- GOOGLE İLE GİRİŞ (isteğe bağlı) ---
 # .streamlit/secrets.toml içinde [auth] ayarları varsa giriş zorunludur ve her

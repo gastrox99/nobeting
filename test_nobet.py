@@ -1295,6 +1295,38 @@ class TestSwitchSchedulePeriod(unittest.TestCase):
         self.assertIn("st.session_state.loaded_period = (yil, ay)", source)
 
 
+class TestDatabaseConnectionDiagnostics(unittest.TestCase):
+    def test_adres_yoksa_sebep_aciklanir(self):
+        with patch.object(db, "_database_url", return_value=None):
+            self.assertFalse(db.init_db())
+        self.assertIn("DATABASE_URL tanımlı değil", db.get_last_error())
+
+    def test_baglanti_hatasi_sifresiz_gosterilir(self):
+        error = RuntimeError(
+            "could not connect to postgresql://neondb_owner:cokgizli@ep-x.neon.tech/neondb\nDETAIL: x"
+        )
+        with patch.object(db, "_database_url", return_value="postgresql://u:p@h/db"), \
+                patch.object(db.psycopg2, "connect", side_effect=error):
+            self.assertFalse(db.init_db())
+        reason = db.get_last_error()
+        self.assertNotIn("cokgizli", reason)
+        self.assertIn("neondb_owner:***@ep-x.neon.tech", reason)
+        self.assertNotIn("DETAIL", reason)
+
+    def test_adres_her_baglantida_okunur(self):
+        cursor = _FakeDbCursor()
+        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://yeni"}), \
+                patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)) as connect:
+            self.assertTrue(db.init_db())
+        self.assertEqual(connect.call_args[0][0], "postgresql://yeni")
+        self.assertIsNone(db.get_last_error())
+
+    def test_basarisiz_baglanti_kalici_onbelleklenmez(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertNotIn("def _init_db_once", source)
+        self.assertIn('if not _db_state["ready"] and not st.session_state.get("_db_init_attempted")', source)
+
+
 class TestSchedulePersistence(unittest.TestCase):
     def test_load_db_hatasi_istenirse_yukari_tasinir(self):
         with patch.object(
