@@ -91,7 +91,7 @@ st.markdown("""
     [data-testid="stExpander"] [data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
     }
-    [data-testid="stExpander"] [data-testid="column"] {
+    [data-testid="stExpander"] :is([data-testid="column"],[data-testid="stColumn"]) {
         flex: 1 1 100% !important;
         min-width: 100% !important;
     }
@@ -105,9 +105,12 @@ st.markdown("""
         flex-wrap: nowrap !important;
         min-width: max-content;
     }
-    .st-key-schedule-grid [data-testid="column"] {
+    .st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]) {
         flex-shrink: 0 !important;
-        min-width: 32px !important;
+        min-width: 44px !important;
+    }
+    .st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+        min-width: 112px !important;
     }
     
     /* Make buttons smaller on mobile */
@@ -144,11 +147,11 @@ st.markdown("""
         flex-wrap: nowrap !important;
         min-width: max-content;
     }
-    .st-key-preference-grid [data-testid="column"] {
+    .st-key-preference-grid :is([data-testid="column"],[data-testid="stColumn"]) {
         flex-shrink: 0 !important;
         min-width: 44px !important;
     }
-    .st-key-preference-grid [data-testid="column"]:first-child {
+    .st-key-preference-grid :is([data-testid="column"],[data-testid="stColumn"]):first-child {
         min-width: 112px !important;
     }
 
@@ -156,7 +159,7 @@ st.markdown("""
     .st-key-preference-legend [data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
     }
-    .st-key-preference-legend [data-testid="column"] {
+    .st-key-preference-legend :is([data-testid="column"],[data-testid="stColumn"]) {
         flex: 1 1 25% !important;
         min-width: 25% !important;
     }
@@ -164,7 +167,7 @@ st.markdown("""
 
 /* Tablet adjustments */
 @media (max-width: 1024px) and (min-width: 769px) {
-    [data-testid="stExpander"] [data-testid="column"] {
+    [data-testid="stExpander"] :is([data-testid="column"],[data-testid="stColumn"]) {
         flex: 1 1 45% !important;
         min-width: 45% !important;
     }
@@ -878,32 +881,32 @@ with tab_grid:
         _is_today = (date(yil, ay, _info['day_num']) == today_date)
         if _is_today:
             col_bg_css_parts.append(
-                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > :is([data-testid='column'],[data-testid='stColumn']):nth-child({_idx})"
                 f"{{ background:rgba(254,243,199,0.75)!important; border-radius:6px; outline:2px solid #f59e0b; }}"
             )
         elif _info['holiday']:
             col_bg_css_parts.append(
-                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > :is([data-testid='column'],[data-testid='stColumn']):nth-child({_idx})"
                 f"{{ background:rgba(254,226,226,0.55)!important; border-radius:6px; }}"
             )
         elif _info['weekend']:
             col_bg_css_parts.append(
-                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > [data-testid='column']:nth-child({_idx})"
+                f"{grid_css_selector} [data-testid='stHorizontalBlock'] > :is([data-testid='column'],[data-testid='stColumn']):nth-child({_idx})"
                 f"{{ background:rgba(219,234,254,0.5)!important; border-radius:6px; }}"
             )
     col_bg_css = "\n".join(col_bg_css_parts)
 
     st.markdown(f"""
 <style>
-.st-key-schedule-grid [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1),
-.st-key-preference-grid [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1) {{
+.st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1),
+.st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
     background: #f8fafc !important;
     border-right: 2px solid #e2e8f0;
     min-width: 80px;
 }}
 {col_bg_css}
-.st-key-schedule-grid div[data-testid="column"],
-.st-key-preference-grid div[data-testid="column"] {{ padding: 0 1px !important; }}
+.st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]),
+.st-key-preference-grid :is([data-testid="column"],[data-testid="stColumn"]) {{ padding: 0 1px !important; }}
 .st-key-schedule-grid .stButton > button,
 .st-key-preference-grid .stButton > button {{
     padding: 0px !important;
@@ -925,35 +928,35 @@ with tab_grid:
     z-index: 20;
     position: relative;
 }}
-.st-key-preference-grid .preference-state {{
+:is(.st-key-preference-grid, .st-key-schedule-grid) .preference-state {{
     display: none !important;
 }}
-.st-key-preference-grid .stButton > button {{
+:is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button {{
     color: #ffffff !important;
     border-width: 2px !important;
     font-weight: 800 !important;
 }}
-.st-key-preference-grid [data-testid="column"]:has(.preference-state-0) .stButton > button {{
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-0) .stButton > button {{
     background: #475569 !important;
     border-color: #334155 !important;
 }}
-.st-key-preference-grid [data-testid="column"]:has(.preference-state-1) .stButton > button {{
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-1) .stButton > button {{
     background: #166534 !important;
     border-color: #14532d !important;
 }}
-.st-key-preference-grid [data-testid="column"]:has(.preference-state-2) .stButton > button {{
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-2) .stButton > button {{
     background: #92400e !important;
     border-color: #78350f !important;
 }}
-.st-key-preference-grid [data-testid="column"]:has(.preference-state-3) .stButton > button {{
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-3) .stButton > button {{
     background: #991b1b !important;
     border-color: #7f1d1d !important;
 }}
-.st-key-preference-grid [data-testid="column"]:has(.preference-state-conflict) .stButton > button {{
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-conflict) .stButton > button {{
     background: #7f1d1d !important;
     border-color: #450a0a !important;
 }}
-.st-key-preference-grid .stButton > button:focus-visible {{
+:is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button:focus-visible {{
     outline: 3px solid #0f172a !important;
     outline-offset: 2px;
 }}
@@ -962,7 +965,7 @@ with tab_grid:
      * This must follow the shared grid-button rule above. Otherwise its
      * min-height:30px declaration wins in the mobile cascade.
      */
-    .st-key-preference-grid .stButton > button {{
+    :is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button {{
         min-width: 44px !important;
         min-height: 44px !important;
         width: 44px !important;
@@ -971,7 +974,7 @@ with tab_grid:
         font-weight: 800 !important;
         border-radius: 7px !important;
     }}
-    .st-key-preference-grid .stButton > button:hover {{
+    :is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button:hover {{
         transform: none !important;
     }}
 }}
