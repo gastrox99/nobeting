@@ -138,16 +138,34 @@ def test_manual_assignment_updates_visible_total_without_simulation(app_url):
         finally:
             browser.close()
 
-def _open_app(playwright, app_url, team):
+def _open_app(playwright, app_url, team, color_scheme="light"):
     browser_path = os.environ.get("CHROMIUM_EXECUTABLE") or shutil.which("chromium")
     browser = playwright.chromium.launch(headless=True, executable_path=browser_path, args=["--no-sandbox"])
-    page = browser.new_context(viewport={"width": 1600, "height": 1000}).new_page()
+    page = browser.new_context(viewport={"width": 1600, "height": 1000}, color_scheme=color_scheme).new_page()
     page.goto(app_url)
-    box = page.get_by_role("textbox", name="👥 Ekip (virgülle ayırın):")
-    box.fill(team)
-    box.press("Tab")
+    _set_team(page, team)
     page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
     return browser, page
+
+
+def _settings_box(page, role, name):
+    """Ayarlar paneli ekip girilince kapanır; gerekirse açıp alanı döndür."""
+    box = page.get_by_role(role, name=name)
+    if not box.is_visible():
+        page.get_by_text("⚙️ Ayarlar").click()
+    box.wait_for()
+    return box
+
+
+def _set_team(page, team):
+    box = _settings_box(page, "textbox", "👥 Ekip (virgülle ayırın):")
+    box.fill(team)
+    box.press("Tab")
+
+
+def _no_exception(page):
+    assert page.locator("[data-testid='stException']").count() == 0, \
+        page.locator("[data-testid='stException']").first.inner_text()
 
 
 def _wait_idle(page, seconds=3.0):
@@ -214,10 +232,58 @@ def test_isim_duzeltilince_nobetler_korunur(app_url):
             first.click()
             first.get_by_text("✓").wait_for()
             _wait_idle(page)
-            box = page.get_by_role("textbox", name="👥 Ekip (virgülle ayırın):")
-            box.fill("Rename Ali Can, Rename Ayşe")
-            box.press("Tab")
+            _set_team(page, "Rename Ali Can, Rename Ayşe")
             _wait_idle(page)
+            _no_exception(page)
             assert _day_button(page, "Rename Ali Can", 0).inner_text() == "✓"
+        finally:
+            browser.close()
+
+
+def test_simulasyon_takvim_ve_analiz_karanlik_modda_hatasiz(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Sim Ali, Sim Ayşe, Sim Can, Sim Deniz, Sim Ece",
+                                  color_scheme="dark")
+        try:
+            page.get_by_role("button", name="⚡ Simülasyon").click()
+            _wait_idle(page)
+            _no_exception(page)
+            page.get_by_role("tab", name="📅 Takvim Görünümü").click()
+            page.get_by_text("Tüm ekip gösteriliyor").click()
+            page.get_by_role("option", name="Sim Ali").click()
+            page.get_by_text("Tercih Başarısı").wait_for()
+            _wait_idle(page)
+            _no_exception(page)
+            page.get_by_role("tab", name="📊 Analiz").click()
+            _no_exception(page)
+        finally:
+            browser.close()
+
+
+def test_ayni_gorev_adi_numaralanir_ve_uzak_yil_secilir(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Rol Ali, Rol Ayşe, Rol Can")
+        try:
+            roles = _settings_box(page, "textbox", "🏷️ Görev İsimleri:")
+            roles.fill("AYB, AYB")
+            roles.press("Enter")
+            page.get_by_text("AYB → AYB 2").wait_for()
+            year = _settings_box(page, "spinbutton", "📅 Yıl")
+            year.fill("2031")
+            year.press("Enter")
+            _wait_idle(page)
+            _no_exception(page)
+        finally:
+            browser.close()
+
+
+def test_buyuk_ekip_hizli_duzenleme_modunda_acilir(app_url):
+    team = ", ".join(f"Büyük {i}" for i in range(20))
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, team)
+        try:
+            page.get_by_text("hızlı düzenleme modunda").wait_for()
+            _wait_idle(page)
+            _no_exception(page)
         finally:
             browser.close()
