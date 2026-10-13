@@ -21,6 +21,7 @@ from nobet_core import (
     parse_person_limits,
     parse_person_limits_with_issues,
     unknown_names,
+    apply_role_edits,
     previous_period,
     last_shift_offsets,
     special_shift_counts,
@@ -228,11 +229,12 @@ class TestValidateInputs(unittest.TestCase):
         self.assertTrue(is_valid)
         self.assertEqual(errors, [])
 
-    def test_tekrarlanan_tatil_fizibiliteyi_iki_kez_etkilemez(self):
+    def test_tatiller_nobet_gunu_sayilir_ve_tekrar_etkilemez(self):
+        # Tatillerde de nöbet tutulur: 2 gün x 2 kişi = 4 pozisyon, tatil sayısından bağımsız.
         is_valid, errors, warnings = validate_inputs(
             **self._base_params(
                 isimler=["Ali", "Ayşe", "Mehmet", "Fatma", "Can"],
-                gun_sayisi=3,
+                gun_sayisi=2,
                 tatil_gunleri=[1, 1],
             )
         )
@@ -240,6 +242,19 @@ class TestValidateInputs(unittest.TestCase):
         self.assertTrue(is_valid)
         self.assertEqual(errors, [])
         self.assertTrue(any("4 pozisyon" in warning for warning in warnings))
+
+    def test_dinlenme_kapasitesi_yetmezse_uyarir(self):
+        # 3 kişi, 1 gün dinlenme: kişi başı en fazla 15 nöbet -> 45 < 60
+        _, errors, warnings = validate_inputs(
+            **self._base_params(isimler=["Ali", "Ayşe", "Can"], gun_sayisi=30, min_bosluk=1)
+        )
+        self.assertEqual(errors, [])
+        self.assertTrue(any("en fazla 45 nöbet" in w and "60 nöbet" in w for w in warnings))
+
+        _, _, warnings = validate_inputs(
+            **self._base_params(isimler=["Ali", "Ayşe", "Can", "Deniz"], gun_sayisi=30, min_bosluk=1)
+        )
+        self.assertFalse(any("dinlenme kuralıyla" in w for w in warnings))
 
     def test_yetersiz_ekip(self):
         is_valid, errors, _ = validate_inputs(**self._base_params(isimler=["Ali"], kisi_sayisi=2))
@@ -1048,6 +1063,62 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+class TestAlgorithmFixes(unittest.TestCase):
+    def setUp(self):
+        self.days = build_gun_detaylari(2026, 11, 30, [])
+        self.cols = list(self.days)
+
+    def test_tek_kisi_musaitse_gun_bos_kalmaz(self):
+        names = ["Ali", "Ayşe", "Can", "Deniz"]
+        unwanted = pd.DataFrame(False, index=names, columns=self.cols)
+        unwanted.loc[["Ayşe", "Can", "Deniz"], self.cols[9]] = True
+        random.seed(1)
+        schedule, _ = run_scheduling_core(names, self.cols, unwanted, self.days, 1, 2, simulation_count=20)
+        self.assertEqual(schedule.index[schedule[self.cols[9]]].tolist(), ["Ali"])
+        self.assertEqual(missing_shift_coverage(schedule, self.cols, 2), [(self.cols[9], 1)])
+
+    def test_minimum_limit_saglanir(self):
+        names = ["Ali", "Ayşe", "Can", "Deniz"]
+        unwanted = pd.DataFrame(False, index=names, columns=self.cols)
+        for seed in range(3):
+            random.seed(seed)
+            schedule, _ = run_scheduling_core(
+                names, self.cols, unwanted, self.days, 0, 2, simulation_count=50,
+                person_limits={"Ali": {"min": 18, "max": 999}},
+            )
+            self.assertGreaterEqual(int(schedule.loc["Ali"].sum()), 18)
+
+    def test_gorev_duzenleme_yer_degistirir(self):
+        row = {"Tarih": "01.11.2026 Paz", "AYB": "Ali", "Acil Servis": "Ayşe"}
+        roles = ["AYB", "Acil Servis"]
+        new_row, changed = apply_role_edits(row, {"AYB": "Ayşe", "Acil Servis": "Ayşe"}, roles, ["Ali", "Ayşe"])
+        self.assertTrue(changed)
+        self.assertEqual((new_row["AYB"], new_row["Acil Servis"]), ("Ayşe", "Ali"))
+        # İki hücreyi birden çapraz yazmak da aynı sonucu verir.
+        new_row, _ = apply_role_edits(row, {"AYB": "Ayşe", "Acil Servis": "Ali"}, roles, ["Ali", "Ayşe"])
+        self.assertEqual((new_row["AYB"], new_row["Acil Servis"]), ("Ayşe", "Ali"))
+        # O gün nöbeti olmayan isim yok sayılır.
+        same, changed = apply_role_edits(row, {"AYB": "Can", "Acil Servis": "Ayşe"}, roles, ["Ali", "Ayşe"])
+        self.assertFalse(changed)
+        self.assertEqual(same, row)
+
+    def test_kayittaki_eksik_hucre_nobet_sayilmaz(self):
+        saved = pd.DataFrame({"1 Paz": [True, None]}, index=["Ali", "Ayşe"])
+        state = {}
+        days = {"1 Paz": {"day_num": 1, "full_date": "01.11.2026 Paz"}}
+        self.assertTrue(restore_auto_saved_schedule(
+            state, lambda *a: (["Ali", "Ayşe"], saved, None, {}), "x", 2026, 11,
+            ["Ali", "Ayşe"], ["1 Paz"], days,
+        ))
+        self.assertTrue(state["schedule_bool"].at["Ali", "1 Paz"])
+        self.assertFalse(state["schedule_bool"].at["Ayşe", "1 Paz"])
+
+    def test_uygulama_tekrar_eden_isimleri_ayiklar(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertIn("isimler = list(dict.fromkeys(_raw_isimler))", source)
+        self.assertNotIn("itertuples(index=False), rows_liste", source)
+
 
 class TestPreviousMonths(unittest.TestCase):
     def test_onceki_ay_yil_gecisi(self):
