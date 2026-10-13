@@ -1339,6 +1339,47 @@ class TestGridAppearance(unittest.TestCase):
         )
 
 
+class TestFairDistribution(unittest.TestCase):
+    def test_toplam_farki_en_fazla_bir_ve_kurallar_bozulmaz(self):
+        names = ["GÖRKEM", "FARUK", "EYLÜL", "EGE", "AYÇA", "ORCAN", "LEYLA", "AYBÜKE", "SENA"]
+        days = build_gun_detaylari(2026, 10, 31, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        unwanted.loc["EGE", cols[0:6]] = True
+        pref = pd.DataFrame(0, index=names, columns=cols)
+        for d in (2, 6, 10, 14, 18, 22, 26, 30):
+            pref.loc["FARUK", cols[d - 1]] = 1
+        for seed in range(3):
+            random.seed(seed)
+            schedule, _ = run_scheduling_core(names, cols, unwanted, days, 1, 2,
+                                              df_preferred=pref, simulation_count=40)
+            totals = schedule.sum(axis=1)
+            self.assertLessEqual(int(totals.max() - totals.min()), 1, totals.to_dict())
+            self.assertEqual(missing_shift_coverage(schedule, cols, 2), [])
+            for person in names:
+                worked = [days[c]["day_num"] for c in cols if schedule.at[person, c]]
+                self.assertTrue(all(b - a > 1 for a, b in zip(worked, worked[1:])), person)
+                self.assertFalse(any(schedule.at[person, c] and unwanted.at[person, c] for c in cols))
+
+    def test_dengeleme_sabit_ve_limitlere_dokunmaz(self):
+        names = ["Ali", "Ayşe", "Can", "Deniz"]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        fixed = {("Ali", cols[c]) for c in (0, 2, 4, 6, 8, 10, 12, 14, 16, 18)}
+        random.seed(1)
+        schedule, _ = run_scheduling_core(names, cols, unwanted, days, 1, 2, simulation_count=20,
+                                          fixed_assignments=fixed,
+                                          person_limits={"Can": {"min": 0, "max": 12}})
+        self.assertTrue(all(schedule.at[p, c] for p, c in fixed))
+        self.assertLessEqual(int(schedule.loc["Can"].sum()), 12)
+
+    def test_gun_basligi_bolunmez(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertIn("f\"<div style='{num_style}white-space:nowrap;'>{day_num}</div>\"", source)
+        self.assertNotIn('badge = "★"', source)
+
+
 class TestUiCleanup(unittest.TestCase):
     def setUp(self):
         self.source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
