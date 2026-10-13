@@ -546,6 +546,51 @@ def restore_auto_saved_schedule(
     return True
 
 
+PERIOD_STATE_KEYS = (
+    "schedule_bool",
+    "pref_df",
+    "cached_rows_liste",
+    "cached_role_names",
+    "cached_role_schedule",
+    "cached_key",
+    "undo_history",
+    "redo_history",
+    "incomplete_simulation",
+    "reset_pending",
+)
+
+
+def switch_schedule_period(session_state, new_period, save_fn=None):
+    """Ay/yıl değiştiğinde eski dönemin verisini kaydedip state'i temizler.
+
+    Eski çizelgenin yeni aya taşınması, otomatik kayıtla birlikte o ayın
+    kayıtlı çizelgesinin üzerine yazılmasına yol açıyordu. Dönem değişince
+    önce giden dönem ``save_fn(period, schedule, preferences, rows)`` ile
+    kaydedilir, ardından döneme bağlı tüm state silinir; böylece çağıran taraf
+    yeni dönemin kaydını sıfırdan yükleyebilir. Dönem değiştiyse True döner.
+    """
+    old_period = session_state.get("loaded_period")
+    if old_period is None or tuple(old_period) == tuple(new_period):
+        return False
+
+    schedule = session_state.get("schedule_bool")
+    if save_fn is not None and schedule is not None:
+        try:
+            save_fn(
+                tuple(old_period),
+                schedule,
+                session_state.get("pref_df"),
+                session_state.get("cached_rows_liste"),
+            )
+        except Exception:
+            pass
+
+    for key in PERIOD_STATE_KEYS:
+        session_state.pop(key, None)
+    session_state.pop("loaded_period", None)
+    return True
+
+
 def use_compact_schedule_editor(person_count, day_count, threshold=500):
     """Çok büyük çizelgelerde hücre başına bileşen yerine tek tablo kullanılır."""
     return person_count * day_count > threshold

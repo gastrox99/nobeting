@@ -30,6 +30,7 @@ from nobet_core import (
     missing_shift_coverage,
     schedule_fingerprint,
     synchronize_changed_role_rows,
+    switch_schedule_period,
     use_compact_schedule_editor,
     create_print_html,
     build_limit_violation_messages,
@@ -1027,6 +1028,61 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
+class TestSwitchSchedulePeriod(unittest.TestCase):
+    def _state(self):
+        schedule = pd.DataFrame([[True]], index=["Ali"], columns=["1 Çar"])
+        return {
+            "loaded_period": (2026, 10),
+            "schedule_bool": schedule,
+            "pref_df": pd.DataFrame([[1]], index=["Ali"], columns=["1 Çar"]),
+            "cached_rows_liste": [{"Tarih": "01.10.2026 Çar", "Görev1": "Ali"}],
+            "undo_history": [{"schedule": schedule}],
+            "isimler_text": "Ali",
+        }
+
+    def test_ay_degisince_eski_ay_kaydedilir_ve_state_temizlenir(self):
+        state = self._state()
+        saved = []
+
+        switched = switch_schedule_period(
+            state, (2026, 11), lambda *args: saved.append(args)
+        )
+
+        self.assertTrue(switched)
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0][0], (2026, 10))
+        self.assertTrue(saved[0][1].at["Ali", "1 Çar"])
+        for key in ("schedule_bool", "pref_df", "cached_rows_liste", "undo_history", "loaded_period"):
+            self.assertNotIn(key, state)
+        # Döneme bağlı olmayan ayarlar korunur.
+        self.assertEqual(state["isimler_text"], "Ali")
+
+    def test_ayni_donemde_veya_ilk_yuklemede_hicbir_sey_degismez(self):
+        state = self._state()
+        self.assertFalse(switch_schedule_period(state, (2026, 10), lambda *a: self.fail()))
+        self.assertIn("schedule_bool", state)
+
+        first_load = {"schedule_bool": state["schedule_bool"]}
+        self.assertFalse(switch_schedule_period(first_load, (2026, 11), lambda *a: self.fail()))
+        self.assertIn("schedule_bool", first_load)
+
+    def test_kayit_hatasi_donem_degisimini_engellemez(self):
+        state = self._state()
+
+        def failing_save(*_):
+            raise RuntimeError("database unavailable")
+
+        self.assertTrue(switch_schedule_period(state, (2027, 1), failing_save))
+        self.assertNotIn("schedule_bool", state)
+
+    def test_uygulama_donem_degisimini_otomatik_yuklemeden_once_yapar(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        switch_pos = source.index("switch_schedule_period(st.session_state, (yil, ay)")
+        restore_pos = source.index("if not restore_auto_saved_schedule(")
+        self.assertLess(switch_pos, restore_pos)
+        self.assertIn("st.session_state.loaded_period = (yil, ay)", source)
+
+
 class TestSchedulePersistence(unittest.TestCase):
     def test_load_db_hatasi_istenirse_yukari_tasinir(self):
         with patch.object(
@@ -1115,6 +1171,35 @@ class TestSchedulePersistence(unittest.TestCase):
         self.assertEqual(loaded_team, ["Ali", "Ayşe"])
         self.assertEqual(loaded_rows, rows)
         self.assertTrue(loaded_schedule.at["Ali", "1 Çar"])
+
+    def test_tercihler_kaydedilip_aynen_geri_yuklenir(self):
+        prefs = pd.DataFrame(
+            [[1, 3], [2, 0]],
+            index=["Ali", "Ayşe"],
+            columns=["1 Çar", "2 Per"],
+        )
+        schedule = pd.DataFrame(False, index=prefs.index, columns=prefs.columns)
+        save_cursor = _FakeDbCursor()
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(save_cursor)), \
+                patch.object(db, "execute_values"):
+            self.assertTrue(db.save_schedule(
+                "Ocak", 2025, 1, ["Ali", "Ayşe"], schedule, pref_df=prefs
+            ))
+
+        load_cursor = _FakeDbCursor(
+            schedule_row={
+                "id": 10,
+                "team_members": json.dumps(["Ali", "Ayşe"]),
+                "pref_json": save_cursor.executed[0][1][4],
+            },
+            data_rows=[{"person": "Ali", "day_col": "1 Çar", "assigned": False}],
+        )
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)):
+            _, _, loaded_prefs, _, _ = db.load_schedule("Ocak", 2025, 1)
+
+        self.assertIsNotNone(loaded_prefs, "Kaydedilen tercihler yüklenemedi")
+        self.assertEqual(loaded_prefs.loc["Ali", "2 Per"], 3)
+        self.assertEqual(loaded_prefs.loc["Ayşe", "1 Çar"], 2)
 
     def test_load_legacy_schedule_has_no_role_rows(self):
         cursor = _FakeDbCursor(

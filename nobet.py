@@ -27,6 +27,7 @@ from nobet_core import (
     schedule_fingerprint,
     missing_shift_coverage,
     synchronize_changed_role_rows,
+    switch_schedule_period,
     use_compact_schedule_editor,
     build_limit_violation_messages,
     undo_history_state,
@@ -614,6 +615,17 @@ calisma_gunu = gun_sayisi - ozel_gun_sayisi
 zorunlu_saat = calisma_gunu * 8
 
 # --- SESSION ---
+def _save_outgoing_period(period, schedule, preferences, rows):
+    _old_yil, _old_ay = period
+    save_schedule(
+        f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
+        schedule, pref_df=preferences, rows_liste=rows,
+    )
+
+# Ay/yıl değişince eski ayın çizelgesini yeni aya taşımak yerine kaydet ve
+# yeni ayın kendi kaydını yükle (aksi halde otomatik kayıt o ayın üzerine yazar).
+switch_schedule_period(st.session_state, (yil, ay), _save_outgoing_period)
+
 if 'schedule_bool' not in st.session_state:
     # Sayfa yenilenmesinde otomatik geri yükle
     _auto_name = f"Otomatik_{yil}_{ay:02d}"
@@ -639,6 +651,8 @@ if 'schedule_bool' not in st.session_state:
         ),
     ):
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+    # Yeni dönemin verisi yüklendi; 30 sn sayacını buradan başlat.
+    st.session_state.last_auto_save = time.time()
 else:
     # Ensure schedule matches current team and columns
     current_schedule = st.session_state.schedule_bool
@@ -670,6 +684,8 @@ else:
                         new_schedule.at[person, col] = current_schedule.at[person, col] if oc == col else current_schedule.at[person, oc]
         st.session_state.schedule_bool = new_schedule
         st.session_state.cached_rows_liste = None  # Reset cache
+
+st.session_state.loaded_period = (yil, ay)
 
 if 'inputs' not in st.session_state: st.session_state.inputs = {i: "" for i in isimler}
 if 'cached_rows_liste' not in st.session_state: st.session_state.cached_rows_liste = None
@@ -1724,6 +1740,7 @@ html_key = f"html_{yil}_{ay}"
 html_hash_key = f"html_hash_{yil}_{ay}"
 if html_key not in st.session_state or st.session_state.get(html_hash_key) != data_hash:
     st.session_state[html_key] = create_print_html(df_liste, df_stats_load, yil, ay)
+    st.session_state[html_hash_key] = data_hash
 
 dl1, dl2, dl3, dl4, dl5, dl6 = st.columns(6)
 with dl1:
@@ -1972,6 +1989,7 @@ with an1:
     )
     if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
         if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
+            save_undo_state()
             rows_liste_to_redist = st.session_state.cached_rows_liste
             first_role_counts_to_redist = {i: 0 for i in isimler}
             new_rows_liste = []
@@ -1994,16 +2012,12 @@ with an1:
                 new_rows_liste.append(new_row)
             st.session_state.cached_rows_liste = new_rows_liste
             st.session_state.cached_first_role_counts = first_role_counts_to_redist
-            new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
-            for i, col in enumerate(sutunlar):
-                row = new_rows_liste[i]
-                for rn in role_names:
-                    p = row.get(rn)
-                    if p in isimler:
-                        new_schedule.at[p, col] = True
-            st.session_state.schedule_bool = new_schedule
+            # Nöbetçiler değişmez; çizelge yeniden kurulmaz (görev sayısından
+            # fazla atanmış kişiler sessizce siliniyordu).
             st.session_state.should_regenerate_assignments = False
             st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
+            # Üstteki Günlük Liste ve takvim yeni rolleri hemen göstersin.
+            st.rerun()
 
 with an2:
     st.markdown("**Kişisel Detay**")

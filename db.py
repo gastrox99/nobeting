@@ -4,6 +4,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 import pandas as pd
 from datetime import datetime
+from io import StringIO
 import json
 
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -172,7 +173,9 @@ def load_schedule(name, year, month, raise_on_error=False):
             raw_pref = schedule_row.get('pref_json')
             if raw_pref:
                 try:
-                    pref_df = pd.read_json(raw_pref)
+                    # pandas 3 treats a bare string as a file path, so the
+                    # saved JSON must be wrapped in a file-like object.
+                    pref_df = pd.read_json(StringIO(raw_pref))
                 except Exception:
                     pref_df = None
 
