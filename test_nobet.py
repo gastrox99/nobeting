@@ -1339,6 +1339,38 @@ class TestGridAppearance(unittest.TestCase):
         )
 
 
+class TestOfficialHolidaysAndReminder(unittest.TestCase):
+    def test_resmi_tatiller(self):
+        from nobet_core import official_holidays, official_holidays_summary, holidays_to_text, religious_holidays_known
+        self.assertEqual(official_holidays(2026, 10), [(29, "Cumhuriyet Bayramı")])
+        self.assertEqual([d for d, _ in official_holidays(2026, 3)], [20, 21, 22])
+        self.assertEqual([d for d, _ in official_holidays(2026, 5)], [1, 19, 27, 28, 29, 30])
+        # Ay sınırını aşan bayram iki aya bölünür (2025 Ramazan: 30 Mart - 1 Nisan)
+        self.assertEqual([d for d, _ in official_holidays(2025, 3)], [30, 31])
+        self.assertEqual([d for d, _ in official_holidays(2025, 4)], [1, 23])
+        self.assertEqual(holidays_to_text([29, 20, 21, 22, 1]), "1, 20-22, 29")
+        self.assertEqual(official_holidays_summary(2026, 5)[-1], "27-30 Mayıs Kurban Bayramı")
+        self.assertTrue(religious_holidays_known(2027))
+        self.assertFalse(religious_holidays_known(2029))
+        self.assertEqual(official_holidays(2029, 10), [(29, "Cumhuriyet Bayramı")])
+
+    def test_takvimde_bir_gun_once_hatirlatici(self):
+        rows = [{"Tarih": "03.10.2026 Cmt", "AYB": "Ali", "GYB": "Ayşe"}]
+        ics = build_person_ics("Ali", rows, ["AYB", "GYB"], 2026, 10)
+        lines = ics.replace("\r\n ", "").split("\r\n")
+        self.assertIn("BEGIN:VALARM", lines)
+        self.assertIn("TRIGGER:-PT6H", lines)
+        self.assertIn("DESCRIPTION:Yarın nöbetin var — AYB", lines)
+        self.assertLess(lines.index("BEGIN:VALARM"), lines.index("END:VEVENT"))
+        for raw in ics.split("\r\n"):
+            self.assertLessEqual(len(raw.encode("utf-8")), 75)
+
+    def test_uygulama_resmi_tatilleri_varsayilan_yapar(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertIn("value=_holidays_by_period.get(_holiday_period, holidays_to_text([d for d, _ in _official])),", source)
+        self.assertIn("_holidays_by_period[_holiday_period] = holiday_input", source)
+
+
 class TestFairDistribution(unittest.TestCase):
     def test_toplam_farki_en_fazla_bir_ve_kurallar_bozulmaz(self):
         names = ["GÖRKEM", "FARUK", "EYLÜL", "EGE", "AYÇA", "ORCAN", "LEYLA", "AYBÜKE", "SENA"]

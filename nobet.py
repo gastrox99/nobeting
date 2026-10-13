@@ -49,6 +49,10 @@ try:
         normalize_owner_email,
         apply_app_settings,
         apply_role_edits,
+        official_holidays,
+        official_holidays_summary,
+        holidays_to_text,
+        religious_holidays_known,
         active_locks,
         locks_to_json,
         update_locked_cells,
@@ -103,6 +107,10 @@ except ImportError:
         normalize_owner_email,
         apply_app_settings,
         apply_role_edits,
+        official_holidays,
+        official_holidays_summary,
+        holidays_to_text,
+        religious_holidays_known,
         active_locks,
         locks_to_json,
         update_locked_cells,
@@ -604,18 +612,21 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     with set_col3:
         min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, st.session_state.get("min_bosluk_val", 1))
         st.session_state.min_bosluk_val = min_bosluk
-        # Tatiller her ay için ayrı saklanır ("2026-10": "29").
+        # Tatiller her ay için ayrı saklanır ("2026-10": "29"). Hiç girilmemiş
+        # bir ayda resmi tatiller kendiliğinden gelir; silinirse boş kalır.
         _holidays_by_period = st.session_state.setdefault("holidays_by_period", {})
         _holiday_period = period_key(yil, ay)
+        _official = official_holidays(yil, ay)
         holiday_input = st.text_input(
             "🎉 Tatiller (bu ay):",
-            value=_holidays_by_period.get(_holiday_period, ""),
+            value=_holidays_by_period.get(_holiday_period, holidays_to_text([d for d, _ in _official])),
             placeholder="1,2,5-10,23",
         )
-        if holiday_input.strip():
-            _holidays_by_period[_holiday_period] = holiday_input
-        else:
-            _holidays_by_period.pop(_holiday_period, None)
+        _holidays_by_period[_holiday_period] = holiday_input
+        if _official:
+            st.caption("Resmi tatiller: " + ", ".join(official_holidays_summary(yil, ay)))
+        if not religious_holidays_known(yil):
+            st.caption(f"{yil} dini bayram tarihleri tanımlı değil; varsa elle ekleyin.")
         tatil_gunleri, invalid_holiday_parts = parse_holiday_days(holiday_input, gun_sayisi)
         if invalid_holiday_parts:
             invalid_text = ", ".join(f"'{part}'" for part in invalid_holiday_parts)
