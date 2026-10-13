@@ -32,7 +32,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false"
+args = "python scripts/write_streamlit_secrets.py && streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
@@ -66,7 +66,7 @@ externalPort = 5000
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["streamlit", "run", "nobet.py", "--server.port", "5000", "--server.address", "0.0.0.0", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+run = ["sh", "-c", "python scripts/write_streamlit_secrets.py && streamlit run nobet.py --server.port 5000 --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false"]
 
 [postMerge]
 path = "scripts/post-merge.sh"

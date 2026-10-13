@@ -4,6 +4,7 @@ test_nobet.py - Nöbet Yönetimi Uygulaması Unit Testleri
 Çalıştırmak için: python -m pytest test_nobet.py -v
 """
 import unittest
+import re
 import json
 from pathlib import Path
 import pandas as pd
@@ -30,6 +31,13 @@ from nobet_core import (
     missing_shift_coverage,
     schedule_fingerprint,
     synchronize_changed_role_rows,
+    switch_schedule_period,
+    apply_app_settings,
+    assignment_warnings,
+    collect_app_settings,
+    normalize_owner_email,
+    period_key,
+    persistence_fingerprint,
     use_compact_schedule_editor,
     create_print_html,
     build_limit_violation_messages,
@@ -1027,6 +1035,266 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
+class TestAssignmentWarnings(unittest.TestCase):
+    def setUp(self):
+        self.names = ["Ali", "Ayşe", "Mehmet"]
+        self.columns = ["1 Çar", "2 Per", "3 Cum", "4 Cmt"]
+        self.days = {c: {"day_num": i + 1} for i, c in enumerate(self.columns)}
+        self.schedule = pd.DataFrame(False, index=self.names, columns=self.columns)
+
+    def _warn(self, column="2 Per", person="Ali", **kwargs):
+        self.schedule.at[person, column] = True
+        params = dict(min_rest=1)
+        params.update(kwargs)
+        return assignment_warnings(self.schedule, person, column, self.columns, self.days, **params)
+
+    def test_atanmamis_hucre_icin_uyari_yok(self):
+        self.assertEqual(
+            assignment_warnings(self.schedule, "Ali", "2 Per", self.columns, self.days, 1), []
+        )
+
+    def test_onceki_ve_sonraki_gun_nobeti_uyarir(self):
+        self.schedule.at["Ali", "1 Çar"] = True
+        self.schedule.at["Ali", "3 Cum"] = True
+        warnings = self._warn()
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("1, 3. günde de nöbeti var", warnings[0])
+
+    def test_dinlenme_sifirsa_bitisik_gun_serbest(self):
+        self.schedule.at["Ali", "1 Çar"] = True
+        self.assertEqual(self._warn(min_rest=0), [])
+
+    def test_max_limit_asilinca_uyarir(self):
+        self.schedule.at["Ali", "4 Cmt"] = True
+        warnings = self._warn(column="1 Çar", person_limits={"Ali": {"min": 0, "max": 1}})
+        self.assertTrue(any("en fazla 1" in w for w in warnings))
+
+    def test_tercih_yasak_cift_ve_kapasite_uyarilari(self):
+        prefs = pd.DataFrame(0, index=self.names, columns=self.columns)
+        prefs.at["Ali", "2 Per"] = 3
+        self.schedule.at["Ayşe", "2 Per"] = True
+        self.schedule.at["Mehmet", "2 Per"] = True
+        warnings = self._warn(
+            preferences=prefs,
+            forbidden_pairs={("Ali", "Ayşe")},
+            people_per_shift=2,
+        )
+        joined = " | ".join(warnings)
+        self.assertIn("müsait değil", joined)
+        self.assertIn("Ali ve Ayşe birlikte çalışamaz", joined)
+        self.assertIn("3 kişi atandı, en fazla 2", joined)
+
+
+class TestGoogleLoginSupport(unittest.TestCase):
+    def test_eposta_tek_bicime_getirilir(self):
+        self.assertEqual(normalize_owner_email("  Ali@Gmail.COM "), "ali@gmail.com")
+        self.assertEqual(normalize_owner_email(None), "")
+
+    def test_ayar_anahtari_kullaniciya_ozel(self):
+        self.assertEqual(db.settings_key(""), "default")
+        self.assertEqual(db.settings_key("ali@gmail.com"), "user:ali@gmail.com")
+
+    def test_cizelge_sorgulari_kullaniciya_gore_filtrelenir(self):
+        cursor = _FakeDbCursor()
+        schedule = pd.DataFrame([[True]], index=["Ali"], columns=["1 Çar"])
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)), \
+                patch.object(db, "execute_values"):
+            self.assertTrue(db.save_schedule("Ocak", 2025, 1, ["Ali"], schedule, owner="ali@gmail.com"))
+        insert_sql, insert_params = cursor.executed[0]
+        self.assertIn("ON CONFLICT (owner, name, year, month)", insert_sql)
+        self.assertEqual(insert_params[7], "ali@gmail.com")
+
+        load_cursor = _FakeDbCursor()
+        load_cursor.fetchone = lambda: None
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)):
+            db.load_schedule("Ocak", 2025, 1, owner="ali@gmail.com")
+        self.assertEqual(load_cursor.executed[0][1][0], "ali@gmail.com")
+
+    def test_eski_veri_kullaniciya_aktarilir(self):
+        cursor = _FakeDbCursor()
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)):
+            self.assertTrue(db.claim_legacy_data("ali@gmail.com"))
+        self.assertIn("WHERE legacy.owner = ''", cursor.executed[0][0])
+        self.assertEqual(cursor.executed[1][1], ("user:ali@gmail.com",))
+        self.assertFalse(db.claim_legacy_data(""))
+
+    def test_secrets_dosyasi_ortam_degiskenlerinden_uretilir(self):
+        import importlib.util, tomllib
+        spec = importlib.util.spec_from_file_location(
+            "write_streamlit_secrets",
+            Path(__file__).with_name("scripts") / "write_streamlit_secrets.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        self.assertIsNone(module.build_secrets_toml({}))
+        content = module.build_secrets_toml({
+            "GOOGLE_CLIENT_ID": "id", "GOOGLE_CLIENT_SECRET": 'gizli"değer',
+            "AUTH_REDIRECT_URI": "https://ornek.replit.app/oauth2callback",
+            "AUTH_COOKIE_SECRET": "cerez",
+        })
+        auth = tomllib.loads(content)["auth"]
+        self.assertEqual(auth["client_secret"], 'gizli"değer')
+        self.assertEqual(auth["redirect_uri"], "https://ornek.replit.app/oauth2callback")
+        self.assertTrue(auth["server_metadata_url"].startswith("https://accounts.google.com/"))
+
+    def test_uygulama_tum_kayitlari_kullaniciya_baglar(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        calls = re.findall(r"(?<!def )\b(save_schedule|load_schedule|save_app_settings|load_app_settings)\((.*?)\)\n",
+                           source, flags=re.S)
+        self.assertGreaterEqual(len(calls), 6)
+        for name, args in calls:
+            self.assertIn("owner=current_owner", args, f"{name} kullanıcıya bağlı değil")
+        # Giriş kontrolü ayarlar yüklenmeden önce yapılmalı.
+        self.assertLess(source.index("AUTH_ENABLED = _auth_configured()"),
+                        source.index("load_app_settings(owner=current_owner"))
+
+    def test_indirme_dosyalari_tiklaninca_uretilir(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertIn('st.download_button("🖼️ PNG", _png_bytes,', source)
+        self.assertNotIn("st.session_state[png_key]", source)
+
+
+class TestAppSettingsPersistence(unittest.TestCase):
+    def test_ayarlar_toplanir_ve_aynen_geri_yuklenir(self):
+        state = {
+            "isimler_text": "Ali, Ayşe", "yil_val": 2026, "ay_val": 10,
+            "kisi_sayisi_val": 2, "min_bosluk_val": 1,
+            "holidays_by_period": {"2026-10": "29", "2026-11": "10"},
+            "nobet_ucreti_val": 1.5, "role_names_text": "AYB, GYB",
+            "forbidden_pairs_text": "Ali-Ayşe", "limits_text": "Ali:3-8",
+            "unrelated": "kept out",
+        }
+        settings = collect_app_settings(state)
+        self.assertNotIn("unrelated", json.dumps(settings))
+
+        restored = {}
+        apply_app_settings(restored, json.loads(json.dumps(settings)))
+        state.pop("unrelated")
+        self.assertEqual(restored, state)
+
+    def test_tatiller_aya_ozel_ve_kopya_bagimsiz(self):
+        state = {"holidays_by_period": {"2026-10": "29"}}
+        saved = collect_app_settings(state)
+        state["holidays_by_period"]["2026-11"] = "10"
+        # Kaydedilen kopya sonradan yapılan değişiklikten etkilenmemeli.
+        self.assertEqual(saved["holidays_by_period"], {"2026-10": "29"})
+        self.assertNotEqual(saved, collect_app_settings(state))
+
+        restored = {}
+        apply_app_settings(restored, {"holidays_by_period": {"2026-10": "29", "bad": "1", "2026-12": 5}})
+        self.assertEqual(restored["holidays_by_period"], {"2026-10": "29"})
+
+    def test_gecersiz_ayarlar_widget_hatasina_yol_acmaz(self):
+        restored = {}
+        apply_app_settings(restored, {
+            "year": 1999, "month": 13, "people_per_shift": "2",
+            "rest_days": True, "hourly_rate": -1, "team": ["Ali"],
+        })
+        self.assertEqual(restored, {})
+
+    def test_db_ayarlari_kaydeder_ve_okur(self):
+        settings = {"team": "Ali, Ayşe", "year": 2026, "month": 10}
+        save_cursor = _FakeDbCursor()
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(save_cursor)):
+            self.assertTrue(db.save_app_settings(settings))
+        stored_value = save_cursor.executed[0][1][1]
+
+        load_cursor = _FakeDbCursor(schedule_row={"value": stored_value})
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)):
+            self.assertEqual(db.load_app_settings(), settings)
+
+    def test_db_ayar_yoksa_none_hata_varsa_istisna(self):
+        empty_cursor = _FakeDbCursor()
+        empty_cursor.fetchone = lambda: None
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(empty_cursor)):
+            self.assertIsNone(db.load_app_settings())
+        with patch.object(db.psycopg2, "connect", side_effect=RuntimeError("down")):
+            with self.assertRaises(RuntimeError):
+                db.load_app_settings(raise_on_error=True)
+
+    def test_parmak_izi_her_degisikligi_ayirt_eder(self):
+        schedule = pd.DataFrame([[False]], index=["Ali"], columns=["1 Çar"])
+        prefs = pd.DataFrame([[0]], index=["Ali"], columns=["1 Çar"])
+        rows = [{"Tarih": "01.10.2026 Çar", "Görev1": "-"}]
+        base = persistence_fingerprint(schedule, prefs, rows)
+        self.assertEqual(base, persistence_fingerprint(schedule.copy(), prefs.copy(), list(rows)))
+
+        changed_schedule = schedule.copy(); changed_schedule.iloc[0, 0] = True
+        changed_prefs = prefs.copy(); changed_prefs.iloc[0, 0] = 1
+        changed_rows = [{"Tarih": "01.10.2026 Çar", "Görev1": "Ali"}]
+        for args in ((changed_schedule, prefs, rows), (schedule, changed_prefs, rows),
+                     (schedule, prefs, changed_rows)):
+            self.assertNotEqual(base, persistence_fingerprint(*args))
+
+    def test_uygulama_her_degisiklikte_kaydeder_ve_ayarlari_yukler(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertNotIn("elapsed >= 30", source)
+        self.assertIn("_persist_fp != st.session_state.get(\"last_saved_fingerprint\")", source)
+        self.assertIn("load_app_settings(owner=current_owner, raise_on_error=True)", source)
+        self.assertIn("save_app_settings(_current_settings, owner=current_owner)", source)
+        # Ayarlar widget'lar çizilmeden önce yüklenmeli.
+        self.assertLess(
+            source.index("apply_app_settings(st.session_state"),
+            source.index('st.text_area(\n            "👥 Ekip'),
+        )
+
+
+class TestSwitchSchedulePeriod(unittest.TestCase):
+    def _state(self):
+        schedule = pd.DataFrame([[True]], index=["Ali"], columns=["1 Çar"])
+        return {
+            "loaded_period": (2026, 10),
+            "schedule_bool": schedule,
+            "pref_df": pd.DataFrame([[1]], index=["Ali"], columns=["1 Çar"]),
+            "cached_rows_liste": [{"Tarih": "01.10.2026 Çar", "Görev1": "Ali"}],
+            "undo_history": [{"schedule": schedule}],
+            "isimler_text": "Ali",
+        }
+
+    def test_ay_degisince_eski_ay_kaydedilir_ve_state_temizlenir(self):
+        state = self._state()
+        saved = []
+
+        switched = switch_schedule_period(
+            state, (2026, 11), lambda *args: saved.append(args)
+        )
+
+        self.assertTrue(switched)
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0][0], (2026, 10))
+        self.assertTrue(saved[0][1].at["Ali", "1 Çar"])
+        for key in ("schedule_bool", "pref_df", "cached_rows_liste", "undo_history", "loaded_period"):
+            self.assertNotIn(key, state)
+        # Döneme bağlı olmayan ayarlar korunur.
+        self.assertEqual(state["isimler_text"], "Ali")
+
+    def test_ayni_donemde_veya_ilk_yuklemede_hicbir_sey_degismez(self):
+        state = self._state()
+        self.assertFalse(switch_schedule_period(state, (2026, 10), lambda *a: self.fail()))
+        self.assertIn("schedule_bool", state)
+
+        first_load = {"schedule_bool": state["schedule_bool"]}
+        self.assertFalse(switch_schedule_period(first_load, (2026, 11), lambda *a: self.fail()))
+        self.assertIn("schedule_bool", first_load)
+
+    def test_kayit_hatasi_donem_degisimini_engellemez(self):
+        state = self._state()
+
+        def failing_save(*_):
+            raise RuntimeError("database unavailable")
+
+        self.assertTrue(switch_schedule_period(state, (2027, 1), failing_save))
+        self.assertNotIn("schedule_bool", state)
+
+    def test_uygulama_donem_degisimini_otomatik_yuklemeden_once_yapar(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        switch_pos = source.index("switch_schedule_period(st.session_state, (yil, ay)")
+        restore_pos = source.index("if not restore_auto_saved_schedule(")
+        self.assertLess(switch_pos, restore_pos)
+        self.assertIn("st.session_state.loaded_period = (yil, ay)", source)
+
+
 class TestSchedulePersistence(unittest.TestCase):
     def test_load_db_hatasi_istenirse_yukari_tasinir(self):
         with patch.object(
@@ -1115,6 +1383,35 @@ class TestSchedulePersistence(unittest.TestCase):
         self.assertEqual(loaded_team, ["Ali", "Ayşe"])
         self.assertEqual(loaded_rows, rows)
         self.assertTrue(loaded_schedule.at["Ali", "1 Çar"])
+
+    def test_tercihler_kaydedilip_aynen_geri_yuklenir(self):
+        prefs = pd.DataFrame(
+            [[1, 3], [2, 0]],
+            index=["Ali", "Ayşe"],
+            columns=["1 Çar", "2 Per"],
+        )
+        schedule = pd.DataFrame(False, index=prefs.index, columns=prefs.columns)
+        save_cursor = _FakeDbCursor()
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(save_cursor)), \
+                patch.object(db, "execute_values"):
+            self.assertTrue(db.save_schedule(
+                "Ocak", 2025, 1, ["Ali", "Ayşe"], schedule, pref_df=prefs
+            ))
+
+        load_cursor = _FakeDbCursor(
+            schedule_row={
+                "id": 10,
+                "team_members": json.dumps(["Ali", "Ayşe"]),
+                "pref_json": save_cursor.executed[0][1][4],
+            },
+            data_rows=[{"person": "Ali", "day_col": "1 Çar", "assigned": False}],
+        )
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)):
+            _, _, loaded_prefs, _, _ = db.load_schedule("Ocak", 2025, 1)
+
+        self.assertIsNotNone(loaded_prefs, "Kaydedilen tercihler yüklenemedi")
+        self.assertEqual(loaded_prefs.loc["Ali", "2 Per"], 3)
+        self.assertEqual(loaded_prefs.loc["Ayşe", "1 Çar"], 2)
 
     def test_load_legacy_schedule_has_no_role_rows(self):
         cursor = _FakeDbCursor(

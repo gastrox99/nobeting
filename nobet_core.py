@@ -8,6 +8,7 @@ import numpy as np
 import random
 import calendar
 import hashlib
+import json
 import math
 import re
 from io import BytesIO
@@ -15,6 +16,13 @@ from datetime import date, datetime
 from itertools import combinations as _combinations
 from html import escape as _escape_html
 from numbers import Integral
+
+
+def normalize_owner_email(value):
+    """Kullanıcıyı eşleştirmek için e-postayı tek biçime getirir."""
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower()
 
 
 def escape_html(value):
@@ -367,6 +375,78 @@ def synchronize_changed_role_rows(
     return synchronized_rows
 
 
+def assignment_warnings(
+    schedule,
+    person,
+    column,
+    columns,
+    day_details,
+    min_rest,
+    person_limits=None,
+    preferences=None,
+    forbidden_pairs=None,
+    people_per_shift=None,
+):
+    """Bir kişi bir güne atandıktan hemen sonra gösterilecek uyarıları döner.
+
+    ``schedule`` atama yapılmış hâlidir; kişi o gün atanmamışsa liste boştur.
+    """
+    if (
+        person not in schedule.index
+        or column not in schedule.columns
+        or not bool(schedule.at[person, column])
+    ):
+        return []
+
+    warnings = []
+    day = day_details[column]["day_num"]
+
+    nearby_days = sorted(
+        day_details[other]["day_num"]
+        for other in columns
+        if other != column
+        and other in schedule.columns
+        and bool(schedule.at[person, other])
+        and abs(day_details[other]["day_num"] - day) <= min_rest
+    )
+    if nearby_days:
+        days_text = ", ".join(str(d) for d in nearby_days)
+        warnings.append(
+            f"{person}: {days_text}. günde de nöbeti var — {min_rest} gün dinlenme kuralına uymuyor."
+        )
+
+    max_limit = (person_limits or {}).get(person, {}).get("max", 999)
+    total = int(schedule.loc[person].sum())
+    if max_limit < 999 and total > max_limit:
+        warnings.append(f"{person}: toplam {total} nöbet, en fazla {max_limit} olmalı.")
+
+    if (
+        preferences is not None
+        and person in preferences.index
+        and column in preferences.columns
+    ):
+        try:
+            preference = int(preferences.at[person, column])
+        except (TypeError, ValueError):
+            preference = 0
+        if preference == 3:
+            warnings.append(f"{person}: {day}. gün müsait değil olarak işaretli.")
+        elif preference == 2:
+            warnings.append(f"{person}: {day}. gün kaçınmak istediği gün.")
+
+    others = [p for p in schedule.index[schedule[column]].tolist() if p != person]
+    for other in others:
+        if tuple(sorted((person, other))) in (forbidden_pairs or set()):
+            warnings.append(f"{day}. gün: {person} ve {other} birlikte çalışamaz.")
+
+    if people_per_shift is not None and len(others) + 1 > people_per_shift:
+        warnings.append(
+            f"{day}. gün: {len(others) + 1} kişi atandı, en fazla {people_per_shift} olmalı."
+        )
+
+    return warnings
+
+
 def find_person_role(rows_liste, role_names, day_index, person):
     """Return the role assigned to a person on a schedule day, if any."""
     if not rows_liste or day_index < 0 or day_index >= len(rows_liste):
@@ -543,6 +623,141 @@ def restore_auto_saved_schedule(
                         continue
         session_state["pref_df"] = restored_preferences
 
+    return True
+
+
+# Kalıcı ayar adı -> (session_state anahtarı, doğrulayıcı)
+def _int_in(low, high):
+    def _check(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if low <= number <= high and number == value else None
+    return _check
+
+
+def _text(value):
+    return value if isinstance(value, str) else None
+
+
+def _period_texts(value):
+    """{"2026-10": "29", ...} biçimindeki aylık metinleri doğrular."""
+    if not isinstance(value, dict):
+        return None
+    cleaned = {
+        key: text for key, text in value.items()
+        if isinstance(key, str) and re.fullmatch(r"\d{4}-\d{2}", key) and isinstance(text, str)
+    }
+    return cleaned
+
+
+def period_key(yil, ay):
+    """Aya özel ayarlar (ör. tatiller) için anahtar: "2026-10"."""
+    return f"{int(yil):04d}-{int(ay):02d}"
+
+
+def _non_negative_float(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+APP_SETTINGS_FIELDS = {
+    "team": ("isimler_text", _text),
+    "year": ("yil_val", _int_in(2024, 2030)),
+    "month": ("ay_val", _int_in(1, 12)),
+    "people_per_shift": ("kisi_sayisi_val", _int_in(1, 5)),
+    "rest_days": ("min_bosluk_val", _int_in(0, 3)),
+    "holidays_by_period": ("holidays_by_period", _period_texts),
+    "hourly_rate": ("nobet_ucreti_val", _non_negative_float),
+    "role_names": ("role_names_text", _text),
+    "forbidden_pairs": ("forbidden_pairs_text", _text),
+    "limits": ("limits_text", _text),
+}
+
+
+def apply_app_settings(session_state, settings):
+    """Kayıtlı ayarları session state'e yazar; geçersiz değerleri atlar."""
+    if not isinstance(settings, dict):
+        return
+    for name, (state_key, check) in APP_SETTINGS_FIELDS.items():
+        if name in settings:
+            value = check(settings[name])
+            if value is not None:
+                session_state[state_key] = value
+
+
+def collect_app_settings(session_state):
+    """Session state'teki güncel ayarları kaydedilecek sözlüğe çevirir."""
+    settings = {
+        name: session_state.get(state_key)
+        for name, (state_key, _check) in APP_SETTINGS_FIELDS.items()
+        if session_state.get(state_key) is not None
+    }
+    # Derin kopya: iç içe sözlükler (aylık tatiller) sonradan değişince
+    # "son kaydedilen" kopya da değişip kaydı engellemesin.
+    return json.loads(json.dumps(settings, ensure_ascii=False))
+
+
+def persistence_fingerprint(schedule, preferences, rows):
+    """Veritabanına yazılan anlık görüntünün (çizelge+tercih+roller) kimliği."""
+    parts = [
+        schedule_fingerprint(schedule) if schedule is not None else "-",
+        schedule_fingerprint(preferences) if preferences is not None else "-",
+        json.dumps(rows or [], ensure_ascii=False, sort_keys=True, default=str),
+    ]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+PERIOD_STATE_KEYS = (
+    "schedule_bool",
+    "pref_df",
+    "cached_rows_liste",
+    "cached_role_names",
+    "cached_role_schedule",
+    "cached_key",
+    "undo_history",
+    "redo_history",
+    "incomplete_simulation",
+    "reset_pending",
+)
+
+
+def switch_schedule_period(session_state, new_period, save_fn=None):
+    """Ay/yıl değiştiğinde eski dönemin verisini kaydedip state'i temizler.
+
+    Eski çizelgenin yeni aya taşınması, otomatik kayıtla birlikte o ayın
+    kayıtlı çizelgesinin üzerine yazılmasına yol açıyordu. Dönem değişince
+    önce giden dönem ``save_fn(period, schedule, preferences, rows)`` ile
+    kaydedilir, ardından döneme bağlı tüm state silinir; böylece çağıran taraf
+    yeni dönemin kaydını sıfırdan yükleyebilir. Dönem değiştiyse True döner.
+    """
+    old_period = session_state.get("loaded_period")
+    if old_period is None or tuple(old_period) == tuple(new_period):
+        return False
+
+    schedule = session_state.get("schedule_bool")
+    if save_fn is not None and schedule is not None:
+        try:
+            save_fn(
+                tuple(old_period),
+                schedule,
+                session_state.get("pref_df"),
+                session_state.get("cached_rows_liste"),
+            )
+        except Exception:
+            pass
+
+    for key in PERIOD_STATE_KEYS:
+        session_state.pop(key, None)
+    session_state.pop("loaded_period", None)
     return True
 
 
