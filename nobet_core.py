@@ -1404,6 +1404,72 @@ TR_AY_ADLARI = {1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "
                 7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"}
 
 
+# Türkiye resmi tatilleri (arife yarım günleri dahil edilmez).
+TR_FIXED_HOLIDAYS = {
+    (1, 1): "Yılbaşı",
+    (4, 23): "Ulusal Egemenlik ve Çocuk Bayramı",
+    (5, 1): "Emek ve Dayanışma Günü",
+    (5, 19): "Atatürk'ü Anma, Gençlik ve Spor Bayramı",
+    (7, 15): "Demokrasi ve Milli Birlik Günü",
+    (8, 30): "Zafer Bayramı",
+    (10, 29): "Cumhuriyet Bayramı",
+}
+# Dini bayramlar her yıl değişir: (ilk gün, gün sayısı, ad). Diyanet takvimi.
+TR_RELIGIOUS_HOLIDAYS = {
+    2024: [(date(2024, 4, 10), 3, "Ramazan Bayramı"), (date(2024, 6, 16), 4, "Kurban Bayramı")],
+    2025: [(date(2025, 3, 30), 3, "Ramazan Bayramı"), (date(2025, 6, 6), 4, "Kurban Bayramı")],
+    2026: [(date(2026, 3, 20), 3, "Ramazan Bayramı"), (date(2026, 5, 27), 4, "Kurban Bayramı")],
+    2027: [(date(2027, 3, 9), 3, "Ramazan Bayramı"), (date(2027, 5, 16), 4, "Kurban Bayramı")],
+}
+
+
+def religious_holidays_known(yil):
+    """Bu yılın dini bayram tarihleri listede var mı?"""
+    return yil in TR_RELIGIOUS_HOLIDAYS
+
+
+def official_holidays(yil, ay):
+    """Ayın resmi tatilleri: [(gün, ad), ...] gün sırasıyla."""
+    found = {}
+    for (month, day), name in TR_FIXED_HOLIDAYS.items():
+        if month == ay:
+            found[day] = name
+    for start, length, name in TR_RELIGIOUS_HOLIDAYS.get(yil, []) + TR_RELIGIOUS_HOLIDAYS.get(yil - 1, []):
+        for offset in range(length):
+            current = date.fromordinal(start.toordinal() + offset)
+            if current.year == yil and current.month == ay:
+                found[current.day] = name
+    return sorted(found.items())
+
+
+def official_holidays_summary(yil, ay):
+    """["20-22 Mart Ramazan Bayramı", "29 Ekim Cumhuriyet Bayramı"] gibi kısa açıklama."""
+    groups = []
+    for day, name in official_holidays(yil, ay):
+        if groups and groups[-1][2] == name and groups[-1][1] == day - 1:
+            groups[-1][1] = day
+        else:
+            groups.append([day, day, name])
+    month = TR_AY_ADLARI[ay]
+    return [
+        f"{start} {month} {name}" if start == end else f"{start}-{end} {month} {name}"
+        for start, end, name in groups
+    ]
+
+
+def holidays_to_text(days):
+    """[20, 21, 22, 29] -> "20-22, 29" (tatil kutusuna yazılan biçim)."""
+    days = sorted(set(days))
+    parts, start = [], None
+    for index, day in enumerate(days):
+        if start is None:
+            start = day
+        if index == len(days) - 1 or days[index + 1] != day + 1:
+            parts.append(str(start) if start == day else f"{start}-{day}")
+            start = None
+    return ", ".join(parts)
+
+
 def previous_period(yil, ay, back=1):
     """(yıl, ay)'dan ``back`` ay öncesini döner."""
     index = yil * 12 + (ay - 1) - back
@@ -1560,6 +1626,12 @@ def build_person_ics(person, rows, role_names, yil, ay):
             f"SUMMARY:{_ics_escape('Nöbet — ' + unit)}",
             f"DESCRIPTION:{_ics_escape(description)}",
             "TRANSP:OPAQUE",
+            # Tüm gün etkinliği gece yarısı başlar; -6 saat = önceki gün 18:00.
+            "BEGIN:VALARM",
+            "ACTION:DISPLAY",
+            f"DESCRIPTION:{_ics_escape('Yarın nöbetin var — ' + unit)}",
+            "TRIGGER:-PT6H",
+            "END:VALARM",
             "END:VEVENT",
         ]
     lines.append("END:VCALENDAR")
