@@ -48,6 +48,7 @@ try:
         validate_inputs,
         normalize_owner_email,
         apply_app_settings,
+        apply_role_edits,
         assignment_warnings,
         collect_app_settings,
         persistence_fingerprint,
@@ -97,6 +98,7 @@ except ImportError:
         validate_inputs,
         normalize_owner_email,
         apply_app_settings,
+        apply_role_edits,
         assignment_warnings,
         collect_app_settings,
         persistence_fingerprint,
@@ -557,7 +559,12 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             placeholder="Ali, Ayşe, Mehmet, Fatma"
         )
         st.session_state.isimler_text = isimler_input
-        isimler = [x.strip() for x in isimler_input.split(",") if x.strip()]
+        _raw_isimler = [x.strip() for x in isimler_input.split(",") if x.strip()]
+        # Aynı isim iki kez yazılırsa tablo çöküyordu; her ismi bir kez kullan.
+        isimler = list(dict.fromkeys(_raw_isimler))
+        if len(isimler) < len(_raw_isimler):
+            _dupes = sorted({x for x in _raw_isimler if _raw_isimler.count(x) > 1})
+            st.warning(f"⚠️ Birden fazla yazılan isim(ler) bir kez kullanıldı: **{', '.join(_dupes)}**")
         st.session_state.isimler_cache = isimler
         
         # Tarayıcı deposuna yalnızca ekip listesi değiştiğinde yaz.
@@ -1644,8 +1651,14 @@ if sim_clicked:
                 _min_req = _lim.get('min', 0)
                 if _min_req > 0:
                     _avail = sum(1 for _c in sutunlar if not df_unwanted.at[_p, _c])
+                    _rest_cap = -(-gun_sayisi // (min_bosluk + 1))
                     if _min_req > _avail:
                         warnings.append(f"⚠️ **{_p}**: Min {_min_req} nöbet gerekli ama yalnızca {_avail} müsait gün var — limit karşılanamayabilir")
+                    elif _min_req > _rest_cap:
+                        warnings.append(
+                            f"⚠️ **{_p}**: Min {_min_req} nöbet gerekli ama {min_bosluk} gün dinlenmeyle "
+                            f"en fazla {_rest_cap} nöbet tutulabilir — limit karşılanamayabilir"
+                        )
 
     if errors:
         st.error("🚨 Hata(lar) düzeltilmeli:")
@@ -2218,19 +2231,17 @@ with st.expander("✏️ Görev Yerlerini Düzenle (Gelişmiş)", expanded=False
         if _edited_roles is not None:
             _role_changed = False
             _new_rows_edit = []
-            for _ri, (_erow, _orow) in enumerate(zip(_edited_roles.itertuples(index=False), rows_liste)):
-                _new_r = dict(_orow)
+            # to_dict: görev adında boşluk/tire olsa da sütun okunur (itertuples
+            # bu adları değiştirdiği için düzenlemeler sessizce kayboluyordu).
+            for _ri, (_erow, _orow) in enumerate(zip(_edited_roles.to_dict("records"), rows_liste)):
                 _day_col = sutunlar[_ri] if _ri < len(sutunlar) else None
                 _assigned_today = (
                     edited_df.index[edited_df[_day_col]].tolist()
                     if _day_col and _day_col in edited_df.columns else []
                 )
-                for _rn in role_names:
-                    _val = str(getattr(_erow, _rn, "-")).strip()
-                    if _val and _val not in ("nan", "-") and _val in _assigned_today:
-                        if _new_r.get(_rn) != _val:
-                            _new_r[_rn] = _val
-                            _role_changed = True
+                # Başka birimdeki kişiyi yazınca ikisi yer değiştirir (çift kayıt olmaz).
+                _new_r, _row_changed = apply_role_edits(_orow, _erow, role_names, _assigned_today)
+                _role_changed = _role_changed or _row_changed
                 _new_rows_edit.append(_new_r)
             if _role_changed:
                 save_undo_state()

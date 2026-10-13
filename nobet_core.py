@@ -454,6 +454,34 @@ def assignment_warnings(
     return warnings
 
 
+def apply_role_edits(original_row, edited_values, role_names, assigned_today):
+    """Görev yeri düzenlemesini uygular: (yeni_satır, değişti_mi).
+
+    Bir göreve o gün başka görevde olan kişi yazılırsa ikisi yer değiştirir;
+    böylece aynı kişi iki birimde görünmez, diğeri de listeden düşmez.
+    O gün nöbeti olmayan isimler yok sayılır.
+    """
+    new_row = dict(original_row)
+    changed = False
+    for role in role_names:
+        value = str(edited_values.get(role, "-")).strip()
+        # Yalnızca kullanıcının gerçekten değiştirdiği hücreler işlenir.
+        if value == str(original_row.get(role, "-")).strip():
+            continue
+        if not value or value in ("nan", "-") or value not in assigned_today:
+            continue
+        if new_row.get(role) == value:
+            continue
+        previous = new_row.get(role, "-")
+        for other in role_names:
+            if other != role and new_row.get(other) == value:
+                new_row[other] = previous
+                break
+        new_row[role] = value
+        changed = True
+    return new_row, changed
+
+
 def find_person_role(rows_liste, role_names, day_index, person):
     """Return the role assigned to a person on a schedule day, if any."""
     if not rows_liste or day_index < 0 or day_index >= len(rows_liste):
@@ -549,6 +577,8 @@ def restore_auto_saved_schedule(
     saved_rows = loaded[4] if len(loaded) > 4 else None
     if saved_schedule is None or saved_schedule.empty:
         return False
+    # Eksik hücre (NaN) bool'a çevrilince True olurdu; atanmamış say.
+    saved_schedule = saved_schedule.fillna(False)
 
     restored_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
     saved_days = {}
@@ -900,16 +930,21 @@ def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, m
     if min_bosluk < 0 or min_bosluk > 7:
         errors.append("❌ Dinlenme süresi 0-7 gün arasında olmalı")
 
-    # Fizibilite uyarıları
-    working_days = gun_sayisi - len([h for h in unique_holidays if 1 <= h <= gun_sayisi])
-    total_positions_needed = working_days * kisi_sayisi
+    # Fizibilite uyarıları — tatiller de nöbet tutulan günlerdir.
+    total_positions_needed = gun_sayisi * kisi_sayisi
     team_size = len(isimler)
+    # Dinlenme kuralıyla bir kişi en fazla her (min_bosluk + 1) günde bir nöbet tutar.
+    max_per_person = -(-gun_sayisi // (max(0, min_bosluk) + 1))
+    capacity = team_size * max_per_person
 
     if team_size < kisi_sayisi:
         errors.append(f"❌ {kisi_sayisi} kişi nöbet için en az {kisi_sayisi} kişi gerekli")
-    elif team_size > 0 and total_positions_needed > team_size * 30:
-        avg_per_person = total_positions_needed / team_size
-        warnings.append(f"⚠️ Her kişiye ortalama {avg_per_person:.1f} nöbet düşecek (çok fazla)")
+    elif team_size > 0 and capacity < total_positions_needed:
+        warnings.append(
+            f"⚠️ {min_bosluk} gün dinlenme kuralıyla {team_size} kişi bu ay en fazla "
+            f"{capacity} nöbet tutabilir, ama {total_positions_needed} nöbet gerekiyor — "
+            "bazı günler eksik kalacak. Dinlenmeyi azaltın veya ekibe kişi ekleyin."
+        )
     elif team_size > 0 and total_positions_needed < team_size:
         warnings.append(f"⚠️ Nöbetleri dağıtmak için çok fazla kişi var ({team_size} kişi, {total_positions_needed} pozisyon)")
 
@@ -1075,7 +1110,6 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         stat_special = {i: 0 for i in isimler}
         stat_consecutive_weekend = {i: 0 for i in isimler}
         last_weekend_shift = {i: -10 for i in isimler}
-        pair_history = {}
         last_shift_day = {i: initial_last_shift.get(i, -10) for i in isimler}
 
         temp_schedule = pd.DataFrame(
@@ -1094,14 +1128,18 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                 elif pref_val == 2:
                     pref_bonus = 300
             limit_penalty = 0
+            min_bonus = 0
             if person_limits and p in person_limits:
                 max_limit = person_limits[p].get('max', 999)
                 if stat_total[p] >= max_limit:
                     limit_penalty = 50000
+                # Minimumuna ulaşmamış kişi öne alınır (çoğunlukla hafta içi).
+                if stat_total[p] < person_limits[p].get('min', 0):
+                    min_bonus = -250
             if is_sp:
-                return (sp_count * 100) + (total * 10) + consecutive_penalty + pref_bonus + limit_penalty
+                return (sp_count * 100) + (total * 10) + consecutive_penalty + pref_bonus + limit_penalty + min_bonus
             else:
-                return (total * 10) + (sp_count * 1) + pref_bonus + limit_penalty
+                return (total * 10) + (sp_count * 1) + pref_bonus + limit_penalty + min_bonus
 
         empty_shifts = 0
         limit_violations = 0
@@ -1128,29 +1166,22 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             random.shuffle(adaylar)
             adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col))
 
-            if len(adaylar) >= kisi_sayisi:
-                secilenler = _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs)
-
-                if len(secilenler) >= kisi_sayisi:
-                    if kisi_sayisi >= 2:
-                        pair = tuple(sorted((secilenler[0], secilenler[1])))
-                        pair_history[pair] = pair_history.get(pair, 0) + 1
-                    for k in secilenler:
-                        temp_schedule.at[k, col] = True
-                        stat_total[k] += 1
-                        if is_sp:
-                            stat_special[k] += 1
-                        last_shift_day[k] = gun_no
-                        if is_weekend:
-                            if last_weekend_shift[k] >= 0 and weekend_num == last_weekend_shift[k] + 1:
-                                stat_consecutive_weekend[k] += 1
-                            elif last_weekend_shift[k] >= 0 and weekend_num > last_weekend_shift[k] + 1:
-                                stat_consecutive_weekend[k] = 0
-                            last_weekend_shift[k] = weekend_num
-                else:
-                    empty_shifts += 1
-            else:
-                empty_shifts += 1
+            # Yeterli aday yoksa günü tamamen boş bırakma: uyan adayları ata,
+            # eksik kalan her nöbetçiyi say (eskiden 1 kişi müsaitken gün boştu).
+            secilenler = _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs)[:kisi_sayisi] if adaylar else []
+            empty_shifts += kisi_sayisi - len(secilenler)
+            for k in secilenler:
+                temp_schedule.at[k, col] = True
+                stat_total[k] += 1
+                if is_sp:
+                    stat_special[k] += 1
+                last_shift_day[k] = gun_no
+                if is_weekend:
+                    if last_weekend_shift[k] >= 0 and weekend_num == last_weekend_shift[k] + 1:
+                        stat_consecutive_weekend[k] += 1
+                    elif last_weekend_shift[k] >= 0 and weekend_num > last_weekend_shift[k] + 1:
+                        stat_consecutive_weekend[k] = 0
+                    last_weekend_shift[k] = weekend_num
 
         if person_limits:
             for p, limits in person_limits.items():
