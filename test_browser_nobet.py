@@ -124,11 +124,13 @@ def test_manual_assignment_updates_visible_total_without_simulation(app_url):
                 has=page.locator("b", has_text=PERSON)
             ).first
             first_day = row.locator(":scope > [data-testid='stColumn']").nth(1).get_by_role("button")
+            # Nöbet Yükü tablosu "Analiz" sekmesinde.
+            page.get_by_role("tab", name="📊 Analiz").click()
             baseline = displayed_total(page)
             assert baseline == 0
             assert first_day.inner_text() == "·"
             first_day.click()
-            first_day.get_by_text("•").wait_for()
+            first_day.get_by_text("✓").wait_for()
             wait_for_total(page, baseline + 1)
             first_day.click()
             first_day.get_by_text("·").wait_for()
