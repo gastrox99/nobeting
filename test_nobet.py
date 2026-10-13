@@ -1161,6 +1161,26 @@ class TestShareAndCalendar(unittest.TestCase):
         self.assertIn("Acil Servis\\; Sarı Alan\\, Gece", unfolded)
 
 
+class TestStaleModuleRecovery(unittest.TestCase):
+    def test_eski_modul_kalirsa_yenilenip_tekrar_denenir(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        recovery = source[source.index("try:\n    from db import ("):source.index("from streamlit_local_storage")]
+        self.assertIn("except ImportError:\n    _fresh_modules()", recovery)
+        self.assertEqual(recovery.count("from db import ("), 2)
+        self.assertEqual(recovery.count("from nobet_core import ("), 2)
+
+    def test_yenileme_yeni_fonksiyonlari_getirir(self):
+        import importlib, types
+        stale = types.ModuleType("db")
+        stale.init_db = lambda: True
+        with patch.dict("sys.modules", {"db": stale}):
+            with self.assertRaises(ImportError):
+                exec("from db import resolve_share_token", {})
+        fresh = importlib.import_module("db")
+        importlib.reload(fresh)
+        self.assertTrue(hasattr(fresh, "resolve_share_token"))
+
+
 class TestShareLinksDb(unittest.TestCase):
     def test_baglanti_olusturulur_ve_cozumlenir(self):
         cursor = _FakeDbCursor()
