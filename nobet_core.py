@@ -6,12 +6,10 @@ nobet.py'deki iş mantığı buraya taşınarak unit test yazılabilir hale geti
 import pandas as pd
 import numpy as np
 import random
-import calendar
 import hashlib
 import json
 import math
 import re
-from io import BytesIO
 from datetime import date, datetime, timezone
 from itertools import combinations as _combinations
 from html import escape as _escape_html
@@ -44,6 +42,28 @@ _TR_MONTHS = {
     "kas": 11, "kasım": 11, "kasim": 11,
     "ara": 12, "aralık": 12, "aralik": 12,
 }
+
+_ASCII_FOLD = str.maketrans("çğıöşü", "cgiosu")
+
+
+def _tr_lower(text):
+    """Türkçe küçük harf: "NİSAN" → "nisan", "KASIM" → "kasım".
+
+    Python'un lower()/casefold() işlevi "İ" harfini "i̇" (noktalı iki karakter)
+    yaptığı için büyük harfli NİSAN, HAZİRAN ve EKİM tanınmıyordu.
+    """
+    return text.replace("İ", "i").replace("I", "ı").lower()
+
+
+_TR_MONTHS_ASCII = {key.translate(_ASCII_FOLD): month for key, month in _TR_MONTHS.items()}
+
+
+def _month_from_name(name):
+    lowered = _tr_lower(name)
+    if lowered in _TR_MONTHS:
+        return _TR_MONTHS[lowered]
+    # "NISAN" gibi Türkçe karaktersiz yazımlar
+    return _TR_MONTHS_ASCII.get(lowered.translate(_ASCII_FOLD))
 
 
 def _valid_import_date(day, month=None, year=None):
@@ -117,7 +137,7 @@ def parse_schedule_import_date(value):
     match = re.match(r"^(\d{1,2})\s+([^\W\d_]+)(?:\s+(\d{4}))?", text, re.IGNORECASE)
     if match:
         day = int(match.group(1))
-        month = _TR_MONTHS.get(match.group(2).casefold())
+        month = _month_from_name(match.group(2))
         year = int(match.group(3)) if match.group(3) else None
         if month is not None:
             return _valid_import_date(day, month, year)
@@ -127,6 +147,72 @@ def parse_schedule_import_date(value):
     if match:
         return _valid_import_date(int(match.group(1)))
     return None
+
+
+def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, yil, ay):
+    """Excel'den okunan "Tarih + görev sütunları" tablosunu çizelgeye çevirir.
+
+    Session state'e dokunmaz; sonucu sözlük olarak döner:
+    format_ok, schedule, rows, matched, skipped_names, date_mismatch,
+    unreadable_rows. Tarihlerden biri başka aya/yıla aitse date_mismatch dolu
+    olur ve çağıran yüklemeyi iptal etmelidir.
+    """
+    result = {
+        "format_ok": False, "schedule": None, "rows": None, "matched": 0,
+        "skipped_names": [], "date_mismatch": None, "unreadable_rows": 0,
+    }
+    role_columns = [column for column in table.columns if column != "Tarih"]
+    if "Tarih" not in table.columns or not role_columns:
+        return result
+    result["format_ok"] = True
+    day_count = len(sutunlar)
+    column_by_day = {gun_detaylari[column]["day_num"]: column for column in sutunlar}
+    schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
+    rows_by_day = {}
+    skipped = set()
+    for _, source_row in table.iterrows():
+        parsed = parse_schedule_import_date(source_row.get("Tarih"))
+        if parsed is None:
+            result["unreadable_rows"] += 1
+            continue
+        day = parsed["day"]
+        if (
+            (parsed["month"] is not None and parsed["month"] != ay)
+            or (parsed["year"] is not None and parsed["year"] != yil)
+            or day > max(column_by_day, default=day_count)
+        ):
+            if result["date_mismatch"] is None:
+                result["date_mismatch"] = parsed
+            continue
+        column = column_by_day.get(day)
+        if column is None:
+            continue
+        row = {"Tarih": gun_detaylari[column]["full_date"]}
+        for index, role in enumerate(role_names):
+            source_column = role_columns[index] if index < len(role_columns) else None
+            person = str(source_row.get(source_column, "-")).strip() if source_column else "-"
+            if person and person not in ("-", "nan") and person in schedule.index:
+                schedule.at[person, column] = True
+                row[role] = person
+            else:
+                if person and person not in ("-", "nan"):
+                    skipped.add(person)
+                row[role] = "-"
+        rows_by_day[day] = row
+    rows = []
+    for column in sutunlar:
+        day = gun_detaylari[column]["day_num"]
+        if day in rows_by_day:
+            rows.append(rows_by_day[day])
+            result["matched"] += 1
+        else:
+            empty = {"Tarih": gun_detaylari[column]["full_date"]}
+            empty.update({role: "-" for role in role_names})
+            rows.append(empty)
+    result["schedule"] = schedule
+    result["rows"] = rows
+    result["skipped_names"] = sorted(skipped)
+    return result
 
 
 PREFERENCE_GRID_STATES = (
@@ -242,32 +328,6 @@ def name_column_width(names, char_px=9, minimum=96, maximum=220):
 def get_preference_grid_legend():
     """Return the legend entries in the same order as the cell states."""
     return [dict(state) for state in PREFERENCE_GRID_STATES]
-
-
-def parse_unwanted_days(text_input, max_day):
-    """Müsait olmayan günlerin metin girdisini listeye çevirir."""
-    if not text_input or (isinstance(text_input, float) and pd.isna(text_input)):
-        return []
-    days = set()
-    parts = str(text_input).split(',')
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        try:
-            if '-' in part:
-                start, end = map(int, part.split('-'))
-                start = max(1, start)
-                end = min(max_day, end)
-                if start <= end:
-                    days.update(range(start, end + 1))
-            else:
-                d = int(part)
-                if 1 <= d <= max_day:
-                    days.add(d)
-        except ValueError:
-            continue
-    return sorted(days)
 
 
 def parse_holiday_days(text_input, max_day):
@@ -496,6 +556,110 @@ def apply_role_edits(original_row, edited_values, role_names, assigned_today):
     return new_row, changed
 
 
+def ignored_role_edits(original_row, edited_values, role_names, assigned_today):
+    """apply_role_edits'in uygulamadığı düzenlemeler: [(görev, yazılan), ...].
+
+    Kullanıcıya neden değişmediğini söylemek için: o gün nöbeti olmayan bir isim
+    yazılmışsa ya da hücre boşaltılmışsa (kişiyi görevden almak nöbeti
+    kaldırmakla olur).
+    """
+    ignored = []
+    for role in role_names:
+        value = str(edited_values.get(role, "-")).strip()
+        if value == str(original_row.get(role, "-")).strip():
+            continue
+        if not value or value in ("nan", "-") or value not in assigned_today:
+            ignored.append((role, value if value not in ("nan",) else ""))
+    return ignored
+
+
+RESERVED_ROLE_NAMES = ("Tarih",)
+
+
+def normalize_role_names(text, count):
+    """Görev adlarını virgüllü metinden tam ``count`` tane, benzersiz olarak üretir.
+
+    Aynı ad iki kez yazılınca ("AYB, AYB") ya da bir göreve "Tarih" denince
+    satırdaki kişiler birbirinin üzerine yazılıp listeden kayboluyordu.
+    Tekrar eden adlar "AYB 2" gibi numaralanır; eksikler GörevN ile tamamlanır.
+    Dönüş: (adlar, değiştirilen_adlar)
+    """
+    raw = [part.strip() for part in (text or "").split(",") if part.strip()]
+    names = []
+    adjusted = []
+    used = set(name.casefold() for name in RESERVED_ROLE_NAMES)
+
+    def _unique(base):
+        candidate = base
+        number = 2
+        while candidate.casefold() in used:
+            candidate = f"{base} {number}"
+            number += 1
+        return candidate
+
+    for name in raw[:count]:
+        unique = _unique(name)
+        if unique != name:
+            adjusted.append((name, unique))
+        used.add(unique.casefold())
+        names.append(unique)
+    index = 1
+    while len(names) < count:
+        candidate = f"Görev{index}"
+        index += 1
+        if candidate.casefold() in used:
+            continue
+        used.add(candidate.casefold())
+        names.append(candidate)
+    return names, adjusted
+
+
+def detect_renames(old_names, new_names):
+    """Ekip listesinde yeniden adlandırılan kişileri bulur: {eski: yeni}.
+
+    Yalnızca kişi sayısı aynı kaldığında ve aynı sıradaki bir isim, listede
+    başka yerde olmayan yeni bir isimle değiştirildiğinde ad değişikliği
+    sayılır; ekleme/çıkarma/sıra değişikliği ad değişikliği değildir.
+    """
+    old_names = list(old_names or [])
+    new_names = list(new_names or [])
+    if not old_names or len(old_names) != len(new_names):
+        return {}
+    renames = {}
+    old_set, new_set = set(old_names), set(new_names)
+    for old, new in zip(old_names, new_names):
+        if old == new:
+            continue
+        if old in new_set or new in old_set:
+            return {}
+        renames[old] = new
+    return renames
+
+
+def rename_people_in_rows(rows, renames):
+    """Görev satırlarındaki isimleri yeni adlarına çevirir."""
+    if not rows or not renames:
+        return rows
+    return [
+        {key: (renames.get(value, value) if key != "Tarih" else value) for key, value in row.items()}
+        for row in rows
+    ]
+
+
+def drop_unknown_people_from_rows(rows, people):
+    """Ekipte olmayan isimleri görev satırlarından "-" ile siler."""
+    if not rows:
+        return rows
+    people = set(people)
+    return [
+        {
+            key: (value if key == "Tarih" or value in people or value in (None, "", "-") else "-")
+            for key, value in row.items()
+        }
+        for row in rows
+    ]
+
+
 def update_locked_cells(locked, cells_now_assigned, cells_now_free):
     """Elle atanan hücreleri sabitler, elle kaldırılanların sabitliğini siler."""
     updated = set(locked or ())
@@ -682,6 +846,9 @@ def restore_auto_saved_schedule(
                     "full_date", saved_row.get("Tarih", "")
                 )
                 restored_rows.append(saved_row)
+            # Ekipten çıkarılan kişiler listede kalmasın.
+            if restored_rows:
+                restored_rows = drop_unknown_people_from_rows(restored_rows, isimler)
 
     if restored_rows:
         restored_role_names = []
@@ -770,9 +937,14 @@ def _non_negative_float(value):
     return number if math.isfinite(number) and number >= 0 else None
 
 
+# Yıl seçimi aralığı (eskiden 2030'da bitiyordu; Aralık 2030'da varsayılan
+# "gelecek ay" 2031 olacağı için uygulama açılmazdı).
+YEAR_MIN = 2024
+YEAR_MAX = 2100
+
 APP_SETTINGS_FIELDS = {
     "team": ("isimler_text", _text),
-    "year": ("yil_val", _int_in(2024, 2030)),
+    "year": ("yil_val", _int_in(YEAR_MIN, YEAR_MAX)),
     "month": ("ay_val", _int_in(1, 12)),
     "people_per_shift": ("kisi_sayisi_val", _int_in(1, 5)),
     "rest_days": ("min_bosluk_val", _int_in(0, 3)),
@@ -1013,8 +1185,24 @@ def validate_inputs(isimler, yil, ay, gun_sayisi, tatil_gunleri, nobet_ucreti, m
     return len(errors) == 0, errors, warnings
 
 
-def parse_forbidden_pairs(forbidden_input):
-    """Birlikte çalışamayan çiftleri metin girdisinden küme olarak döner."""
+def _split_pair(pair_str, team):
+    """"Ali-Ayşe" → ("Ali", "Ayşe"). İsimde tire varsa ("Ayşe-Nur-Ali") ekipteki
+    isimlere uyan bölme seçilir; uyan yoksa ilk tireden bölünür."""
+    positions = [i for i, ch in enumerate(pair_str) if ch == "-"]
+    if team:
+        team = set(team)
+        for i in positions:
+            left, right = pair_str[:i].strip(), pair_str[i + 1:].strip()
+            if left in team and right in team:
+                return left, right
+    left, right = pair_str.split("-", 1)
+    return left.strip(), right.strip()
+
+
+def parse_forbidden_pairs(forbidden_input, team=None):
+    """Birlikte çalışamayan çiftleri metin girdisinden küme olarak döner.
+
+    ``team`` verilirse isminde tire olan kişiler doğru ayrılır."""
     forbidden_pairs = set()
     if not forbidden_input or not forbidden_input.strip():
         return forbidden_pairs
@@ -1024,11 +1212,9 @@ def parse_forbidden_pairs(forbidden_input):
     for pair_str in all_pairs:
         pair_str = pair_str.strip()
         if '-' in pair_str:
-            parts = pair_str.split('-', 1)
-            if len(parts) == 2:
-                p1, p2 = parts[0].strip(), parts[1].strip()
-                if p1 and p2:
-                    forbidden_pairs.add(tuple(sorted((p1, p2))))
+            p1, p2 = _split_pair(pair_str, team)
+            if p1 and p2:
+                forbidden_pairs.add(tuple(sorted((p1, p2))))
     return forbidden_pairs
 
 
@@ -1420,6 +1606,9 @@ TR_RELIGIOUS_HOLIDAYS = {
     2025: [(date(2025, 3, 30), 3, "Ramazan Bayramı"), (date(2025, 6, 6), 4, "Kurban Bayramı")],
     2026: [(date(2026, 3, 20), 3, "Ramazan Bayramı"), (date(2026, 5, 27), 4, "Kurban Bayramı")],
     2027: [(date(2027, 3, 9), 3, "Ramazan Bayramı"), (date(2027, 5, 16), 4, "Kurban Bayramı")],
+    2028: [(date(2028, 2, 26), 3, "Ramazan Bayramı"), (date(2028, 5, 5), 4, "Kurban Bayramı")],
+    # 2029: Diyanet'in kesin takvimi çıkınca kontrol edin.
+    2029: [(date(2029, 2, 14), 3, "Ramazan Bayramı"), (date(2029, 4, 24), 4, "Kurban Bayramı")],
 }
 
 

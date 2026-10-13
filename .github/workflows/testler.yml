@@ -1,0 +1,38 @@
+name: Testler
+
+# Her gönderimde tüm testleri gerçek Streamlit ve Chromium ile çalıştırır.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Paketleri kur
+        run: pip install -r requirements.txt pytest playwright
+      - name: Chromium kur
+        run: python -m playwright install --with-deps chromium
+      - name: Testleri çalıştır
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -v -p no:cacheprovider --tb=short 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          # Hataları GitHub'da "annotation" olarak da göster.
+          python - <<'PY'
+          import re
+          text = open("pytest.log", encoding="utf-8", errors="replace").read()
+          blocks = re.split(r"\n_{5,} (.+?) _{5,}\n", text)
+          for name, body in list(zip(blocks[1::2], blocks[2::2]))[:20]:
+              msg = (name + "\n" + body[-6000:]).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error title=Test hatası::{msg}")
+          PY
+          exit $status
