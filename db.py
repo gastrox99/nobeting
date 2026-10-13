@@ -7,13 +7,55 @@ from datetime import datetime
 from io import StringIO
 import json
 
+import re
+
 DATABASE_URL = os.getenv('DATABASE_URL')
+_last_error = None
+
+
+def _database_url():
+    """Read the URL at connect time, not at import time.
+
+    On Streamlit Cloud the value comes from the app's Secrets; reading it on
+    every connect means a newly added DATABASE_URL works without a stale
+    module-level copy.
+    """
+    url = os.getenv('DATABASE_URL')
+    if url:
+        return url
+    try:
+        import streamlit as st
+        url = st.secrets.get('DATABASE_URL')
+    except Exception:
+        url = None
+    return url or None
+
+
+def _connect():
+    return psycopg2.connect(_database_url(), connect_timeout=10)
+
+
+def _describe_error(exc):
+    """One-line, password-free reason for the UI."""
+    message = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+    message = re.sub(r'(://[^:/@\s]+):[^@\s]+@', r'\1:***@', message)
+    return message[:200]
+
+
+def get_last_error():
+    """Why the last init_db() failed, or None."""
+    return _last_error
+
 
 def init_db():
     """Initialize database schema"""
+    global _last_error
     conn = None
+    if not _database_url():
+        _last_error = "DATABASE_URL tanımlı değil (Streamlit Secrets'a ekleyin)"
+        return False
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _connect()
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
                 # Create schedules table
@@ -81,9 +123,11 @@ def init_db():
                     CREATE UNIQUE INDEX IF NOT EXISTS schedules_owner_name_year_month_key
                     ON schedules (owner, name, year, month)
                 ''')
+        _last_error = None
         return True
     except Exception as e:
         print(f"Database init error: {e}")
+        _last_error = _describe_error(e)
         return False
     finally:
         if conn is not None:
@@ -98,7 +142,7 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
     """Save a schedule to database"""
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _connect()
 
         # JSON-safe team encoding (handles commas in names)
         team_str = json.dumps(list(team_members))
@@ -178,7 +222,7 @@ def load_schedule(name, year, month, raise_on_error=False, owner=""):
     """
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _connect()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Get schedule
             cur.execute('''
@@ -268,7 +312,7 @@ def save_app_settings(settings, owner=""):
     """Save the team list and settings as one JSON document."""
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute('''
@@ -291,7 +335,7 @@ def load_app_settings(owner="", raise_on_error=False):
     """Return saved settings as a dict, or None when nothing is saved yet."""
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _connect()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('SELECT value FROM app_settings WHERE key = %s', (settings_key(owner),))
             row = cur.fetchone()
@@ -319,7 +363,7 @@ def claim_legacy_data(owner):
         return False
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute('''
@@ -349,7 +393,7 @@ def list_schedules(owner=""):
     """List all saved schedules"""
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _connect()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('''
                 SELECT name, year, month, updated_at FROM schedules
@@ -369,7 +413,7 @@ def delete_schedule(name, year, month, owner=""):
     """Delete a schedule"""
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _connect()
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
                 cur.execute('''
