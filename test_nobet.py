@@ -1161,6 +1161,29 @@ class TestShareAndCalendar(unittest.TestCase):
         self.assertIn("Acil Servis\\; Sarı Alan\\, Gece", unfolded)
 
 
+class TestGridAppearance(unittest.TestCase):
+    def setUp(self):
+        self.source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+
+    def test_atandi_gri_zemin_ustunde_tik(self):
+        state = get_preference_grid_state(True, 0)
+        self.assertEqual(state["symbol"], "✓")
+        self.assertEqual(state["color"], "#475569")
+        self.assertNotEqual(state["symbol"], get_preference_grid_state(False, 0)["symbol"])
+
+    def test_karanlik_modda_isimler_okunur(self):
+        self.assertIn('st.context.theme.type == "dark"', self.source)
+        self.assertIn("color:{ui['name_text']};", self.source)
+        self.assertIn("background: {ui['name_bg']} !important;", self.source)
+        self.assertNotIn("background: #f8fafc !important;", self.source)
+
+    def test_gunler_alt_satira_kaymaz(self):
+        self.assertIn(
+            '.st-key-preference-grid [data-testid="stHorizontalBlock"] {{\n    flex-wrap: nowrap !important;',
+            self.source,
+        )
+
+
 class TestStaleModuleRecovery(unittest.TestCase):
     def test_eski_modul_kalirsa_yenilenip_tekrar_denenir(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
