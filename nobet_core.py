@@ -492,6 +492,42 @@ def apply_role_edits(original_row, edited_values, role_names, assigned_today):
     return new_row, changed
 
 
+def update_locked_cells(locked, cells_now_assigned, cells_now_free):
+    """Elle atanan hücreleri sabitler, elle kaldırılanların sabitliğini siler."""
+    updated = set(locked or ())
+    updated |= set(cells_now_assigned)
+    updated -= set(cells_now_free)
+    return updated
+
+
+def active_locks(locked, schedule):
+    """Hâlâ atanmış olan sabit hücreler (ekipten çıkan/kaldırılanlar düşer)."""
+    return {
+        (person, column) for person, column in (locked or ())
+        if person in schedule.index and column in schedule.columns
+        and bool(schedule.at[person, column])
+    }
+
+
+def locks_to_json(locked):
+    return sorted([person, column] for person, column in (locked or ()))
+
+
+def locks_from_saved(saved_locks, saved_day_by_column, gun_detaylari, team):
+    """Kayıttaki [kişi, sütun] listesini bu ayın sütunlarına eşler."""
+    day_to_column = {details["day_num"]: column for column, details in gun_detaylari.items()}
+    restored = set()
+    for item in saved_locks or ():
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        person, saved_column = item
+        day = saved_day_by_column.get(saved_column, _column_day(saved_column))
+        column = day_to_column.get(day)
+        if person in team and column is not None:
+            restored.add((person, column))
+    return restored
+
+
 def find_person_role(rows_liste, role_names, day_index, person):
     """Return the role assigned to a person on a schedule day, if any."""
     if not rows_liste or day_index < 0 or day_index >= len(rows_liste):
@@ -583,7 +619,7 @@ def restore_auto_saved_schedule(
     if not isinstance(loaded, tuple) or len(loaded) < 4:
         return False
 
-    _, saved_schedule, saved_preferences, _ = loaded[:4]
+    _, saved_schedule, saved_preferences, saved_settings = loaded[:4]
     saved_rows = loaded[4] if len(loaded) > 4 else None
     if saved_schedule is None or saved_schedule.empty:
         return False
@@ -610,6 +646,16 @@ def restore_auto_saved_schedule(
                     continue
 
     session_state["schedule_bool"] = restored_schedule
+    if isinstance(saved_settings, dict) and saved_settings.get("locked"):
+        session_state["locked_cells"] = active_locks(
+            locks_from_saved(
+                saved_settings["locked"],
+                {column: day for day, column in saved_days.items()},
+                gun_detaylari,
+                isimler,
+            ),
+            restored_schedule,
+        )
 
     restored_rows = None
     if saved_rows:
@@ -758,12 +804,13 @@ def collect_app_settings(session_state):
     return json.loads(json.dumps(settings, ensure_ascii=False))
 
 
-def persistence_fingerprint(schedule, preferences, rows):
-    """Veritabanına yazılan anlık görüntünün (çizelge+tercih+roller) kimliği."""
+def persistence_fingerprint(schedule, preferences, rows, locked=None):
+    """Veritabanına yazılan anlık görüntünün (çizelge+tercih+roller+sabitler) kimliği."""
     parts = [
         schedule_fingerprint(schedule) if schedule is not None else "-",
         schedule_fingerprint(preferences) if preferences is not None else "-",
         json.dumps(rows or [], ensure_ascii=False, sort_keys=True, default=str),
+        json.dumps(locks_to_json(locked), ensure_ascii=False),
     ]
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
@@ -780,6 +827,7 @@ PERIOD_STATE_KEYS = (
     "incomplete_simulation",
     "reset_pending",
     "prev_month_context",
+    "locked_cells",
 )
 
 
@@ -1091,7 +1139,8 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                         min_bosluk, kisi_sayisi, forbidden_pairs=None,
                         person_limits=None, df_preferred=None,
                         simulation_count=10, progress_callback=None,
-                        initial_last_shift=None, history_special=None):
+                        initial_last_shift=None, history_special=None,
+                        fixed_assignments=None):
     """
     Saf zamanlama algoritması (Streamlit bağımsız).
     progress_callback(int) isteğe bağlı ilerleme bildirimi için kullanılır.
@@ -1103,9 +1152,20 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         dinlenme kuralı için kullanılır.
     history_special: {kişi: fark} önceki aylardaki hafta sonu/tatil
         nöbetlerinin ekip ortalamasından farkı; dengelemede hesaba katılır.
+    fixed_assignments: {(kişi, sütun)} elle sabitlenmiş nöbetler. Aynen
+        korunur; dinlenme kuralı, max limit ve yasak çiftlerde hesaba katılır,
+        simülasyon yalnızca kalan boşlukları doldurur.
     """
     initial_last_shift = initial_last_shift or {}
     history_special = history_special or {}
+    fixed_by_col = {}
+    fixed_days = {}
+    for person, column in (fixed_assignments or ()):
+        if person in isimler and column in gun_detaylari:
+            fixed_by_col.setdefault(column, []).append(person)
+            fixed_days.setdefault(person, set()).add(gun_detaylari[column]["day_num"])
+    for column in fixed_by_col:
+        fixed_by_col[column].sort(key=isimler.index)
     if isinstance(simulation_count, bool) or not isinstance(simulation_count, Integral) or simulation_count <= 0:
         raise ValueError("Simülasyon sayısı pozitif bir tamsayı olmalıdır.")
 
@@ -1125,6 +1185,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         temp_schedule = pd.DataFrame(
             {col: [False] * len(isimler) for col in sutunlar}, index=isimler
         )
+        future_fixed = {i: len(fixed_days.get(i, ())) for i in isimler}
 
         def get_decision_score(p, is_sp, col):
             total = stat_total[p] + (random.random() * 0.5)
@@ -1161,16 +1222,32 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             is_weekend = info['weekend']
             weekend_num = info.get('week', (gun_no - 1) // 7)
 
+            # Sabit nöbetler önce ve aynen yerleşir.
+            sabitler = fixed_by_col.get(col, [])
+            for k in sabitler:
+                future_fixed[k] -= 1
+            needed = max(0, kisi_sayisi - len(sabitler))
+
             adaylar = []
             for k in isimler:
+                if k in sabitler:
+                    continue
                 if df_unwanted_bool.at[k, col]:
                     continue
                 if (gun_no - last_shift_day[k]) <= min_bosluk:
                     continue
+                # Yaklaşan sabit nöbetinin dinlenme aralığına girme.
+                if any(0 < f - gun_no <= min_bosluk for f in fixed_days.get(k, ())):
+                    continue
                 if person_limits and k in person_limits:
                     max_limit = person_limits[k].get('max', 999)
-                    if stat_total[k] >= max_limit:
+                    # Kalan sabit nöbetleri için yer bırak.
+                    if stat_total[k] + future_fixed[k] >= max_limit:
                         continue
+                if forbidden_pairs and any(
+                    tuple(sorted((k, f))) in forbidden_pairs for f in sabitler
+                ):
+                    continue
                 adaylar.append(k)
 
             random.shuffle(adaylar)
@@ -1178,9 +1255,12 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
 
             # Yeterli aday yoksa günü tamamen boş bırakma: uyan adayları ata,
             # eksik kalan her nöbetçiyi say (eskiden 1 kişi müsaitken gün boştu).
-            secilenler = _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs)[:kisi_sayisi] if adaylar else []
-            empty_shifts += kisi_sayisi - len(secilenler)
-            for k in secilenler:
+            secilenler = (
+                _find_valid_group(adaylar, needed, forbidden_pairs)[:needed]
+                if adaylar and needed else []
+            )
+            empty_shifts += needed - len(secilenler)
+            for k in list(sabitler) + secilenler:
                 temp_schedule.at[k, col] = True
                 stat_total[k] += 1
                 if is_sp:

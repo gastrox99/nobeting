@@ -49,6 +49,9 @@ try:
         normalize_owner_email,
         apply_app_settings,
         apply_role_edits,
+        active_locks,
+        locks_to_json,
+        update_locked_cells,
         assignment_warnings,
         name_column_width,
         collect_app_settings,
@@ -100,6 +103,9 @@ except ImportError:
         normalize_owner_email,
         apply_app_settings,
         apply_role_edits,
+        active_locks,
+        locks_to_json,
+        update_locked_cells,
         assignment_warnings,
         name_column_width,
         collect_app_settings,
@@ -503,6 +509,7 @@ def _current_state_snapshot():
         'forbidden_pairs_text': st.session_state.get('forbidden_pairs_text', ''),
         'limits_text': st.session_state.get('limits_text', ''),
         'rol_isimleri': list(st.session_state.get('rol_isimleri', [])),
+        'locked': set(st.session_state.get('locked_cells', set())),
     }
 
 def save_undo_state(schedule_df=None):
@@ -520,7 +527,7 @@ def save_undo_state(schedule_df=None):
     st.session_state.redo_history = []  # Clear redo on new action
 
 # --- ANA ALGORİTMA: nobet_core.run_scheduling_core kullanır ---
-def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None, initial_last_shift=None, history_special=None):
+def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None, initial_last_shift=None, history_special=None, fixed_assignments=None):
     progress_bar = st.progress(0)
     def _progress(n):
         if n % 10 == 0:
@@ -531,6 +538,7 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
             min_bosluk, kisi_sayisi, forbidden_pairs, person_limits, df_preferred,
             simulation_count=100, progress_callback=_progress,
             initial_last_shift=initial_last_shift, history_special=history_special,
+            fixed_assignments=fixed_assignments,
         )
     except ValueError as exc:
         st.error(f"🚨 Simülasyon başlatılamadı: {exc}")
@@ -715,11 +723,13 @@ def _save_outgoing_period(period, schedule, preferences, rows):
     # Okunamayan bir dönemin kaydının üzerine yazma; değişmediyse tekrar yazma.
     if st.session_state.get("autosave_blocked_period") == tuple(period):
         return
-    if persistence_fingerprint(schedule, preferences, rows) == st.session_state.get("last_saved_fingerprint"):
+    _locks = active_locks(st.session_state.get("locked_cells"), schedule)
+    if persistence_fingerprint(schedule, preferences, rows, _locks) == st.session_state.get("last_saved_fingerprint"):
         return
     save_schedule(
         f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
         schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
+        settings_dict={"locked": locks_to_json(_locks)},
     )
 
 # Ay/yıl değişince eski ayın çizelgesini yeni aya taşımak yerine kaydet ve
@@ -805,6 +815,7 @@ if 'last_edited_hash' not in st.session_state: st.session_state.last_edited_hash
 if 'should_regenerate_assignments' not in st.session_state: st.session_state.should_regenerate_assignments = False
 if 'forbidden_pairs_text' not in st.session_state: st.session_state.forbidden_pairs_text = ""
 if 'forbidden_pairs' not in st.session_state: st.session_state.forbidden_pairs = set()
+if 'locked_cells' not in st.session_state: st.session_state.locked_cells = set()
 if 'undo_history' not in st.session_state: st.session_state.undo_history = []
 if 'redo_history' not in st.session_state: st.session_state.redo_history = []
 if 'last_auto_save' not in st.session_state: st.session_state.last_auto_save = time.time()
@@ -982,7 +993,7 @@ with tab_grid:
                         st.rerun()
             selected_label = color_info[st.session_state.paint_color][1]
         else:
-            st.info("Tıklayarak nöbet ekle/kaldır ✓")
+            st.info("Tıklayarak nöbet ekle/kaldır. Elle atadığın nöbetler (sarı çerçeve) simülasyonda korunur.")
             selected_label = ""
 
     # Quick actions row
@@ -1003,6 +1014,8 @@ with tab_grid:
                         st.session_state.schedule_bool = _snap['schedule']
                     if _snap.get('pref') is not None:
                         st.session_state.pref_df = _snap['pref']
+                    if _snap.get('locked') is not None:
+                        st.session_state.locked_cells = set(_snap['locked'])
                     if _snap.get('rows_liste') is not None:
                         st.session_state.cached_rows_liste = _snap['rows_liste']
                         st.session_state.cached_role_names = _snap.get('role_names')
@@ -1024,6 +1037,8 @@ with tab_grid:
                         st.session_state.schedule_bool = _snap['schedule']
                     if _snap.get('pref') is not None:
                         st.session_state.pref_df = _snap['pref']
+                    if _snap.get('locked') is not None:
+                        st.session_state.locked_cells = set(_snap['locked'])
                     if _snap.get('rows_liste') is not None:
                         st.session_state.cached_rows_liste = _snap['rows_liste']
                         st.session_state.cached_role_names = _snap.get('role_names')
@@ -1045,6 +1060,7 @@ with tab_grid:
                 save_undo_state()
                 st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
                 st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+                st.session_state.locked_cells = set()
                 st.session_state.cached_rows_liste = None
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.reset_pending = False
@@ -1189,6 +1205,10 @@ with tab_grid:
     background: #7f1d1d !important;
     border-color: #450a0a !important;
 }}
+/* Elle atanmış (sabit) nöbet: ince sarı iç çerçeve */
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.cell-locked) .stButton > button {{
+    box-shadow: inset 0 0 0 2px #fbbf24 !important;
+}}
 :is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button:focus-visible {{
     outline: 3px solid #0f172a !important;
     outline-offset: 2px;
@@ -1295,6 +1315,14 @@ with tab_grid:
                 save_undo_state()
                 _previous_schedule = st.session_state.schedule_bool
                 st.session_state.schedule_bool = _compact_schedule.astype(bool)
+                _compact_cells = [(_p, _c) for _c in sutunlar for _p in isimler]
+                st.session_state.locked_cells = update_locked_cells(
+                    st.session_state.get("locked_cells"),
+                    [x for x in _compact_cells
+                     if bool(st.session_state.schedule_bool.at[x]) and not bool(_previous_schedule.at[x])],
+                    [x for x in _compact_cells
+                     if not bool(st.session_state.schedule_bool.at[x]) and bool(_previous_schedule.at[x])],
+                )
                 _queue_assignment_warnings([
                     (_p, _c)
                     for _c in sutunlar
@@ -1305,6 +1333,7 @@ with tab_grid:
                 st.rerun()
     else:
         _person_limits = st.session_state.get('person_limits', {})
+        _locked_now = active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)
         for person in isimler:
             row_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
             with row_cols[0]:
@@ -1336,7 +1365,8 @@ with tab_grid:
                         has_conflict,
                     )
                     st.markdown(
-                        f'<span class="preference-state {cell_state["css_class"]}" aria-hidden="true"></span>',
+                        f'<span class="preference-state {cell_state["css_class"]}'
+                        f'{" cell-locked" if (person, col) in _locked_now else ""}" aria-hidden="true"></span>',
                         unsafe_allow_html=True
                     )
                     if st.button(
@@ -1349,6 +1379,12 @@ with tab_grid:
                             st.session_state.pref_df.at[person, col] = st.session_state.paint_color
                         else:
                             st.session_state.schedule_bool.at[person, col] = not st.session_state.schedule_bool.at[person, col]
+                            _now_on = bool(st.session_state.schedule_bool.at[person, col])
+                            st.session_state.locked_cells = update_locked_cells(
+                                st.session_state.get("locked_cells"),
+                                [(person, col)] if _now_on else [],
+                                [] if _now_on else [(person, col)],
+                            )
                             _queue_assignment_warnings([(person, col)])
                         st.rerun()
 
@@ -1690,6 +1726,7 @@ if sim_clicked:
             df_preferred,
             initial_last_shift=prev_last_shift,
             history_special=history_special,
+            fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool),
         )
         if _new_schedule is not None:
             _missing = missing_shift_coverage(_new_schedule, sutunlar, kişi_sayısı)
@@ -1900,8 +1937,9 @@ df_liste = pd.DataFrame(rows_liste)
 # current schedule, so both database payloads describe the same snapshot.
 # Her değişiklik hemen kaydedilir (eskiden 30 sn bekleniyordu ve son
 # değişiklikler sayfa yenilenince kayboluyordu).
+_active_locks = active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)
 _persist_fp = persistence_fingerprint(
-    st.session_state.schedule_bool, st.session_state.get('pref_df'), rows_liste
+    st.session_state.schedule_bool, st.session_state.get('pref_df'), rows_liste, _active_locks
 )
 if st.session_state.pop("autosave_baseline_pending", False):
     st.session_state.last_saved_fingerprint = _persist_fp
@@ -1914,7 +1952,8 @@ elif (
     try:
         _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
                                   pref_df=st.session_state.get('pref_df'),
-                                  rows_liste=rows_liste, owner=current_owner)
+                                  rows_liste=rows_liste, owner=current_owner,
+                                  settings_dict={"locked": locks_to_json(_active_locks)})
     except Exception:
         _saved_ok = False
     if _saved_ok:
@@ -2123,6 +2162,7 @@ with dl6:
                     elif _matched > 0:
                         save_undo_state()
                         st.session_state.schedule_bool = _new_sched
+                        st.session_state.locked_cells = set()
                         st.session_state.cached_rows_liste = _new_rows
                         st.session_state.cached_role_names = role_names
                         st.session_state.cached_key = (yil, ay, tuple(isimler), tuple(sutunlar), tuple(role_names))

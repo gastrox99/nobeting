@@ -1064,6 +1064,77 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
+class TestFixedShifts(unittest.TestCase):
+    def setUp(self):
+        from nobet_core import update_locked_cells, active_locks, locks_to_json, locks_from_saved
+        self.update_locked_cells = update_locked_cells
+        self.active_locks = active_locks
+        self.locks_to_json = locks_to_json
+        self.locks_from_saved = locks_from_saved
+        self.days = build_gun_detaylari(2026, 11, 30, [])
+        self.cols = list(self.days)
+        self.names = ["Ali", "Ayşe", "Can", "Deniz", "Ece"]
+
+    def test_simulasyon_sabitleri_korur_ve_kurallara_uyar(self):
+        unwanted = pd.DataFrame(False, index=self.names, columns=self.cols)
+        fixed = {("Ali", self.cols[14]), ("Ali", self.cols[19]), ("Ayşe", self.cols[14])}
+        for seed in range(4):
+            random.seed(seed)
+            schedule, _ = run_scheduling_core(
+                self.names, self.cols, unwanted, self.days, 1, 2, simulation_count=20,
+                fixed_assignments=fixed, person_limits={"Ali": {"min": 0, "max": 4}},
+                forbidden_pairs={("Ayşe", "Deniz")},
+            )
+            for person, column in fixed:
+                self.assertTrue(schedule.at[person, column])
+            self.assertEqual(sorted(schedule.index[schedule[self.cols[14]]]), ["Ali", "Ayşe"])
+            ali_days = [self.days[c]["day_num"] for c in self.cols if schedule.at["Ali", c]]
+            self.assertLessEqual(len(ali_days), 4)
+            for neighbour in (14, 16, 19, 21):
+                self.assertNotIn(neighbour, ali_days)
+            self.assertEqual(missing_shift_coverage(schedule, self.cols, 2), [])
+
+    def test_yasak_cift_sabitin_yanina_konmaz(self):
+        unwanted = pd.DataFrame(False, index=self.names, columns=self.cols)
+        random.seed(0)
+        schedule, _ = run_scheduling_core(
+            self.names, self.cols, unwanted, self.days, 1, 2, simulation_count=10,
+            fixed_assignments={("Ayşe", self.cols[3])}, forbidden_pairs={("Ayşe", "Deniz")},
+        )
+        self.assertFalse(schedule.at["Deniz", self.cols[3]])
+
+    def test_kilit_yardimcilari(self):
+        locks = self.update_locked_cells(set(), [("Ali", "1 Paz")], [])
+        locks = self.update_locked_cells(locks, [("Can", "2 Pzt")], [("Ali", "1 Paz")])
+        self.assertEqual(locks, {("Can", "2 Pzt")})
+        schedule = pd.DataFrame(False, index=["Ali", "Can"], columns=["1 Paz", "2 Pzt"])
+        schedule.at["Can", "2 Pzt"] = True
+        self.assertEqual(self.active_locks(locks | {("Eski", "1 Paz")}, schedule), {("Can", "2 Pzt")})
+        self.assertEqual(self.locks_to_json(locks), [["Can", "2 Pzt"]])
+
+    def test_sabitler_kaydedilip_geri_yuklenir(self):
+        saved = pd.DataFrame(False, index=["Ali", "Can"], columns=["1 Paz", "2 Pzt"])
+        saved.at["Ali", "1 Paz"] = True
+        saved.at["Can", "2 Pzt"] = True
+        days = {"1 Paz": {"day_num": 1, "full_date": "01.11.2026 Paz"},
+                "2 Pzt": {"day_num": 2, "full_date": "02.11.2026 Pzt"}}
+        state = {}
+        settings = {"locked": [["Ali", "1 Paz"], ["Kimse", "2 Pzt"]]}
+        self.assertTrue(restore_auto_saved_schedule(
+            state, lambda *a: (["Ali", "Can"], saved, None, settings), "x", 2026, 11,
+            ["Ali", "Can"], ["1 Paz", "2 Pzt"], days,
+        ))
+        self.assertEqual(state["locked_cells"], {("Ali", "1 Paz")})
+
+    def test_uygulama_baglantilari(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertIn('fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)', source)
+        self.assertIn('settings_dict={"locked": locks_to_json(_active_locks)}', source)
+        self.assertIn("'locked': set(st.session_state.get('locked_cells', set())),", source)
+        self.assertIn(':has(.cell-locked) .stButton > button', source)
+        self.assertIn("st.session_state.locked_cells = set()\n                st.session_state.cached_rows_liste = None", source)
+
+
 class TestAlgorithmFixes(unittest.TestCase):
     def setUp(self):
         self.days = build_gun_detaylari(2026, 11, 30, [])
