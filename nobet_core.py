@@ -1139,6 +1139,94 @@ def _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs):
     return secilenler
 
 
+def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+                    df_preferred, min_bosluk, forbidden_pairs, person_limits,
+                    fixed_assignments, initial_last_shift, history_special,
+                    max_moves=500):
+    """Toplam nöbet farkını kurallara uyarak en fazla 1'e indirir.
+
+    Gün gün ilerleyen seçim ay sonunda toplamlarda kayma bırakabiliyordu
+    (ör. 62 nöbet / 9 kişide biri 6, biri 8). En çok nöbeti olandan en az
+    olana, aynı gün içinde, şu koşullarla bir nöbet aktarılır:
+    alan kişi o gün müsait, kaçınma günü değil, dinlenme kuralına ve yasak
+    çiftlere uyuyor, max limitini aşmıyor; veren kişinin nöbeti sabit değil
+    ve min limitinin altına düşmüyor; hafta sonu/tatil dengesi bozulmuyor.
+    Tercih edilen günler mümkün olduğunca korunur.
+    """
+    limits = person_limits or {}
+    fixed = set(fixed_assignments or ())
+    history = history_special or {}
+    initial = initial_last_shift or {}
+    day_of = {col: gun_detaylari[col]["day_num"] for col in sutunlar}
+    special_cols = {col for col in sutunlar if gun_detaylari[col]["weekend"] or gun_detaylari[col]["holiday"]}
+
+    def pref(person, col):
+        if df_preferred is None or person not in df_preferred.index or col not in df_preferred.columns:
+            return 0
+        try:
+            return int(df_preferred.at[person, col])
+        except (TypeError, ValueError):
+            return 0
+
+    def rest_ok(person, col):
+        day = day_of[col]
+        previous = initial.get(person)
+        if previous is not None and day - previous <= min_bosluk:
+            return False
+        for other in sutunlar:
+            if other != col and bool(schedule.at[person, other]) and abs(day_of[other] - day) <= min_bosluk:
+                return False
+        return True
+
+    for _ in range(max_moves):
+        totals = {p: int(schedule.loc[p].sum()) for p in isimler}
+        specials = {
+            p: sum(1 for c in special_cols if bool(schedule.at[p, c])) + history.get(p, 0)
+            for p in isimler
+        }
+        best_move = None
+        for giver in sorted(isimler, key=lambda p: -totals[p]):
+            if totals[giver] - 1 < limits.get(giver, {}).get("min", 0):
+                continue
+            for receiver in sorted(isimler, key=lambda p: totals[p]):
+                if totals[giver] - totals[receiver] <= 1:
+                    break
+                if totals[receiver] + 1 > limits.get(receiver, {}).get("max", 999):
+                    continue
+                for col in sutunlar:
+                    if not bool(schedule.at[giver, col]) or bool(schedule.at[receiver, col]):
+                        continue
+                    if (giver, col) in fixed or bool(df_unwanted_bool.at[receiver, col]):
+                        continue
+                    if pref(receiver, col) == 2:
+                        continue
+                    if col in special_cols and specials[giver] <= specials[receiver]:
+                        continue
+                    others = [p for p in schedule.index[schedule[col]] if p not in (giver, receiver)]
+                    if forbidden_pairs and any(tuple(sorted((receiver, o))) in forbidden_pairs for o in others):
+                        continue
+                    if not rest_ok(receiver, col):
+                        continue
+                    # Önce hafta içi; verenin tercih ettiği gün en son, alanın tercih ettiği gün önce.
+                    score = (
+                        (10 if col in special_cols else 0)
+                        + (5 if pref(giver, col) == 1 else 0)
+                        - (3 if pref(receiver, col) == 1 else 0)
+                    )
+                    if best_move is None or score < best_move[0]:
+                        best_move = (score, giver, receiver, col)
+                if best_move is not None:
+                    break
+            if best_move is not None:
+                break
+        if best_move is None:
+            break
+        _, giver, receiver, col = best_move
+        schedule.at[giver, col] = False
+        schedule.at[receiver, col] = True
+    return schedule
+
+
 def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                         min_bosluk, kisi_sayisi, forbidden_pairs=None,
                         person_limits=None, df_preferred=None,
@@ -1302,6 +1390,13 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             best_score = score
             best_schedule = temp_schedule.copy()
 
+    if best_schedule is not None:
+        best_schedule = _balance_totals(
+            best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+            df_preferred, min_bosluk, forbidden_pairs, person_limits,
+            {(p, c) for c, people in fixed_by_col.items() for p in people},
+            initial_last_shift, history_special,
+        )
     return best_schedule, best_score
 
 

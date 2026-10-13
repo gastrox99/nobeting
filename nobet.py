@@ -1294,11 +1294,11 @@ with tab_grid:
             if _is_today:
                 num_style = f"color:{ui['today_text']};font-weight:800;font-size:15px;"
                 name_style = f"color:{ui['today_text']};font-size:11px;"
-                badge = "★"
+                badge = ""
             elif is_hol:
                 num_style = f"color:{ui['holiday_text']};font-weight:700;font-size:14px;"
                 name_style = f"color:{ui['holiday_text']};font-size:11px;"
-                badge = "🎉"
+                badge = ""
             elif is_we:
                 num_style = f"color:{ui['weekend_text']};font-weight:700;font-size:14px;"
                 name_style = f"color:{ui['weekend_text']};font-size:11px;"
@@ -1309,7 +1309,9 @@ with tab_grid:
                 badge = ""
             st.markdown(
                 f"<div style='text-align:center;line-height:1.35;padding:2px 0;'>"
-                f"<div style='{num_style}'>{badge}{day_num}</div>"
+                # Rozet (★/🎉) dar sütunda rakamı ikiye bölüyordu; bugün sarı çerçeve,
+                # tatil kırmızı renkle zaten belli. Rakam hiç bölünmez.
+                f"<div style='{num_style}white-space:nowrap;'>{day_num}</div>"
                 f"<div style='{name_style}'>{day_name}</div>"
                 f"</div>",
                 unsafe_allow_html=True
