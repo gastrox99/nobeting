@@ -123,6 +123,18 @@ def init_db():
                     CREATE UNIQUE INDEX IF NOT EXISTS schedules_owner_name_year_month_key
                     ON schedules (owner, name, year, month)
                 ''')
+
+                # Read-only share links: one per owner and month.
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS share_links (
+                        token VARCHAR(64) PRIMARY KEY,
+                        owner VARCHAR(320) NOT NULL DEFAULT '',
+                        year INT NOT NULL,
+                        month INT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (owner, year, month)
+                    )
+                ''')
         _last_error = None
         return True
     except Exception as e:
@@ -384,6 +396,88 @@ def claim_legacy_data(owner):
     except Exception as e:
         print(f"Claim legacy data error: {e}")
         return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def create_share_link(owner, year, month):
+    """Create (or replace) the month's share token; the old link stops working."""
+    import secrets as _secrets
+    token = _secrets.token_urlsafe(16)
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    INSERT INTO share_links (token, owner, year, month)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (owner, year, month) DO UPDATE
+                        SET token = EXCLUDED.token, created_at = CURRENT_TIMESTAMP
+                ''', (token, owner, year, month))
+        return token
+    except Exception as e:
+        print(f"Create share link error: {e}")
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_share_link(owner, year, month):
+    """The month's current share token, or None."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                'SELECT token FROM share_links WHERE owner = %s AND year = %s AND month = %s',
+                (owner, year, month),
+            )
+            row = cur.fetchone()
+        return row['token'] if row else None
+    except Exception as e:
+        print(f"Get share link error: {e}")
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def delete_share_link(owner, year, month):
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'DELETE FROM share_links WHERE owner = %s AND year = %s AND month = %s',
+                    (owner, year, month),
+                )
+        return True
+    except Exception as e:
+        print(f"Delete share link error: {e}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def resolve_share_token(token):
+    """(owner, year, month) for a valid token, else None."""
+    if not token or not isinstance(token, str) or len(token) > 64:
+        return None
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('SELECT owner, year, month FROM share_links WHERE token = %s', (token,))
+            row = cur.fetchone()
+        return (row['owner'], row['year'], row['month']) if row else None
+    except Exception as e:
+        print(f"Resolve share link error: {e}")
+        return None
     finally:
         if conn is not None:
             conn.close()

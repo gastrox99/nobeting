@@ -12,7 +12,7 @@ import json
 import math
 import re
 from io import BytesIO
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from itertools import combinations as _combinations
 from html import escape as _escape_html
 from numbers import Integral
@@ -386,6 +386,7 @@ def assignment_warnings(
     preferences=None,
     forbidden_pairs=None,
     people_per_shift=None,
+    previous_last_shift=None,
 ):
     """Bir kişi bir güne atandıktan hemen sonra gösterilecek uyarıları döner.
 
@@ -413,6 +414,12 @@ def assignment_warnings(
         days_text = ", ".join(str(d) for d in nearby_days)
         warnings.append(
             f"{person}: {days_text}. günde de nöbeti var — {min_rest} gün dinlenme kuralına uymuyor."
+        )
+    previous_day = (previous_last_shift or {}).get(person)
+    if previous_day is not None and day - previous_day <= min_rest:
+        ago = "son günü" if previous_day == 0 else f"son gününden {-previous_day} gün önce"
+        warnings.append(
+            f"{person}: önceki ayın {ago} nöbeti var — {min_rest} gün dinlenme kuralına uymuyor."
         )
 
     max_limit = (person_limits or {}).get(person, {}).get("max", 999)
@@ -659,6 +666,10 @@ def period_key(yil, ay):
     return f"{int(yil):04d}-{int(ay):02d}"
 
 
+def _bool(value):
+    return value if isinstance(value, bool) else None
+
+
 def _non_negative_float(value):
     if isinstance(value, bool):
         return None
@@ -680,6 +691,7 @@ APP_SETTINGS_FIELDS = {
     "role_names": ("role_names_text", _text),
     "forbidden_pairs": ("forbidden_pairs_text", _text),
     "limits": ("limits_text", _text),
+    "balance_history": ("balance_history", _bool),
 }
 
 
@@ -727,6 +739,7 @@ PERIOD_STATE_KEYS = (
     "redo_history",
     "incomplete_simulation",
     "reset_pending",
+    "prev_month_context",
 )
 
 
@@ -1032,13 +1045,22 @@ def _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs):
 def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                         min_bosluk, kisi_sayisi, forbidden_pairs=None,
                         person_limits=None, df_preferred=None,
-                        simulation_count=10, progress_callback=None):
+                        simulation_count=10, progress_callback=None,
+                        initial_last_shift=None, history_special=None):
     """
     Saf zamanlama algoritması (Streamlit bağımsız).
     progress_callback(int) isteğe bağlı ilerleme bildirimi için kullanılır.
 
     simulation_count pozitif bir tamsayı olmalıdır; aksi halde ValueError yükseltilir.
+
+    initial_last_shift: {kişi: gün} önceki ayın son nöbeti, bu aya göre
+        (0 = önceki ayın son günü, -1 = ondan önceki gün). Ay geçişinde
+        dinlenme kuralı için kullanılır.
+    history_special: {kişi: fark} önceki aylardaki hafta sonu/tatil
+        nöbetlerinin ekip ortalamasından farkı; dengelemede hesaba katılır.
     """
+    initial_last_shift = initial_last_shift or {}
+    history_special = history_special or {}
     if isinstance(simulation_count, bool) or not isinstance(simulation_count, Integral) or simulation_count <= 0:
         raise ValueError("Simülasyon sayısı pozitif bir tamsayı olmalıdır.")
 
@@ -1054,7 +1076,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         stat_consecutive_weekend = {i: 0 for i in isimler}
         last_weekend_shift = {i: -10 for i in isimler}
         pair_history = {}
-        last_shift_day = {i: -10 for i in isimler}
+        last_shift_day = {i: initial_last_shift.get(i, -10) for i in isimler}
 
         temp_schedule = pd.DataFrame(
             {col: [False] * len(isimler) for col in sutunlar}, index=isimler
@@ -1062,7 +1084,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
 
         def get_decision_score(p, is_sp, col):
             total = stat_total[p] + (random.random() * 0.5)
-            sp_count = stat_special[p]
+            sp_count = stat_special[p] + history_special.get(p, 0)
             consecutive_penalty = stat_consecutive_weekend[p] * 200
             pref_bonus = 0
             if df_preferred is not None and p in df_preferred.index and col in df_preferred.columns:
@@ -1136,7 +1158,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                     limit_violations += 1
 
         totals = list(stat_total.values())
-        specials = list(stat_special.values())
+        specials = [stat_special[i] + history_special.get(i, 0) for i in isimler]
         consecutive_weekends = sum(stat_consecutive_weekend.values())
         std_dev_total = np.std(totals)
         std_dev_special = np.std(specials)
@@ -1156,6 +1178,172 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             best_schedule = temp_schedule.copy()
 
     return best_schedule, best_score
+
+
+TR_AY_ADLARI = {1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
+                7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"}
+
+
+def previous_period(yil, ay, back=1):
+    """(yıl, ay)'dan ``back`` ay öncesini döner."""
+    index = yil * 12 + (ay - 1) - back
+    return index // 12, index % 12 + 1
+
+
+def _column_day(column):
+    try:
+        return int(str(column).split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def last_shift_offsets(prev_schedule, prev_month_days):
+    """Önceki ayın son nöbetlerini bu aya göre gün olarak döner.
+
+    0 önceki ayın son günü, -1 bir önceki gün… Nöbeti olmayan kişi yer almaz.
+    """
+    offsets = {}
+    if prev_schedule is None or prev_schedule.empty:
+        return offsets
+    for person in prev_schedule.index:
+        days = [
+            _column_day(column) for column in prev_schedule.columns
+            if _column_day(column) is not None and bool(prev_schedule.at[person, column])
+        ]
+        if days:
+            offsets[person] = max(days) - prev_month_days
+    return offsets
+
+
+def special_shift_counts(schedule, yil, ay, holidays=()):
+    """Kişi başına hafta sonu veya tatil günü nöbet sayısı."""
+    holiday_set = set(holidays)
+    counts = {}
+    if schedule is None or schedule.empty:
+        return counts
+    for column in schedule.columns:
+        day = _column_day(column)
+        if day is None:
+            continue
+        try:
+            is_special = date(yil, ay, day).weekday() >= 5 or day in holiday_set
+        except ValueError:
+            continue
+        if not is_special:
+            continue
+        for person in schedule.index[schedule[column].astype(bool)]:
+            counts[person] = counts.get(person, 0) + 1
+    return counts
+
+
+def history_special_adjustment(history_counts, team, clip=2):
+    """Geçmiş özel gün nöbetlerini ekip ortalamasına göre farka çevirir.
+
+    Fark ±``clip`` ile sınırlanır; böylece yeni gelen biri geçmişi olmadığı
+    için bütün hafta sonlarını almaz.
+    """
+    if not team:
+        return {}
+    mean = sum(history_counts.get(person, 0) for person in team) / len(team)
+    return {
+        person: max(-clip, min(clip, history_counts.get(person, 0) - mean))
+        for person in team
+    }
+
+
+def _row_day_and_weekday(row):
+    tarih = str(row.get("Tarih", "")).strip()
+    parsed = parse_schedule_import_date(tarih)
+    weekday = tarih.split()[-1] if tarih.split() else ""
+    return (parsed["day"] if parsed else None), weekday
+
+
+def build_share_text(rows, role_names, yil, ay, special_days=()):
+    """WhatsApp'a yapıştırmaya hazır günlük liste."""
+    special = set(special_days)
+    lines = [f"📅 {TR_AY_ADLARI[ay]} {yil} Nöbet Listesi", ""]
+    for row in rows:
+        day, weekday = _row_day_and_weekday(row)
+        label = f"{day} {TR_AY_ADLARI[ay]} {weekday}".strip() if day else str(row.get("Tarih", ""))
+        if day in special:
+            label = f"*{label}*"
+        parts = [
+            f"{role}: {row.get(role)}" for role in role_names
+            if row.get(role) not in (None, "", "-")
+        ]
+        lines.append(f"{label} — {' · '.join(parts) if parts else 'boş'}")
+    return "\n".join(lines)
+
+
+def _ics_escape(text):
+    return (
+        str(text).replace("\\", "\\\\").replace(";", "\\;")
+        .replace(",", "\\,").replace("\n", "\\n")
+    )
+
+
+def _ics_fold(line):
+    """RFC 5545: satırlar 75 baytta katlanır (devam satırı boşlukla başlar)."""
+    out, current = [], b""
+    for char in line:
+        encoded = char.encode("utf-8")
+        if len(current) + len(encoded) > (75 if not out else 74):
+            out.append(current.decode("utf-8"))
+            current = b""
+        current += encoded
+    out.append(current.decode("utf-8"))
+    return "\r\n ".join(out)
+
+
+def build_person_ics(person, rows, role_names, yil, ay):
+    """Kişinin nöbetlerini telefon takvimine eklenecek .ics olarak üretir.
+
+    Her nöbet tüm gün etkinliğidir; başlıkta ve açıklamada görev yeri (birim)
+    ve o gün birlikte nöbet tutanlar ile onların birimleri yazar.
+    """
+    person_hash = hashlib.sha1(person.encode("utf-8")).hexdigest()[:10]
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Adil Nobet//nobeting//TR",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        f"X-WR-CALNAME:{_ics_escape(person + ' nöbetleri')}",
+    ]
+    for row in rows:
+        roles = [role for role in role_names if row.get(role) == person]
+        if not roles:
+            continue
+        day, _ = _row_day_and_weekday(row)
+        if not day:
+            continue
+        try:
+            start = date(yil, ay, day)
+        except ValueError:
+            continue
+        end = date.fromordinal(start.toordinal() + 1)
+        unit = ", ".join(roles)
+        partners = [
+            f"{row.get(role)} ({role})" for role in role_names
+            if role not in roles and row.get(role) not in (None, "", "-")
+        ]
+        description = f"Görev yeri: {unit}"
+        if partners:
+            description += "\nBirlikte: " + ", ".join(partners)
+        lines += [
+            "BEGIN:VEVENT",
+            f"UID:nobet-{start:%Y%m%d}-{person_hash}@nobeting",
+            f"DTSTAMP:{stamp}",
+            f"DTSTART;VALUE=DATE:{start:%Y%m%d}",
+            f"DTEND;VALUE=DATE:{end:%Y%m%d}",
+            f"SUMMARY:{_ics_escape('Nöbet — ' + unit)}",
+            f"DESCRIPTION:{_ics_escape(description)}",
+            "TRANSP:OPAQUE",
+            "END:VEVENT",
+        ]
+    lines.append("END:VCALENDAR")
+    return "\r\n".join(_ics_fold(line) for line in lines) + "\r\n"
 
 
 def create_print_html(df_liste, df_stats_load, yil, ay):
