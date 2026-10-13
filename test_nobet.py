@@ -1339,6 +1339,32 @@ class TestGridAppearance(unittest.TestCase):
         )
 
 
+class TestUiCleanup(unittest.TestCase):
+    def setUp(self):
+        self.source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+
+    def test_bos_hucreler_acik_nobetliler_dolu(self):
+        free = get_preference_grid_state(False, 0)
+        assigned = get_preference_grid_state(True, 0)
+        self.assertTrue(free.get("soft"))
+        self.assertFalse(assigned.get("soft", False))
+        self.assertTrue(free["css_class"].startswith("preference-free-"))
+        self.assertTrue(assigned["css_class"].startswith("preference-state-"))
+        for n in range(4):
+            self.assertIn(f":has(.preference-free-{n}) .stButton > button", self.source)
+
+    def test_lejant_iki_satir(self):
+        self.assertIn("NÖBETLİ", self.source)
+        self.assertIn("NÖBETSİZ", self.source)
+        self.assertNotIn("legend_container.columns(", self.source)
+
+    def test_disa_aktar_menusu_ve_sekmeler(self):
+        self.assertIn('st.popover("📤 Dışa aktar"', self.source)
+        self.assertNotIn("dl1, dl2, dl3, dl4, dl5, dl6", self.source)
+        self.assertIn('tab_liste, tab_analiz = st.tabs(["📋 Günlük Liste", "📊 Analiz"])', self.source)
+        self.assertNotIn('st.header("📅 Nöbet Çizelgesi")', self.source)
+
+
 class TestStaleModuleRecovery(unittest.TestCase):
     def test_eski_modul_kalirsa_yenilenip_tekrar_denenir(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
@@ -1542,7 +1568,7 @@ class TestGoogleLoginSupport(unittest.TestCase):
 
     def test_indirme_dosyalari_tiklaninca_uretilir(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
-        self.assertIn('st.download_button("🖼️ PNG", _png_bytes,', source)
+        self.assertIn('st.download_button("🖼️ Resim (PNG)", _png_bytes,', source)
         self.assertNotIn("st.session_state[png_key]", source)
 
 

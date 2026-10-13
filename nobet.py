@@ -876,7 +876,6 @@ person_colors = {isim: PASTEL_COLORS[i % len(PASTEL_COLORS)] for i, isim in enum
 today_date = date.today()
 
 # --- BİRLEŞİK TABLO ---
-st.header("📅 Nöbet Çizelgesi")
 
 # Initialize preference DataFrame if needed
 if 'pref_df' not in st.session_state:
@@ -1091,6 +1090,16 @@ with tab_grid:
         "holiday_bg": "rgba(239,68,68,0.18)" if _dark_theme else "rgba(254,226,226,0.55)",
         "today_bg": "rgba(245,158,11,0.22)" if _dark_theme else "rgba(254,243,199,0.75)",
         "legend_text": "#d1d5db" if _dark_theme else "#374151",
+        # Nöbetsiz hücreler: açık zemin + renkli yazı (nöbetliler dolu renk)
+        "free_bg": "rgba(148,163,184,0.10)" if _dark_theme else "#ffffff",
+        "free_border": "#334155" if _dark_theme else "#e2e8f0",
+        "free_text": "#64748b",
+        "soft_green_bg": "rgba(34,197,94,0.16)" if _dark_theme else "#dcfce7",
+        "soft_green_text": "#86efac" if _dark_theme else "#166534",
+        "soft_amber_bg": "rgba(245,158,11,0.16)" if _dark_theme else "#fef3c7",
+        "soft_amber_text": "#fcd34d" if _dark_theme else "#92400e",
+        "soft_red_bg": "rgba(239,68,68,0.18)" if _dark_theme else "#fee2e2",
+        "soft_red_text": "#fca5a5" if _dark_theme else "#991b1b",
     }
     grid_css_selector = (
         ".st-key-preference-grid"
@@ -1200,6 +1209,28 @@ with tab_grid:
 :is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-3) .stButton > button {{
     background: #991b1b !important;
     border-color: #7f1d1d !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-0) .stButton > button {{
+    background: {ui['free_bg']} !important;
+    border-color: {ui['free_border']} !important;
+    border-width: 1px !important;
+    color: {ui['free_text']} !important;
+    font-weight: 600 !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-1) .stButton > button {{
+    background: {ui['soft_green_bg']} !important;
+    border-color: transparent !important;
+    color: {ui['soft_green_text']} !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-2) .stButton > button {{
+    background: {ui['soft_amber_bg']} !important;
+    border-color: transparent !important;
+    color: {ui['soft_amber_text']} !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-3) .stButton > button {{
+    background: {ui['soft_red_bg']} !important;
+    border-color: transparent !important;
+    color: {ui['soft_red_text']} !important;
 }}
 :is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-conflict) .stButton > button {{
     background: #7f1d1d !important;
@@ -1389,16 +1420,39 @@ with tab_grid:
                         st.rerun()
 
     legend_container = st.container(key="preference-legend", border=False)
-    legends = get_preference_grid_legend()
-    legend_cols = legend_container.columns(len(legends), gap=None)
-    for lc, legend in zip(legend_cols, legends):
-        with lc:
-            st.markdown(
-                f"<div style='text-align:center;font-size:16px;'>"
-                f"<span class='preference-legend-swatch' style='background:{legend['color']};'>{legend['symbol']}</span><br/>"
-                f"<span style='color:{ui['legend_text']};font-size:12px;font-weight:600;'>{legend['description']}</span></div>",
-                unsafe_allow_html=True
-            )
+    _soft_style = {
+        "neutral": (ui["free_bg"], ui["free_text"], f"1px solid {ui['free_border']}"),
+        "preferred": (ui["soft_green_bg"], ui["soft_green_text"], "none"),
+        "avoid": (ui["soft_amber_bg"], ui["soft_amber_text"], "none"),
+        "unavailable": (ui["soft_red_bg"], ui["soft_red_text"], "none"),
+    }
+
+    def _legend_item(_state, _label):
+        if _state.get("soft"):
+            _bg, _fg, _border = _soft_style[_state["key"]]
+        else:
+            _bg, _fg, _border = _state["color"], "#ffffff", "none"
+        return (
+            f"<span style='display:inline-flex;align-items:center;gap:6px;margin:2px 12px 2px 0;'>"
+            f"<span class='preference-legend-swatch' style='background:{_bg};color:{_fg} !important;border:{_border};'>"
+            f"{_state['symbol']}</span>"
+            f"<span style='color:{ui['legend_text']};font-size:12px;'>{_label}</span></span>"
+        )
+
+    _legend_states = get_preference_grid_legend()
+    _on = [x for x in _legend_states if not x.get("soft")]
+    _off = [x for x in _legend_states if x.get("soft")]
+    _row_label = f"style='color:{ui['muted']};font-size:11px;font-weight:700;letter-spacing:.04em;margin-right:10px;'"
+    legend_container.markdown(
+        "<div style='display:flex;flex-direction:column;gap:4px;margin-top:6px;'>"
+        f"<div style='display:flex;flex-wrap:wrap;align-items:center;'><span {_row_label}>NÖBETLİ</span>"
+        + "".join(_legend_item(x, x["description"].replace("Atandı + ", "")) for x in _on)
+        + "</div>"
+        f"<div style='display:flex;flex-wrap:wrap;align-items:center;'><span {_row_label}>NÖBETSİZ</span>"
+        + "".join(_legend_item(x, x["description"]) for x in _off)
+        + "</div></div>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
 
@@ -2017,33 +2071,6 @@ def _excel_bytes(_liste=df_liste.copy(), _load=df_stats_load.copy(),
 def _html_bytes(_liste=df_liste.copy(), _load=df_stats_load.copy(), _yil=yil, _ay=ay):
     return create_print_html(_liste, _load, _yil, _ay).encode('utf-8')
 
-dl1, dl2, dl3, dl4, dl5, dl6 = st.columns(6)
-with dl1:
-    st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv",
-                       on_click="ignore", width="stretch")
-with dl2:
-    st.download_button("🖼️ PNG", _png_bytes, "liste.png", "image/png",
-                       on_click="ignore", width="stretch")
-with dl3:
-    if EXCEL_AVAILABLE:
-        st.download_button("📊 Excel", _excel_bytes, f"nobet_{yil}_{ay:02d}.xlsx",
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           on_click="ignore", width="stretch")
-    else:
-        st.caption("Excel yok")
-with dl4:
-    with st.popover("💬 WhatsApp", width="stretch"):
-        st.caption("Sağ üstteki simgeyle kopyalayıp WhatsApp'a yapıştırın. Hafta sonu ve tatiller kalın görünür.")
-        st.code(
-            build_share_text(
-                rows_liste, role_names, yil, ay,
-                special_days=[d["day_num"] for d in gun_detaylari.values() if d["weekend"] or d["holiday"]],
-            ),
-            language=None,
-        )
-with dl5:
-    st.download_button("🖨️ Yazdır", _html_bytes, f"nobet_{yil}_{ay:02d}.html", "text/html",
-                       on_click="ignore", width="stretch")
 def _app_base_url():
     try:
         _url = st.context.url
@@ -2058,8 +2085,28 @@ def _app_base_url():
 
 
 _share_cache = st.session_state.setdefault("share_token_cache", {})
-_share_row = st.columns([1, 5])
-with _share_row[0]:
+_export_col, _share_col, _import_col, _ = st.columns([1, 1, 1, 3])
+with _export_col:
+    with st.popover("📤 Dışa aktar", width="stretch"):
+        st.download_button("📊 Excel", _excel_bytes, f"nobet_{yil}_{ay:02d}.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           on_click="ignore", width="stretch", disabled=not EXCEL_AVAILABLE)
+        st.download_button("🖨️ Yazdırılabilir sayfa", _html_bytes, f"nobet_{yil}_{ay:02d}.html", "text/html",
+                           on_click="ignore", width="stretch")
+        st.download_button("🖼️ Resim (PNG)", _png_bytes, "liste.png", "image/png",
+                           on_click="ignore", width="stretch")
+        st.download_button("📄 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv",
+                           on_click="ignore", width="stretch")
+        st.markdown("**💬 WhatsApp metni**")
+        st.caption("Sağ üstteki simgeyle kopyalayıp yapıştırın. Hafta sonu ve tatiller kalın görünür.")
+        st.code(
+            build_share_text(
+                rows_liste, role_names, yil, ay,
+                special_days=[d["day_num"] for d in gun_detaylari.values() if d["weekend"] or d["holiday"]],
+            ),
+            language=None,
+        )
+with _share_col:
     with st.popover("🔗 Paylaş", width="stretch"):
         if not _db_ready:
             st.caption("Paylaşım için veritabanı bağlantısı gerekli.")
@@ -2087,7 +2134,7 @@ with _share_row[0]:
                 else:
                     st.rerun()
 
-with dl6:
+with _import_col:
     with st.popover("📂 Excel Yükle", width="stretch"):
         st.caption("Daha önce indirilen Excel dosyasını veya aynı formatta hazırladığınız listeyi yükleyin.")
         _uploaded = st.file_uploader("Excel dosyası seçin (.xlsx)", type=["xlsx"], key="excel_import_uploader", label_visibility="collapsed")
@@ -2214,192 +2261,194 @@ with dl6:
 
 st.divider()
 
-# ── Günlük Liste — görev yeri değişimi ───────────────────────────────────────
-st.subheader("📋 Günlük Liste")
-st.caption("Her satırdaki 🔄 butona tıklayarak o günün görev yerlerini döngüsel olarak değiştirebilirsiniz. Değişiklik Geri Al / İleri Al ile geri alınabilir.")
-if rows_liste:
-    _gl_role_names = role_names
-    _gl_cols_cfg = {"Tarih": st.column_config.TextColumn("Tarih", disabled=True)}
-    for _glrn in _gl_role_names:
-        _gl_cols_cfg[_glrn] = st.column_config.TextColumn(_glrn, disabled=True)
-    _gl_cols_cfg["🔄"] = st.column_config.CheckboxColumn("Değiştir", default=False)
-    _gl_display_rows = []
-    for _glrow in rows_liste:
-        _gl_persons = [_glrow.get(rn, "-") for rn in _gl_role_names]
-        _gl_persons = [p for p in _gl_persons if p and p != "-" and p in isimler]
-        _gl_display_rows.append({
-            "Tarih": _glrow.get("Tarih", ""),
-            **{rn: _glrow.get(rn, "-") for rn in _gl_role_names},
-            "🔄": False,
-        })
-    _gl_df = pd.DataFrame(_gl_display_rows)
-    _gl_edited = st.data_editor(
-        _gl_df,
-        column_config=_gl_cols_cfg,
-        width="stretch",
-        hide_index=True,
-        key="gunluk_liste_swap_editor",
-        num_rows="fixed",
-    )
-    if _gl_edited is not None:
-        _gl_swap_rows = _gl_edited[_gl_edited["🔄"] == True]
-        if not _gl_swap_rows.empty:
-            _gl_swap_idx = _gl_swap_rows.index[0]
-            _gl_swap_row = rows_liste[_gl_swap_idx]
-            _gl_day_people = [_gl_swap_row.get(rn, "-") for rn in _gl_role_names]
-            _gl_day_people = [p for p in _gl_day_people if p and p != "-" and p in isimler]
-            if len(_gl_day_people) >= 2:
-                _gl_tarih_str = _gl_swap_row.get("Tarih", "")
-                try:
-                    _gl_dn = int(str(_gl_tarih_str).split(".")[0])
-                except Exception:
-                    _gl_dn = _gl_swap_idx + 1
-                st.session_state['liste_swap_day'] = _gl_dn
-                st.rerun()
-else:
-    st.info("Önce simülasyon çalıştırın veya nöbet ataması yapın.")
+tab_liste, tab_analiz = st.tabs(["📋 Günlük Liste", "📊 Analiz"])
 
-st.divider()
-
-# ── Görev Yeri Düzenleme ─────────────────────────────────────────────────────
-with st.expander("✏️ Görev Yerlerini Düzenle (Gelişmiş)", expanded=False):
-    st.caption("Görev sütunlarındaki isimleri değiştirerek rol atamalarını düzenleyebilirsiniz. Sadece o güne atanmış kişiler geçerlidir.")
+with tab_liste:
+    # ── Günlük Liste — görev yeri değişimi ───────────────────────────────────────
+    st.caption("Her satırdaki 🔄 butona tıklayarak o günün görev yerlerini döngüsel olarak değiştirebilirsiniz. Değişiklik Geri Al / İleri Al ile geri alınabilir.")
     if rows_liste:
-        _edit_col_cfg = {"Tarih": st.column_config.TextColumn("Tarih", disabled=True)}
-        for _rn in role_names:
-            _edit_col_cfg[_rn] = st.column_config.TextColumn(_rn, max_chars=50)
-        _role_edit_df = pd.DataFrame([
-            {k: v for k, v in r.items() if k == "Tarih" or k in role_names}
-            for r in rows_liste
-        ])
-        _edited_roles = st.data_editor(
-            _role_edit_df,
-            column_config=_edit_col_cfg,
+        _gl_role_names = role_names
+        _gl_cols_cfg = {"Tarih": st.column_config.TextColumn("Tarih", disabled=True)}
+        for _glrn in _gl_role_names:
+            _gl_cols_cfg[_glrn] = st.column_config.TextColumn(_glrn, disabled=True)
+        _gl_cols_cfg["🔄"] = st.column_config.CheckboxColumn("Değiştir", default=False)
+        _gl_display_rows = []
+        for _glrow in rows_liste:
+            _gl_persons = [_glrow.get(rn, "-") for rn in _gl_role_names]
+            _gl_persons = [p for p in _gl_persons if p and p != "-" and p in isimler]
+            _gl_display_rows.append({
+                "Tarih": _glrow.get("Tarih", ""),
+                **{rn: _glrow.get(rn, "-") for rn in _gl_role_names},
+                "🔄": False,
+            })
+        _gl_df = pd.DataFrame(_gl_display_rows)
+        _gl_edited = st.data_editor(
+            _gl_df,
+            column_config=_gl_cols_cfg,
             width="stretch",
             hide_index=True,
-            key="role_editor_table",
+            key="gunluk_liste_swap_editor",
             num_rows="fixed",
         )
-        if _edited_roles is not None:
-            _role_changed = False
-            _new_rows_edit = []
-            # to_dict: görev adında boşluk/tire olsa da sütun okunur (itertuples
-            # bu adları değiştirdiği için düzenlemeler sessizce kayboluyordu).
-            for _ri, (_erow, _orow) in enumerate(zip(_edited_roles.to_dict("records"), rows_liste)):
-                _day_col = sutunlar[_ri] if _ri < len(sutunlar) else None
-                _assigned_today = (
-                    edited_df.index[edited_df[_day_col]].tolist()
-                    if _day_col and _day_col in edited_df.columns else []
-                )
-                # Başka birimdeki kişiyi yazınca ikisi yer değiştirir (çift kayıt olmaz).
-                _new_r, _row_changed = apply_role_edits(_orow, _erow, role_names, _assigned_today)
-                _role_changed = _role_changed or _row_changed
-                _new_rows_edit.append(_new_r)
-            if _role_changed:
-                save_undo_state()
-                st.session_state.cached_rows_liste = _new_rows_edit
-                st.session_state.should_regenerate_assignments = False
-                st.rerun()
+        if _gl_edited is not None:
+            _gl_swap_rows = _gl_edited[_gl_edited["🔄"] == True]
+            if not _gl_swap_rows.empty:
+                _gl_swap_idx = _gl_swap_rows.index[0]
+                _gl_swap_row = rows_liste[_gl_swap_idx]
+                _gl_day_people = [_gl_swap_row.get(rn, "-") for rn in _gl_role_names]
+                _gl_day_people = [p for p in _gl_day_people if p and p != "-" and p in isimler]
+                if len(_gl_day_people) >= 2:
+                    _gl_tarih_str = _gl_swap_row.get("Tarih", "")
+                    try:
+                        _gl_dn = int(str(_gl_tarih_str).split(".")[0])
+                    except Exception:
+                        _gl_dn = _gl_swap_idx + 1
+                    st.session_state['liste_swap_day'] = _gl_dn
+                    st.rerun()
     else:
         st.info("Önce simülasyon çalıştırın veya nöbet ataması yapın.")
 
-# ── Analiz — yatay dağılım ───────────────────────────────────────────────────
-st.header("📊 Analiz")
+    st.divider()
 
-# Satır 1: Nöbet Yükü  |  Kişisel Detay
-an1, an2 = st.columns(2)
+    # ── Görev Yeri Düzenleme ─────────────────────────────────────────────────────
+    with st.expander("✏️ Görev Yerlerini Düzenle (Gelişmiş)", expanded=False):
+        st.caption("Görev sütunlarındaki isimleri değiştirerek rol atamalarını düzenleyebilirsiniz. Sadece o güne atanmış kişiler geçerlidir.")
+        if rows_liste:
+            _edit_col_cfg = {"Tarih": st.column_config.TextColumn("Tarih", disabled=True)}
+            for _rn in role_names:
+                _edit_col_cfg[_rn] = st.column_config.TextColumn(_rn, max_chars=50)
+            _role_edit_df = pd.DataFrame([
+                {k: v for k, v in r.items() if k == "Tarih" or k in role_names}
+                for r in rows_liste
+            ])
+            _edited_roles = st.data_editor(
+                _role_edit_df,
+                column_config=_edit_col_cfg,
+                width="stretch",
+                hide_index=True,
+                key="role_editor_table",
+                num_rows="fixed",
+            )
+            if _edited_roles is not None:
+                _role_changed = False
+                _new_rows_edit = []
+                # to_dict: görev adında boşluk/tire olsa da sütun okunur (itertuples
+                # bu adları değiştirdiği için düzenlemeler sessizce kayboluyordu).
+                for _ri, (_erow, _orow) in enumerate(zip(_edited_roles.to_dict("records"), rows_liste)):
+                    _day_col = sutunlar[_ri] if _ri < len(sutunlar) else None
+                    _assigned_today = (
+                        edited_df.index[edited_df[_day_col]].tolist()
+                        if _day_col and _day_col in edited_df.columns else []
+                    )
+                    # Başka birimdeki kişiyi yazınca ikisi yer değiştirir (çift kayıt olmaz).
+                    _new_r, _row_changed = apply_role_edits(_orow, _erow, role_names, _assigned_today)
+                    _role_changed = _role_changed or _row_changed
+                    _new_rows_edit.append(_new_r)
+                if _role_changed:
+                    save_undo_state()
+                    st.session_state.cached_rows_liste = _new_rows_edit
+                    st.session_state.should_regenerate_assignments = False
+                    st.rerun()
+        else:
+            st.info("Önce simülasyon çalıştırın veya nöbet ataması yapın.")
 
-with an1:
-    st.markdown("**Nöbet Yükü**")
-    if history_special:
-        _hist_text = " · ".join(
-            f"{_p} {_prev_ctx['history_counts'].get(_p, 0)}" for _p in isimler
+with tab_analiz:
+    # ── Analiz — yatay dağılım ───────────────────────────────────────────────────
+
+    # Satır 1: Nöbet Yükü  |  Kişisel Detay
+    an1, an2 = st.columns(2)
+
+    with an1:
+        st.markdown("**Nöbet Yükü**")
+        if history_special:
+            _hist_text = " · ".join(
+                f"{_p} {_prev_ctx['history_counts'].get(_p, 0)}" for _p in isimler
+            )
+            st.caption(
+                f"⚖️ Önceki {_prev_ctx['months']} ayın hafta sonu/tatil nöbetleri dengelemede "
+                f"hesaba katılıyor: {_hist_text}"
+            )
+        st.dataframe(
+            df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
+                               .background_gradient(cmap="Oranges", subset=["Özel"]),
+            width="stretch"
         )
-        st.caption(
-            f"⚖️ Önceki {_prev_ctx['months']} ayın hafta sonu/tatil nöbetleri dengelemede "
-            f"hesaba katılıyor: {_hist_text}"
+        if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
+            if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
+                save_undo_state()
+                rows_liste_to_redist = st.session_state.cached_rows_liste
+                first_role_counts_to_redist = {i: 0 for i in isimler}
+                new_rows_liste = []
+                for row in rows_liste_to_redist:
+                    nobetciler = []
+                    for rn in role_names:
+                        p = row.get(rn, "-")
+                        if p != "-" and p in isimler: nobetciler.append(p)
+                    random.shuffle(nobetciler)
+                    nobetciler.sort(key=lambda x: first_role_counts_to_redist.get(x, 0))
+                    new_row = {"Tarih": row["Tarih"]}
+                    for idx, rn in enumerate(role_names):
+                        if len(nobetciler) > idx:
+                            p = nobetciler[idx]
+                            new_row[rn] = p
+                            if idx == 0:
+                                first_role_counts_to_redist[p] = first_role_counts_to_redist.get(p, 0) + 1
+                        else:
+                            new_row[rn] = "-"
+                    new_rows_liste.append(new_row)
+                st.session_state.cached_rows_liste = new_rows_liste
+                st.session_state.cached_first_role_counts = first_role_counts_to_redist
+                # Nöbetçiler değişmez; çizelge yeniden kurulmaz (görev sayısından
+                # fazla atanmış kişiler sessizce siliniyordu).
+                st.session_state.should_regenerate_assignments = False
+                st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
+                # Üstteki Günlük Liste ve takvim yeni rolleri hemen göstersin.
+                st.rerun()
+
+    with an2:
+        st.markdown("**Kişisel Detay**")
+        kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
+        st.download_button(
+            f"📅 {kisi_sec} — takvime ekle (.ics)",
+            lambda _p=kisi_sec, _rows=list(rows_liste), _roles=list(role_names), _y=yil, _m=ay:
+                build_person_ics(_p, _rows, _roles, _y, _m).encode("utf-8"),
+            f"nobet_{yil}_{ay:02d}.ics", "text/calendar",
+            on_click="ignore", width="stretch",
+            help="Telefonda açınca nöbetler takvime eklenir; başlıkta görev yeri (birim) yazar.",
         )
-    st.dataframe(
-        df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
-                           .background_gradient(cmap="Oranges", subset=["Özel"]),
-        width="stretch"
-    )
-    if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
-        if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
-            save_undo_state()
-            rows_liste_to_redist = st.session_state.cached_rows_liste
-            first_role_counts_to_redist = {i: 0 for i in isimler}
-            new_rows_liste = []
-            for row in rows_liste_to_redist:
-                nobetciler = []
-                for rn in role_names:
-                    p = row.get(rn, "-")
-                    if p != "-" and p in isimler: nobetciler.append(p)
-                random.shuffle(nobetciler)
-                nobetciler.sort(key=lambda x: first_role_counts_to_redist.get(x, 0))
-                new_row = {"Tarih": row["Tarih"]}
-                for idx, rn in enumerate(role_names):
-                    if len(nobetciler) > idx:
-                        p = nobetciler[idx]
-                        new_row[rn] = p
-                        if idx == 0:
-                            first_role_counts_to_redist[p] = first_role_counts_to_redist.get(p, 0) + 1
-                    else:
-                        new_row[rn] = "-"
-                new_rows_liste.append(new_row)
-            st.session_state.cached_rows_liste = new_rows_liste
-            st.session_state.cached_first_role_counts = first_role_counts_to_redist
-            # Nöbetçiler değişmez; çizelge yeniden kurulmaz (görev sayısından
-            # fazla atanmış kişiler sessizce siliniyordu).
-            st.session_state.should_regenerate_assignments = False
-            st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
-            # Üstteki Günlük Liste ve takvim yeni rolleri hemen göstersin.
-            st.rerun()
+        kisi_rows = []
+        for index, row in df_liste.iterrows():
+            roller = []
+            partners_set = set()
+            for role_idx, role_name in enumerate(role_names):
+                if role_name in row and row.get(role_name) == kisi_sec:
+                    roller.append(role_name)
+                    for other_idx, other_role in enumerate(role_names):
+                        if other_idx != role_idx and other_role in row and row.get(other_role) and row[other_role] != '-':
+                            partners_set.add(row[other_role])
+            if roller:
+                partner_str = ', '.join(sorted(partners_set)) if partners_set else 'Tek'
+                kisi_rows.append({"Tarih": row['Tarih'], "Partner": partner_str, "Rol": ', '.join(roller)})
+        df_kisi = pd.DataFrame(kisi_rows)
+        if not df_kisi.empty:
+            h_kisi = min(len(df_kisi) * 35 + 38, 400)
+            st.dataframe(df_kisi, height=h_kisi, width="stretch", hide_index=True)
+        else:
+            st.info("Nöbet yok.")
 
-with an2:
-    st.markdown("**Kişisel Detay**")
-    kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
-    st.download_button(
-        f"📅 {kisi_sec} — takvime ekle (.ics)",
-        lambda _p=kisi_sec, _rows=list(rows_liste), _roles=list(role_names), _y=yil, _m=ay:
-            build_person_ics(_p, _rows, _roles, _y, _m).encode("utf-8"),
-        f"nobet_{yil}_{ay:02d}.ics", "text/calendar",
-        on_click="ignore", width="stretch",
-        help="Telefonda açınca nöbetler takvime eklenir; başlıkta görev yeri (birim) yazar.",
-    )
-    kisi_rows = []
-    for index, row in df_liste.iterrows():
-        roller = []
-        partners_set = set()
-        for role_idx, role_name in enumerate(role_names):
-            if role_name in row and row.get(role_name) == kisi_sec:
-                roller.append(role_name)
-                for other_idx, other_role in enumerate(role_names):
-                    if other_idx != role_idx and other_role in row and row.get(other_role) and row[other_role] != '-':
-                        partners_set.add(row[other_role])
-        if roller:
-            partner_str = ', '.join(sorted(partners_set)) if partners_set else 'Tek'
-            kisi_rows.append({"Tarih": row['Tarih'], "Partner": partner_str, "Rol": ', '.join(roller)})
-    df_kisi = pd.DataFrame(kisi_rows)
-    if not df_kisi.empty:
-        h_kisi = min(len(df_kisi) * 35 + 38, 400)
-        st.dataframe(df_kisi, height=h_kisi, width="stretch", hide_index=True)
-    else:
-        st.info("Nöbet yok.")
+    st.divider()
 
-st.divider()
+    # Satır 2: Ücret Özeti  |  Eşleşme Matrisi
+    an3, an4 = st.columns(2)
 
-# Satır 2: Ücret Özeti  |  Eşleşme Matrisi
-an3, an4 = st.columns(2)
+    with an3:
+        st.markdown("**Ücret Özeti**")
+        st.dataframe(
+            df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
+                                  .format({"Ücret (TL)": "₺ {:,.2f}"}),
+            width="stretch"
+        )
 
-with an3:
-    st.markdown("**Ücret Özeti**")
-    st.dataframe(
-        df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
-                              .format({"Ücret (TL)": "₺ {:,.2f}"}),
-        width="stretch"
-    )
-
-with an4:
-    st.markdown("**Eşleşme Matrisi**")
-    st.dataframe(pair_display, width="stretch")
+    with an4:
+        st.markdown("**Eşleşme Matrisi**")
+        st.dataframe(pair_display, width="stretch")
