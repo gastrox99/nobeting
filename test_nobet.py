@@ -1248,6 +1248,19 @@ class TestGridAppearance(unittest.TestCase):
         self.assertIn("background: {ui['name_bg']} !important;", self.source)
         self.assertNotIn("background: #f8fafc !important;", self.source)
 
+    def test_isim_sutunu_en_uzun_isme_gore(self):
+        from nobet_core import name_column_width
+        self.assertEqual(name_column_width(["Ali", "Can"]), 96)          # kısa isimler: en az 96
+        self.assertGreater(name_column_width(["AYBÜKE", "Ali"]), 96)       # rozet sığsın
+        self.assertEqual(name_column_width(["Çok Uzun Bir İsim Soyisim Örneği"]), 220)  # üst sınır
+        self.assertEqual(name_column_width([]), 96)
+
+    def test_sayi_rozeti_alt_satira_kaymaz(self):
+        self.assertIn("flex: 0 0 {name_col_px}px !important;", self.source)
+        self.assertIn("display:flex;flex-wrap:nowrap;", self.source)
+        self.assertIn("text-overflow:ellipsis;", self.source)
+        self.assertIn("<span style='flex-shrink:0;background:{badge_bg}", self.source)
+
     def test_gunler_alt_satira_kaymaz(self):
         self.assertIn(
             '.st-key-preference-grid [data-testid="stHorizontalBlock"] {{\n    flex-wrap: nowrap !important;',

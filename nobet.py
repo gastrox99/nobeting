@@ -50,6 +50,7 @@ try:
         apply_app_settings,
         apply_role_edits,
         assignment_warnings,
+        name_column_width,
         collect_app_settings,
         persistence_fingerprint,
         build_schedule_analysis,
@@ -100,6 +101,7 @@ except ImportError:
         apply_app_settings,
         apply_role_edits,
         assignment_warnings,
+        name_column_width,
         collect_app_settings,
         persistence_fingerprint,
         build_schedule_analysis,
@@ -1099,6 +1101,7 @@ with tab_grid:
                 f"{{ background:{ui['weekend_bg']}!important; border-radius:6px; }}"
             )
     col_bg_css = "\n".join(col_bg_css_parts)
+    name_col_px = name_column_width(isimler)
 
     st.markdown(f"""
 <style>
@@ -1125,6 +1128,14 @@ with tab_grid:
     .st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
         min-width: 96px !important;
     }}
+}}
+/* İsim sütunu en uzun isme göre sabit genişlikte (nokta + isim + sayı rozeti);
+   sayı alt satıra kayıp satırı uzatmaz. */
+.st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1),
+.st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
+    flex: 0 0 {name_col_px}px !important;
+    min-width: {name_col_px}px !important;
+    max-width: {name_col_px}px !important;
 }}
 {col_bg_css}
 .st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]),
@@ -1305,11 +1316,12 @@ with tab_grid:
                 pc = person_colors.get(person, "#e2e8f0")
                 st.markdown(
                     f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;color:{ui['name_text']};"
-                    f"display:flex;align-items:center;gap:4px;min-height:30px;'>"
+                    f"display:flex;flex-wrap:nowrap;align-items:center;gap:4px;min-height:30px;overflow:hidden;'"
+                    f" title='{escape_html(person)}'>"
                     f"<span style='flex-shrink:0;width:11px;height:11px;border-radius:50%;"
                     f"background:{pc};border:1px solid rgba(0,0,0,0.12);'></span>"
-                    f"<b>{escape_html(person)}</b>"
-                    f"<span style='background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
+                    f"<b style='min-width:0;overflow:hidden;text-overflow:ellipsis;'>{escape_html(person)}</b>"
+                    f"<span style='flex-shrink:0;background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
                     f"</div>",
                     unsafe_allow_html=True
                 )

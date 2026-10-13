@@ -225,6 +225,16 @@ def get_preference_grid_state(is_assigned, preference_value, has_conflict=False)
     return dict(_PREFERENCE_GRID_STATE_BY_KEY[state_key])
 
 
+def name_column_width(names, char_px=9, minimum=96, maximum=220):
+    """İsim sütunu genişliği (px): renk noktası + en uzun isim + sayı rozeti.
+
+    Çok uzun isimler ``maximum``'da kesilir ve "…" ile kısaltılır.
+    """
+    longest = max((len(str(name)) for name in names), default=0)
+    width = 11 + 4 + longest * char_px + 4 + 30 + 10  # nokta, boşluk, isim, boşluk, rozet, kenar
+    return int(max(minimum, min(maximum, width)))
+
+
 def get_preference_grid_legend():
     """Return the legend entries in the same order as the cell states."""
     return [dict(state) for state in PREFERENCE_GRID_STATES]
