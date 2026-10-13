@@ -10,14 +10,17 @@ from datetime import date, datetime
 import numpy as np
 import time
 import json
+import os
 from html import escape as _escape_html
 from db import (
     init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
-    save_app_settings, load_app_settings,
+    save_app_settings, load_app_settings, claim_legacy_data,
 )
 from streamlit_local_storage import LocalStorage
 from nobet_core import (
+    normalize_owner_email,
     apply_app_settings,
+    assignment_warnings,
     collect_app_settings,
     persistence_fingerprint,
     build_schedule_analysis,
@@ -28,6 +31,7 @@ from nobet_core import (
     normalize_preference_grid,
     parse_schedule_import_date,
     parse_holiday_days,
+    period_key,
     restore_auto_saved_schedule,
     run_scheduling_core,
     schedule_fingerprint,
@@ -61,6 +65,52 @@ st.set_page_config(page_title="Adil Nöbet", layout="wide")
 if not _db_ready:
     st.warning("⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt özellikleri şu an çalışmayabilir.")
 
+# --- GOOGLE İLE GİRİŞ (isteğe bağlı) ---
+# .streamlit/secrets.toml içinde [auth] ayarları varsa giriş zorunludur ve her
+# kullanıcının verisi Google e-postasına bağlı saklanır. Yoksa uygulama eskisi
+# gibi tek kullanıcılı çalışır (scripts/write_streamlit_secrets.py'ye bakın).
+def _auth_configured():
+    try:
+        _auth = st.secrets.get("auth")
+    except Exception:
+        return False
+    return bool(
+        _auth
+        and _auth.get("client_id")
+        and _auth.get("client_secret")
+        and _auth.get("redirect_uri")
+    )
+
+
+def _current_user_email():
+    try:
+        return normalize_owner_email(st.user["email"])
+    except Exception:
+        return ""
+
+
+AUTH_ENABLED = _auth_configured()
+if AUTH_ENABLED:
+    if not st.user.is_logged_in:
+        st.markdown("<h1 style='text-align: center; font-size: 2.5rem;'>Nöbet Yönetimi</h1>", unsafe_allow_html=True)
+        st.info("Çizelgeleriniz Google hesabınıza bağlı olarak saklanır. Devam etmek için giriş yapın.")
+        st.button("🔐 Google ile giriş yap", on_click=st.login, type="primary")
+        st.stop()
+    current_owner = _current_user_email()
+    if not current_owner:
+        st.error("Google hesabınızın e-posta adresi alınamadı. Çıkış yapıp tekrar deneyin.")
+        st.button("Çıkış yap", on_click=st.logout)
+        st.stop()
+    # Girişten önce kaydedilmiş veriyi yönetici hesabına bir kez aktar.
+    if (
+        "legacy_claim_done" not in st.session_state
+        and current_owner == normalize_owner_email(os.getenv("ADMIN_EMAIL", ""))
+        and _db_ready
+    ):
+        st.session_state.legacy_claim_done = claim_legacy_data(current_owner)
+else:
+    current_owner = ""
+
 # --- Ekip ve ayarları veritabanından geri yükle (sayfa yenilemesinde) ---
 if 'app_settings_loaded' not in st.session_state:
     st.session_state.app_settings_loaded = True
@@ -69,7 +119,7 @@ if 'app_settings_loaded' not in st.session_state:
     st.session_state.app_settings_load_failed = not _db_ready
     if _db_ready:
         try:
-            _stored_settings = load_app_settings(raise_on_error=True)
+            _stored_settings = load_app_settings(owner=current_owner, raise_on_error=True)
         except Exception:
             st.session_state.app_settings_load_failed = True
             st.warning("⚠️ Kayıtlı ekip ve ayarlar okunamadı. Sayfayı yenileyin.")
@@ -84,7 +134,8 @@ local_storage = LocalStorage()
 # Load saved team from localStorage on first run
 if 'localStorage_loaded' not in st.session_state:
     st.session_state.localStorage_loaded = True
-    saved_team = local_storage.getItem("nobet_team")
+    # Girişli modda tarayıcıdaki ekip başka bir kullanıcıya ait olabilir.
+    saved_team = None if AUTH_ENABLED else local_storage.getItem("nobet_team")
     if saved_team and not st.session_state.get("isimler_text"):
         st.session_state.isimler_text = saved_team
     st.session_state.last_stored_team_text = saved_team or st.session_state.get("isimler_text", "")
@@ -200,6 +251,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<h1 style='text-align: center; font-size: 2.5rem;'>Nöbet Yönetimi</h1>", unsafe_allow_html=True)
+if AUTH_ENABLED:
+    _user_cols = st.columns([5, 1])
+    with _user_cols[0]:
+        st.caption(f"👤 `{current_owner}`")
+    with _user_cols[1]:
+        st.button("Çıkış yap", on_click=st.logout, width="stretch")
 
 # --- YARDIMCI FONKSİYONLAR ---
 def escape_html(value):
@@ -489,12 +546,18 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     with set_col3:
         min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, st.session_state.get("min_bosluk_val", 1))
         st.session_state.min_bosluk_val = min_bosluk
+        # Tatiller her ay için ayrı saklanır ("2026-10": "29").
+        _holidays_by_period = st.session_state.setdefault("holidays_by_period", {})
+        _holiday_period = period_key(yil, ay)
         holiday_input = st.text_input(
-            "🎉 Tatiller:",
-            value=st.session_state.get("holiday_text", ""),
+            "🎉 Tatiller (bu ay):",
+            value=_holidays_by_period.get(_holiday_period, ""),
             placeholder="1,2,5-10,23",
         )
-        st.session_state.holiday_text = holiday_input
+        if holiday_input.strip():
+            _holidays_by_period[_holiday_period] = holiday_input
+        else:
+            _holidays_by_period.pop(_holiday_period, None)
         tatil_gunleri, invalid_holiday_parts = parse_holiday_days(holiday_input, gun_sayisi)
         if invalid_holiday_parts:
             invalid_text = ", ".join(f"'{part}'" for part in invalid_holiday_parts)
@@ -629,7 +692,7 @@ if (
     # İlk açılışta boş ekip kaydedilmesin (localStorage'dan gelecek ekip ezilmesin).
     and not (_nothing_saved_yet and not st.session_state.get("isimler_text", "").strip())
 ):
-    if save_app_settings(_current_settings):
+    if save_app_settings(_current_settings, owner=current_owner):
         st.session_state.last_saved_settings = _current_settings
 
 if not isimler: st.stop()
@@ -669,7 +732,7 @@ def _save_outgoing_period(period, schedule, preferences, rows):
         return
     save_schedule(
         f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
-        schedule, pref_df=preferences, rows_liste=rows,
+        schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
     )
 
 # Ay/yıl değişince eski ayın çizelgesini yeni aya taşımak yerine kaydet ve
@@ -683,7 +746,7 @@ if 'schedule_bool' not in st.session_state:
     def _load_auto_schedule(name, year, month):
         # Keep "no saved schedule yet" distinct from a database failure so the
         # first visit does not show a misleading error.
-        return load_schedule(name, year, month, raise_on_error=True)
+        return load_schedule(name, year, month, raise_on_error=True, owner=current_owner)
 
     def _on_auto_load_error(_error):
         # Kayıt okunamadıysa boş çizelgeyi kaydedip gerçek verinin üzerine yazma.
@@ -778,6 +841,30 @@ for _stale in [k for k in list(st.session_state.person_preferences.keys()) if k 
 
 if st.session_state.pop("simulation_success_pending", False):
     st.toast("En adil sonuç seçildi.", icon="🧠")
+
+
+def _queue_assignment_warnings(cells):
+    """Yeni atanan hücreler için uyarıları sayfa yenilenince gösterilmek üzere sıraya koy."""
+    _queued = []
+    for _person, _column in cells:
+        _queued.extend(assignment_warnings(
+            st.session_state.schedule_bool,
+            _person,
+            _column,
+            sutunlar,
+            gun_detaylari,
+            min_bosluk,
+            st.session_state.get('person_limits', {}),
+            st.session_state.get('pref_df'),
+            st.session_state.get('forbidden_pairs', set()),
+            kişi_sayısı,
+        ))
+    if _queued:
+        st.session_state.pending_assignment_warnings = _queued
+
+
+for _warning in st.session_state.pop("pending_assignment_warnings", [])[:5]:
+    st.toast(_warning, icon="⚠️")
 
 # --- KİŞİ RENK PALETİ (20 pastel ton) ---
 PASTEL_COLORS = [
@@ -1134,7 +1221,15 @@ with tab_grid:
             )
             if not _compact_schedule.equals(st.session_state.schedule_bool):
                 save_undo_state()
+                _previous_schedule = st.session_state.schedule_bool
                 st.session_state.schedule_bool = _compact_schedule.astype(bool)
+                _queue_assignment_warnings([
+                    (_p, _c)
+                    for _c in sutunlar
+                    for _p in isimler
+                    if bool(st.session_state.schedule_bool.at[_p, _c])
+                    and not bool(_previous_schedule.at[_p, _c])
+                ])
                 st.rerun()
     else:
         _person_limits = st.session_state.get('person_limits', {})
@@ -1181,6 +1276,7 @@ with tab_grid:
                             st.session_state.pref_df.at[person, col] = st.session_state.paint_color
                         else:
                             st.session_state.schedule_bool.at[person, col] = not st.session_state.schedule_bool.at[person, col]
+                            _queue_assignment_warnings([(person, col)])
                         st.rerun()
 
     legend_container = st.container(key="preference-legend", border=False)
@@ -1737,7 +1833,7 @@ elif (
     try:
         _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
                                   pref_df=st.session_state.get('pref_df'),
-                                  rows_liste=rows_liste)
+                                  rows_liste=rows_liste, owner=current_owner)
     except Exception:
         _saved_ok = False
     if _saved_ok:
@@ -1788,43 +1884,39 @@ df_stats_load, df_stats_finance, pair_display = st.session_state.cached_analysis
 st.divider()
 
 # ── İndirme butonları ince yatay satır ──────────────────────────────────────
-data_hash = hash(df_liste.to_csv() + df_stats_load.to_csv() + df_stats_finance.to_csv())
-excel_key = f"excel_{yil}_{ay}"
-hash_key = f"excel_hash_{yil}_{ay}"
-if EXCEL_AVAILABLE:
-    if excel_key not in st.session_state or st.session_state.get(hash_key) != data_hash:
-        st.session_state[excel_key] = convert_df_to_excel(
-            df_liste, df_stats_load, df_stats_finance, yil=yil
-        )
-        st.session_state[hash_key] = data_hash
+# PNG/Excel/HTML yalnızca butona tıklanınca üretilir (eskiden her nöbet
+# işaretlemesinde matplotlib ile yeniden çiziliyordu). Varsayılan argümanlar
+# o anki tabloları sabitler; on_click="ignore" indirmede sayfayı yeniden çizmez.
+def _png_bytes(_liste=df_liste.copy()):
+    return convert_df_to_png(_liste)
 
-png_key = f"png_{yil}_{ay}"
-png_hash_key = f"png_hash_{yil}_{ay}"
-if png_key not in st.session_state or st.session_state.get(png_hash_key) != data_hash:
-    st.session_state[png_key] = convert_df_to_png(df_liste)
-    st.session_state[png_hash_key] = data_hash
+def _excel_bytes(_liste=df_liste.copy(), _load=df_stats_load.copy(),
+                 _finance=df_stats_finance.copy(), _yil=yil):
+    return convert_df_to_excel(_liste, _load, _finance, yil=_yil)
 
-html_key = f"html_{yil}_{ay}"
-html_hash_key = f"html_hash_{yil}_{ay}"
-if html_key not in st.session_state or st.session_state.get(html_hash_key) != data_hash:
-    st.session_state[html_key] = create_print_html(df_liste, df_stats_load, yil, ay)
-    st.session_state[html_hash_key] = data_hash
+def _html_bytes(_liste=df_liste.copy(), _load=df_stats_load.copy(), _yil=yil, _ay=ay):
+    return create_print_html(_liste, _load, _yil, _ay).encode('utf-8')
 
 dl1, dl2, dl3, dl4, dl5, dl6 = st.columns(6)
 with dl1:
-    st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv", width="stretch")
+    st.download_button("📥 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv",
+                       on_click="ignore", width="stretch")
 with dl2:
-    st.download_button("🖼️ PNG", st.session_state[png_key], "liste.png", "image/png", width="stretch")
+    st.download_button("🖼️ PNG", _png_bytes, "liste.png", "image/png",
+                       on_click="ignore", width="stretch")
 with dl3:
     if EXCEL_AVAILABLE:
-        st.download_button("📊 Excel", st.session_state[excel_key], f"nobet_{yil}_{ay:02d}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
+        st.download_button("📊 Excel", _excel_bytes, f"nobet_{yil}_{ay:02d}.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           on_click="ignore", width="stretch")
     else:
         st.caption("Excel yok")
 with dl4:
     with st.popover("💬 Metin", width="stretch"):
         st.text_area("Kopyala:", value=df_liste.to_markdown(index=False), height=200)
 with dl5:
-    st.download_button("🖨️ Yazdır", st.session_state[html_key].encode('utf-8'), f"nobet_{yil}_{ay:02d}.html", "text/html", width="stretch")
+    st.download_button("🖨️ Yazdır", _html_bytes, f"nobet_{yil}_{ay:02d}.html", "text/html",
+                       on_click="ignore", width="stretch")
 with dl6:
     with st.popover("📂 Excel Yükle", width="stretch"):
         st.caption("Daha önce indirilen Excel dosyasını veya aynı formatta hazırladığınız listeyi yükleyin.")
@@ -1906,7 +1998,7 @@ with dl6:
                         st.session_state.should_regenerate_assignments = False
                         _xl_save_ok = save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched,
                                                     pref_df=st.session_state.get('pref_df'),
-                                                    rows_liste=_new_rows)
+                                                    rows_liste=_new_rows, owner=current_owner)
                         if not _xl_save_ok:
                             update_persistence_feedback(
                                 st.session_state,

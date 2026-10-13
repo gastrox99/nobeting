@@ -18,6 +18,13 @@ from html import escape as _escape_html
 from numbers import Integral
 
 
+def normalize_owner_email(value):
+    """Kullanıcıyı eşleştirmek için e-postayı tek biçime getirir."""
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower()
+
+
 def escape_html(value):
     """Convert any displayed value to safe HTML text."""
     return _escape_html(str(value), quote=True)
@@ -368,6 +375,78 @@ def synchronize_changed_role_rows(
     return synchronized_rows
 
 
+def assignment_warnings(
+    schedule,
+    person,
+    column,
+    columns,
+    day_details,
+    min_rest,
+    person_limits=None,
+    preferences=None,
+    forbidden_pairs=None,
+    people_per_shift=None,
+):
+    """Bir kişi bir güne atandıktan hemen sonra gösterilecek uyarıları döner.
+
+    ``schedule`` atama yapılmış hâlidir; kişi o gün atanmamışsa liste boştur.
+    """
+    if (
+        person not in schedule.index
+        or column not in schedule.columns
+        or not bool(schedule.at[person, column])
+    ):
+        return []
+
+    warnings = []
+    day = day_details[column]["day_num"]
+
+    nearby_days = sorted(
+        day_details[other]["day_num"]
+        for other in columns
+        if other != column
+        and other in schedule.columns
+        and bool(schedule.at[person, other])
+        and abs(day_details[other]["day_num"] - day) <= min_rest
+    )
+    if nearby_days:
+        days_text = ", ".join(str(d) for d in nearby_days)
+        warnings.append(
+            f"{person}: {days_text}. günde de nöbeti var — {min_rest} gün dinlenme kuralına uymuyor."
+        )
+
+    max_limit = (person_limits or {}).get(person, {}).get("max", 999)
+    total = int(schedule.loc[person].sum())
+    if max_limit < 999 and total > max_limit:
+        warnings.append(f"{person}: toplam {total} nöbet, en fazla {max_limit} olmalı.")
+
+    if (
+        preferences is not None
+        and person in preferences.index
+        and column in preferences.columns
+    ):
+        try:
+            preference = int(preferences.at[person, column])
+        except (TypeError, ValueError):
+            preference = 0
+        if preference == 3:
+            warnings.append(f"{person}: {day}. gün müsait değil olarak işaretli.")
+        elif preference == 2:
+            warnings.append(f"{person}: {day}. gün kaçınmak istediği gün.")
+
+    others = [p for p in schedule.index[schedule[column]].tolist() if p != person]
+    for other in others:
+        if tuple(sorted((person, other))) in (forbidden_pairs or set()):
+            warnings.append(f"{day}. gün: {person} ve {other} birlikte çalışamaz.")
+
+    if people_per_shift is not None and len(others) + 1 > people_per_shift:
+        warnings.append(
+            f"{day}. gün: {len(others) + 1} kişi atandı, en fazla {people_per_shift} olmalı."
+        )
+
+    return warnings
+
+
 def find_person_role(rows_liste, role_names, day_index, person):
     """Return the role assigned to a person on a schedule day, if any."""
     if not rows_liste or day_index < 0 or day_index >= len(rows_liste):
@@ -564,6 +643,22 @@ def _text(value):
     return value if isinstance(value, str) else None
 
 
+def _period_texts(value):
+    """{"2026-10": "29", ...} biçimindeki aylık metinleri doğrular."""
+    if not isinstance(value, dict):
+        return None
+    cleaned = {
+        key: text for key, text in value.items()
+        if isinstance(key, str) and re.fullmatch(r"\d{4}-\d{2}", key) and isinstance(text, str)
+    }
+    return cleaned
+
+
+def period_key(yil, ay):
+    """Aya özel ayarlar (ör. tatiller) için anahtar: "2026-10"."""
+    return f"{int(yil):04d}-{int(ay):02d}"
+
+
 def _non_negative_float(value):
     if isinstance(value, bool):
         return None
@@ -580,7 +675,7 @@ APP_SETTINGS_FIELDS = {
     "month": ("ay_val", _int_in(1, 12)),
     "people_per_shift": ("kisi_sayisi_val", _int_in(1, 5)),
     "rest_days": ("min_bosluk_val", _int_in(0, 3)),
-    "holidays": ("holiday_text", _text),
+    "holidays_by_period": ("holidays_by_period", _period_texts),
     "hourly_rate": ("nobet_ucreti_val", _non_negative_float),
     "role_names": ("role_names_text", _text),
     "forbidden_pairs": ("forbidden_pairs_text", _text),
@@ -601,11 +696,14 @@ def apply_app_settings(session_state, settings):
 
 def collect_app_settings(session_state):
     """Session state'teki güncel ayarları kaydedilecek sözlüğe çevirir."""
-    return {
+    settings = {
         name: session_state.get(state_key)
         for name, (state_key, _check) in APP_SETTINGS_FIELDS.items()
         if session_state.get(state_key) is not None
     }
+    # Derin kopya: iç içe sözlükler (aylık tatiller) sonradan değişince
+    # "son kaydedilen" kopya da değişip kaydı engellemesin.
+    return json.loads(json.dumps(settings, ensure_ascii=False))
 
 
 def persistence_fingerprint(schedule, preferences, rows):

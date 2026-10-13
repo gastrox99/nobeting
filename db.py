@@ -60,10 +60,26 @@ def init_db():
                 # Team list and settings, so a page reload restores them.
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS app_settings (
-                        key VARCHAR(100) PRIMARY KEY,
+                        key VARCHAR(320) PRIMARY KEY,
                         value TEXT NOT NULL,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
+                ''')
+                cur.execute('''
+                    ALTER TABLE app_settings ALTER COLUMN key TYPE VARCHAR(320)
+                ''')
+
+                # Per-user data (Google login): each schedule belongs to an
+                # owner e-mail. '' is the single-user / pre-login data.
+                cur.execute('''
+                    ALTER TABLE schedules ADD COLUMN IF NOT EXISTS owner VARCHAR(320) NOT NULL DEFAULT ''
+                ''')
+                cur.execute('''
+                    ALTER TABLE schedules DROP CONSTRAINT IF EXISTS schedules_name_year_month_key
+                ''')
+                cur.execute('''
+                    CREATE UNIQUE INDEX IF NOT EXISTS schedules_owner_name_year_month_key
+                    ON schedules (owner, name, year, month)
                 ''')
         return True
     except Exception as e:
@@ -73,7 +89,12 @@ def init_db():
         if conn is not None:
             conn.close()
 
-def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None):
+def settings_key(owner=""):
+    """app_settings row key for a user ('' = single-user mode)."""
+    return f"user:{owner}" if owner else "default"
+
+
+def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None, owner=""):
     """Save a schedule to database"""
     conn = None
     try:
@@ -110,16 +131,16 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
             with conn.cursor() as cur:
                 # Insert or update schedule
                 cur.execute('''
-                    INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (name, year, month) DO UPDATE
+                    INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, owner, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (owner, name, year, month) DO UPDATE
                         SET updated_at = CURRENT_TIMESTAMP,
                             team_members = EXCLUDED.team_members,
                             pref_json = EXCLUDED.pref_json,
                             settings_json = EXCLUDED.settings_json,
                             rows_liste_json = EXCLUDED.rows_liste_json
                     RETURNING id
-                ''', (name, year, month, team_str, pref_json, settings_json_str, rows_liste_json))
+                ''', (name, year, month, team_str, pref_json, settings_json_str, rows_liste_json, owner))
 
                 schedule_id = cur.fetchone()[0]
 
@@ -146,7 +167,7 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
         if conn is not None:
             conn.close()
 
-def load_schedule(name, year, month, raise_on_error=False):
+def load_schedule(name, year, month, raise_on_error=False, owner=""):
     """Load a schedule from database.
     Returns (team_members, schedule_df, pref_df, settings_dict, rows_liste).
     pref_df, settings_dict, and rows_liste are None when not saved.
@@ -161,8 +182,8 @@ def load_schedule(name, year, month, raise_on_error=False):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Get schedule
             cur.execute('''
-                SELECT * FROM schedules WHERE name = %s AND year = %s AND month = %s
-            ''', (name, year, month))
+                SELECT * FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s
+            ''', (owner, name, year, month))
 
             schedule_row = cur.fetchone()
             if not schedule_row:
@@ -243,7 +264,7 @@ def load_schedule(name, year, month, raise_on_error=False):
         if conn is not None:
             conn.close()
 
-def save_app_settings(settings, key="default"):
+def save_app_settings(settings, owner=""):
     """Save the team list and settings as one JSON document."""
     conn = None
     try:
@@ -256,7 +277,7 @@ def save_app_settings(settings, key="default"):
                     ON CONFLICT (key) DO UPDATE
                         SET value = EXCLUDED.value,
                             updated_at = CURRENT_TIMESTAMP
-                ''', (key, json.dumps(settings, ensure_ascii=False)))
+                ''', (settings_key(owner), json.dumps(settings, ensure_ascii=False)))
         return True
     except Exception as e:
         print(f"Save settings error: {e}")
@@ -266,13 +287,13 @@ def save_app_settings(settings, key="default"):
             conn.close()
 
 
-def load_app_settings(key="default", raise_on_error=False):
+def load_app_settings(owner="", raise_on_error=False):
     """Return saved settings as a dict, or None when nothing is saved yet."""
     conn = None
     try:
         conn = psycopg2.connect(DATABASE_URL)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute('SELECT value FROM app_settings WHERE key = %s', (key,))
+            cur.execute('SELECT value FROM app_settings WHERE key = %s', (settings_key(owner),))
             row = cur.fetchone()
         if not row:
             return None
@@ -288,7 +309,43 @@ def load_app_settings(key="default", raise_on_error=False):
             conn.close()
 
 
-def list_schedules():
+def claim_legacy_data(owner):
+    """Give data saved before login ('' owner) to this user, once.
+
+    Only rows the user does not already have are moved, so it is safe to call
+    on every login. Returns True on success.
+    """
+    if not owner:
+        return False
+    conn = None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    UPDATE schedules AS legacy SET owner = %s
+                    WHERE legacy.owner = ''
+                      AND NOT EXISTS (
+                          SELECT 1 FROM schedules AS mine
+                          WHERE mine.owner = %s AND mine.name = legacy.name
+                            AND mine.year = legacy.year AND mine.month = legacy.month
+                      )
+                ''', (owner, owner))
+                cur.execute('''
+                    INSERT INTO app_settings (key, value, updated_at)
+                    SELECT %s, value, CURRENT_TIMESTAMP FROM app_settings WHERE key = 'default'
+                    ON CONFLICT (key) DO NOTHING
+                ''', (settings_key(owner),))
+        return True
+    except Exception as e:
+        print(f"Claim legacy data error: {e}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_schedules(owner=""):
     """List all saved schedules"""
     conn = None
     try:
@@ -296,8 +353,9 @@ def list_schedules():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('''
                 SELECT name, year, month, updated_at FROM schedules
+                WHERE owner = %s
                 ORDER BY updated_at DESC
-            ''')
+            ''', (owner,))
             schedules = cur.fetchall()
         return schedules
     except Exception as e:
@@ -307,7 +365,7 @@ def list_schedules():
         if conn is not None:
             conn.close()
 
-def delete_schedule(name, year, month):
+def delete_schedule(name, year, month, owner=""):
     """Delete a schedule"""
     conn = None
     try:
@@ -315,8 +373,8 @@ def delete_schedule(name, year, month):
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
                 cur.execute('''
-                    DELETE FROM schedules WHERE name = %s AND year = %s AND month = %s
-                ''', (name, year, month))
+                    DELETE FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s
+                ''', (owner, name, year, month))
         return True
     except Exception as e:
         print(f"Delete schedule error: {e}")
