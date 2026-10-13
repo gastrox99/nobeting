@@ -922,23 +922,27 @@ def parse_forbidden_pairs(forbidden_input):
     return forbidden_pairs
 
 
-def parse_person_limits(limits_text):
-    """Kişisel limit metnini sözlüğe çevirir: {'Ali': {'min': 5, 'max': 10}}.
+def parse_person_limits_with_issues(limits_text):
+    """Kişisel limitleri ayrıştırır: (limitler, hatalı_satırlar, hata_mesajları).
 
-    Geçersiz satırlar (boş isim, negatif değer, min > max, hatalı format)
-    sessizce atlanır; UI katmanı (nobet.py) kullanıcıya uyarı gösterir.
+    "İsim:min-max" biçimindeki her satırı okur. Biçimi bozuk satırlar ile
+    negatif / min > max değerler atlanır ve kullanıcıya gösterilmek üzere
+    ayrıca döndürülür.
     """
     person_limits = {}
+    invalid_lines = []
+    errors = []
     if not limits_text or not limits_text.strip():
-        return person_limits
+        return person_limits, invalid_lines, errors
     for line in limits_text.strip().split('\n'):
         line = line.strip()
-        if not line or ':' not in line:
+        if not line:
             continue
-        name_part, _, range_part = line.partition(':')
+        name_part, separator, range_part = line.partition(':')
         name = name_part.strip()
         range_part = range_part.strip()
-        if not name or '-' not in range_part:
+        if not separator or not name or '-' not in range_part:
+            invalid_lines.append(line)
             continue
         try:
             # rsplit so that a negative min like "-1-10" is parsed correctly
@@ -946,35 +950,50 @@ def parse_person_limits(limits_text):
             min_val = int(min_str)
             max_val = int(max_str)
         except ValueError:
+            invalid_lines.append(line)
             continue
-        if min_val < 0 or max_val < 0 or min_val > max_val:
-            continue
-        person_limits[name] = {'min': min_val, 'max': max_val}
-    return person_limits
+        if min_val < 0 or max_val < 0:
+            errors.append(f"**{name}**: negatif değer ({range_part}) — atlandı")
+        elif min_val > max_val:
+            errors.append(f"**{name}**: min ({min_val}) > max ({max_val}) — atlandı")
+        else:
+            person_limits[name] = {'min': min_val, 'max': max_val}
+    return person_limits, invalid_lines, errors
+
+
+def parse_person_limits(limits_text):
+    """Kişisel limit metnini sözlüğe çevirir: {'Ali': {'min': 5, 'max': 10}}."""
+    return parse_person_limits_with_issues(limits_text)[0]
+
+
+def unknown_names(names, team):
+    """Ekipte olmayan isimleri sıralı ve tekrarsız döner."""
+    team_set = set(team)
+    return sorted({name for name in names if name not in team_set})
+
+
+TR_GUN_KISA = {0: "Pzt", 1: "Sal", 2: "Çar", 3: "Per", 4: "Cum", 5: "Cmt", 6: "Paz"}
 
 
 def build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri):
-    """Her gün için meta veri sözlüğü oluşturur."""
-    gun_detaylari = {}
-    ay_isimleri = {1:"Oca", 2:"Şub", 3:"Mar", 4:"Nis", 5:"May", 6:"Haz",
-                   7:"Tem", 8:"Ağu", 9:"Eyl", 10:"Eki", 11:"Kas", 12:"Ara"}
-    gun_isimleri = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
+    """Ayın her günü için uygulamanın kullandığı sütun ve meta veriyi üretir.
 
+    Anahtarlar "1 Pzt" biçimindedir. Tatiller de nöbet tutulan günlerdir;
+    çıkarılmaz, ``holiday`` ile işaretlenir ve hafta sonu gibi özel gün sayılır.
+    """
+    tatiller = set(tatil_gunleri)
+    gun_detaylari = {}
     for gun in range(1, gun_sayisi + 1):
-        if gun in tatil_gunleri:
-            continue
-        weekday = calendar.weekday(yil, ay, gun)
-        is_weekend = weekday >= 5
-        full_date = f"{gun} {ay_isimleri[ay]} {gun_isimleri[weekday]}"
-        col_key = f"G{gun:02d}"
-        week_val = (datetime(yil, ay, gun).toordinal() - weekday) // 7
-        gun_detaylari[col_key] = {
-            'day_num': gun,
-            'weekend': is_weekend,
-            'holiday': gun in tatil_gunleri,
-            'full_date': full_date,
-            'weekday': weekday,
-            'week': week_val,
+        gun_tarihi = date(yil, ay, gun)
+        weekday = gun_tarihi.weekday()
+        gun_adi = TR_GUN_KISA[weekday]
+        gun_detaylari[f"{gun} {gun_adi}"] = {
+            "day_num": gun,
+            "weekend": weekday >= 5,
+            "holiday": gun in tatiller,
+            "full_date": gun_tarihi.strftime("%d.%m.%Y") + " " + gun_adi,
+            "weekday": weekday,
+            "week": (gun_tarihi.toordinal() - weekday) // 7,
         }
     return gun_detaylari
 
@@ -1140,14 +1159,55 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
 
 
 def create_print_html(df_liste, df_stats_load, yil, ay):
-    """Yazdırma dostu HTML oluşturur."""
+    """Yazdırma dostu HTML oluşturur (günlük liste + nöbet yükü özeti)."""
     ay_isimleri = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran",
                    7:"Temmuz", 8:"Ağustos", 9:"Eylül", 10:"Ekim", 11:"Kasım", 12:"Aralık"}
     month_name = escape_html(ay_isimleri[ay])
-    html = f"""<html><head><meta charset="utf-8"><title>Nöbet - {month_name} {yil}</title></head>
-    <body><h1>Nöbet Listesi - {month_name} {yil}</h1>
-    <table><tr>{''.join(f'<th>{escape_html(col)}</th>' for col in df_liste.columns)}</tr>"""
+    html = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Nöbet Listesi - {month_name} {yil}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 20px; }}
+            h1 {{ text-align: center; color: #333; }}
+            table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
+            th {{ background-color: #4CAF50; color: white; }}
+            tr:nth-child(even) {{ background-color: #f2f2f2; }}
+            .weekend {{ background-color: #e3f2fd !important; }}
+            @media print {{
+                body {{ margin: 0; }}
+                button {{ display: none; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Nöbet Listesi - {month_name} {yil}</h1>
+        <table>
+            <tr>{''.join(f'<th>{escape_html(col)}</th>' for col in df_liste.columns)}</tr>
+    """
+
     for _, row in df_liste.iterrows():
-        html += f"<tr>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
-    html += "</table></body></html>"
+        tarih = str(row.get('Tarih', ''))
+        css_class = 'weekend' if 'Cmt' in tarih or 'Paz' in tarih else ''
+        html += f"<tr class='{css_class}'>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
+
+    html += """
+        </table>
+        <h2>Nöbet Yükü Özeti</h2>
+        <table>
+            <tr><th>İsim</th>""" + ''.join(f'<th>{escape_html(col)}</th>' for col in df_stats_load.columns) + "</tr>"
+
+    for idx, row in df_stats_load.iterrows():
+        html += f"<tr><td><strong>{escape_html(idx)}</strong></td>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
+
+    html += """
+        </table>
+        <p style="text-align: center; color: #666; margin-top: 30px;">
+            Oluşturulma: """ + datetime.now().strftime("%d.%m.%Y %H:%M") + """
+        </p>
+    </body>
+    </html>
+    """
     return html
