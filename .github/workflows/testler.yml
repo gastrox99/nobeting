@@ -1,0 +1,24 @@
+name: Testler
+
+# Her gönderimde tüm testleri gerçek Streamlit ve Chromium ile çalıştırır.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Paketleri kur
+        run: pip install -r requirements.txt pytest
+      - name: Chromium kur
+        run: python -m playwright install --with-deps chromium
+      - name: Testleri çalıştır
+        run: python -m pytest -v -p no:cacheprovider
