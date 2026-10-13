@@ -56,6 +56,15 @@ def init_db():
                 cur.execute('''
                     ALTER TABLE schedules ADD COLUMN IF NOT EXISTS rows_liste_json TEXT
                 ''')
+
+                # Team list and settings, so a page reload restores them.
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS app_settings (
+                        key VARCHAR(100) PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
         return True
     except Exception as e:
         print(f"Database init error: {e}")
@@ -233,6 +242,51 @@ def load_schedule(name, year, month, raise_on_error=False):
     finally:
         if conn is not None:
             conn.close()
+
+def save_app_settings(settings, key="default"):
+    """Save the team list and settings as one JSON document."""
+    conn = None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (key) DO UPDATE
+                        SET value = EXCLUDED.value,
+                            updated_at = CURRENT_TIMESTAMP
+                ''', (key, json.dumps(settings, ensure_ascii=False)))
+        return True
+    except Exception as e:
+        print(f"Save settings error: {e}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def load_app_settings(key="default", raise_on_error=False):
+    """Return saved settings as a dict, or None when nothing is saved yet."""
+    conn = None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('SELECT value FROM app_settings WHERE key = %s', (key,))
+            row = cur.fetchone()
+        if not row:
+            return None
+        settings = json.loads(row['value'])
+        return settings if isinstance(settings, dict) else None
+    except Exception as e:
+        print(f"Load settings error: {e}")
+        if raise_on_error:
+            raise
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
 
 def list_schedules():
     """List all saved schedules"""

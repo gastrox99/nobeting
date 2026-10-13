@@ -8,6 +8,7 @@ import numpy as np
 import random
 import calendar
 import hashlib
+import json
 import math
 import re
 from io import BytesIO
@@ -544,6 +545,77 @@ def restore_auto_saved_schedule(
         session_state["pref_df"] = restored_preferences
 
     return True
+
+
+# Kalıcı ayar adı -> (session_state anahtarı, doğrulayıcı)
+def _int_in(low, high):
+    def _check(value):
+        if isinstance(value, bool):
+            return None
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if low <= number <= high and number == value else None
+    return _check
+
+
+def _text(value):
+    return value if isinstance(value, str) else None
+
+
+def _non_negative_float(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+APP_SETTINGS_FIELDS = {
+    "team": ("isimler_text", _text),
+    "year": ("yil_val", _int_in(2024, 2030)),
+    "month": ("ay_val", _int_in(1, 12)),
+    "people_per_shift": ("kisi_sayisi_val", _int_in(1, 5)),
+    "rest_days": ("min_bosluk_val", _int_in(0, 3)),
+    "holidays": ("holiday_text", _text),
+    "hourly_rate": ("nobet_ucreti_val", _non_negative_float),
+    "role_names": ("role_names_text", _text),
+    "forbidden_pairs": ("forbidden_pairs_text", _text),
+    "limits": ("limits_text", _text),
+}
+
+
+def apply_app_settings(session_state, settings):
+    """Kayıtlı ayarları session state'e yazar; geçersiz değerleri atlar."""
+    if not isinstance(settings, dict):
+        return
+    for name, (state_key, check) in APP_SETTINGS_FIELDS.items():
+        if name in settings:
+            value = check(settings[name])
+            if value is not None:
+                session_state[state_key] = value
+
+
+def collect_app_settings(session_state):
+    """Session state'teki güncel ayarları kaydedilecek sözlüğe çevirir."""
+    return {
+        name: session_state.get(state_key)
+        for name, (state_key, _check) in APP_SETTINGS_FIELDS.items()
+        if session_state.get(state_key) is not None
+    }
+
+
+def persistence_fingerprint(schedule, preferences, rows):
+    """Veritabanına yazılan anlık görüntünün (çizelge+tercih+roller) kimliği."""
+    parts = [
+        schedule_fingerprint(schedule) if schedule is not None else "-",
+        schedule_fingerprint(preferences) if preferences is not None else "-",
+        json.dumps(rows or [], ensure_ascii=False, sort_keys=True, default=str),
+    ]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
 PERIOD_STATE_KEYS = (

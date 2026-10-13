@@ -31,6 +31,9 @@ from nobet_core import (
     schedule_fingerprint,
     synchronize_changed_role_rows,
     switch_schedule_period,
+    apply_app_settings,
+    collect_app_settings,
+    persistence_fingerprint,
     use_compact_schedule_editor,
     create_print_html,
     build_limit_violation_messages,
@@ -1027,6 +1030,78 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+class TestAppSettingsPersistence(unittest.TestCase):
+    def test_ayarlar_toplanir_ve_aynen_geri_yuklenir(self):
+        state = {
+            "isimler_text": "Ali, Ayşe", "yil_val": 2026, "ay_val": 10,
+            "kisi_sayisi_val": 2, "min_bosluk_val": 1, "holiday_text": "29",
+            "nobet_ucreti_val": 1.5, "role_names_text": "AYB, GYB",
+            "forbidden_pairs_text": "Ali-Ayşe", "limits_text": "Ali:3-8",
+            "unrelated": "kept out",
+        }
+        settings = collect_app_settings(state)
+        self.assertNotIn("unrelated", json.dumps(settings))
+
+        restored = {}
+        apply_app_settings(restored, json.loads(json.dumps(settings)))
+        state.pop("unrelated")
+        self.assertEqual(restored, state)
+
+    def test_gecersiz_ayarlar_widget_hatasina_yol_acmaz(self):
+        restored = {}
+        apply_app_settings(restored, {
+            "year": 1999, "month": 13, "people_per_shift": "2",
+            "rest_days": True, "hourly_rate": -1, "team": ["Ali"],
+        })
+        self.assertEqual(restored, {})
+
+    def test_db_ayarlari_kaydeder_ve_okur(self):
+        settings = {"team": "Ali, Ayşe", "year": 2026, "month": 10}
+        save_cursor = _FakeDbCursor()
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(save_cursor)):
+            self.assertTrue(db.save_app_settings(settings))
+        stored_value = save_cursor.executed[0][1][1]
+
+        load_cursor = _FakeDbCursor(schedule_row={"value": stored_value})
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)):
+            self.assertEqual(db.load_app_settings(), settings)
+
+    def test_db_ayar_yoksa_none_hata_varsa_istisna(self):
+        empty_cursor = _FakeDbCursor()
+        empty_cursor.fetchone = lambda: None
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(empty_cursor)):
+            self.assertIsNone(db.load_app_settings())
+        with patch.object(db.psycopg2, "connect", side_effect=RuntimeError("down")):
+            with self.assertRaises(RuntimeError):
+                db.load_app_settings(raise_on_error=True)
+
+    def test_parmak_izi_her_degisikligi_ayirt_eder(self):
+        schedule = pd.DataFrame([[False]], index=["Ali"], columns=["1 Çar"])
+        prefs = pd.DataFrame([[0]], index=["Ali"], columns=["1 Çar"])
+        rows = [{"Tarih": "01.10.2026 Çar", "Görev1": "-"}]
+        base = persistence_fingerprint(schedule, prefs, rows)
+        self.assertEqual(base, persistence_fingerprint(schedule.copy(), prefs.copy(), list(rows)))
+
+        changed_schedule = schedule.copy(); changed_schedule.iloc[0, 0] = True
+        changed_prefs = prefs.copy(); changed_prefs.iloc[0, 0] = 1
+        changed_rows = [{"Tarih": "01.10.2026 Çar", "Görev1": "Ali"}]
+        for args in ((changed_schedule, prefs, rows), (schedule, changed_prefs, rows),
+                     (schedule, prefs, changed_rows)):
+            self.assertNotEqual(base, persistence_fingerprint(*args))
+
+    def test_uygulama_her_degisiklikte_kaydeder_ve_ayarlari_yukler(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertNotIn("elapsed >= 30", source)
+        self.assertIn("_persist_fp != st.session_state.get(\"last_saved_fingerprint\")", source)
+        self.assertIn("load_app_settings(raise_on_error=True)", source)
+        self.assertIn("save_app_settings(_current_settings)", source)
+        # Ayarlar widget'lar çizilmeden önce yüklenmeli.
+        self.assertLess(
+            source.index("apply_app_settings(st.session_state"),
+            source.index('st.text_area(\n            "👥 Ekip'),
+        )
+
 
 class TestSwitchSchedulePeriod(unittest.TestCase):
     def _state(self):

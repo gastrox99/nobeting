@@ -11,9 +11,15 @@ import numpy as np
 import time
 import json
 from html import escape as _escape_html
-from db import init_db, save_schedule, load_schedule, list_schedules, delete_schedule
+from db import (
+    init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
+    save_app_settings, load_app_settings,
+)
 from streamlit_local_storage import LocalStorage
 from nobet_core import (
+    apply_app_settings,
+    collect_app_settings,
+    persistence_fingerprint,
     build_schedule_analysis,
     changed_schedule_columns,
     find_person_role,
@@ -55,14 +61,31 @@ st.set_page_config(page_title="Adil Nöbet", layout="wide")
 if not _db_ready:
     st.warning("⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt özellikleri şu an çalışmayabilir.")
 
-# --- localStorage for team list persistence ---
+# --- Ekip ve ayarları veritabanından geri yükle (sayfa yenilemesinde) ---
+if 'app_settings_loaded' not in st.session_state:
+    st.session_state.app_settings_loaded = True
+    _stored_settings = None
+    # Okuma başarısızsa kayıtlı ayarların üzerine boş ayar yazılmasın.
+    st.session_state.app_settings_load_failed = not _db_ready
+    if _db_ready:
+        try:
+            _stored_settings = load_app_settings(raise_on_error=True)
+        except Exception:
+            st.session_state.app_settings_load_failed = True
+            st.warning("⚠️ Kayıtlı ekip ve ayarlar okunamadı. Sayfayı yenileyin.")
+    apply_app_settings(st.session_state, _stored_settings)
+    st.session_state.last_saved_settings = (
+        collect_app_settings(st.session_state) if _stored_settings else None
+    )
+
+# --- localStorage for team list persistence (veritabanı yoksa yedek) ---
 local_storage = LocalStorage()
 
 # Load saved team from localStorage on first run
 if 'localStorage_loaded' not in st.session_state:
     st.session_state.localStorage_loaded = True
     saved_team = local_storage.getItem("nobet_team")
-    if saved_team:
+    if saved_team and not st.session_state.get("isimler_text"):
         st.session_state.isimler_text = saved_team
     st.session_state.last_stored_team_text = saved_team or st.session_state.get("isimler_text", "")
 
@@ -464,8 +487,14 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         st.session_state.kisi_sayisi_val = kişi_sayısı
     
     with set_col3:
-        min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, 1)
-        holiday_input = st.text_input("🎉 Tatiller:", placeholder="1,2,5-10,23")
+        min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, st.session_state.get("min_bosluk_val", 1))
+        st.session_state.min_bosluk_val = min_bosluk
+        holiday_input = st.text_input(
+            "🎉 Tatiller:",
+            value=st.session_state.get("holiday_text", ""),
+            placeholder="1,2,5-10,23",
+        )
+        st.session_state.holiday_text = holiday_input
         tatil_gunleri, invalid_holiday_parts = parse_holiday_days(holiday_input, gun_sayisi)
         if invalid_holiday_parts:
             invalid_text = ", ".join(f"'{part}'" for part in invalid_holiday_parts)
@@ -474,7 +503,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                 f"Geçerli günler uygulanmaya devam ediyor. Günleri 1-{gun_sayisi} "
                 "arasında tek gün (5) veya aralık (5-10) biçiminde yazın."
             )
-        nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", value=1.0)
+        nobet_ucreti = st.number_input(
+            "💰 Saat Ücreti (TL):",
+            value=float(st.session_state.get("nobet_ucreti_val", 1.0)),
+        )
+        st.session_state.nobet_ucreti_val = nobet_ucreti
     
     # Additional settings row
     st.divider()
@@ -585,7 +618,19 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         st.warning(f"⚠️ {len(_lim_invalid_lines)} satır geçersiz format (doğru format: `İsim:min-max`) — atlandı.")
     if _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(sorted(set(_lim_unknown)))}** — limit uygulanmayacak.")
-    
+
+# Ekip ve ayarlar değiştiyse veritabanına yaz (sayfa yenilenince geri gelir).
+_current_settings = collect_app_settings(st.session_state)
+_nothing_saved_yet = st.session_state.get("last_saved_settings") is None
+if (
+    _db_ready
+    and not st.session_state.get("app_settings_load_failed", False)
+    and _current_settings != st.session_state.get("last_saved_settings")
+    # İlk açılışta boş ekip kaydedilmesin (localStorage'dan gelecek ekip ezilmesin).
+    and not (_nothing_saved_yet and not st.session_state.get("isimler_text", "").strip())
+):
+    if save_app_settings(_current_settings):
+        st.session_state.last_saved_settings = _current_settings
 
 if not isimler: st.stop()
 
@@ -617,6 +662,11 @@ zorunlu_saat = calisma_gunu * 8
 # --- SESSION ---
 def _save_outgoing_period(period, schedule, preferences, rows):
     _old_yil, _old_ay = period
+    # Okunamayan bir dönemin kaydının üzerine yazma; değişmediyse tekrar yazma.
+    if st.session_state.get("autosave_blocked_period") == tuple(period):
+        return
+    if persistence_fingerprint(schedule, preferences, rows) == st.session_state.get("last_saved_fingerprint"):
+        return
     save_schedule(
         f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
         schedule, pref_df=preferences, rows_liste=rows,
@@ -635,6 +685,17 @@ if 'schedule_bool' not in st.session_state:
         # first visit does not show a misleading error.
         return load_schedule(name, year, month, raise_on_error=True)
 
+    def _on_auto_load_error(_error):
+        # Kayıt okunamadıysa boş çizelgeyi kaydedip gerçek verinin üzerine yazma.
+        st.session_state.autosave_blocked_period = (yil, ay)
+        update_persistence_feedback(
+            st.session_state,
+            False,
+            "⚠️ Kayıtlı çizelge okunamadı. Veriyi korumak için otomatik kayıt "
+            "durduruldu; veritabanı bağlantısını kontrol edip sayfayı yenileyin.",
+        )
+
+    st.session_state.autosave_blocked_period = None
     if not restore_auto_saved_schedule(
         st.session_state,
         _load_auto_schedule,
@@ -645,14 +706,11 @@ if 'schedule_bool' not in st.session_state:
         sutunlar,
         gun_detaylari,
         role_names,
-        on_error=lambda _error: st.warning(
-            "⚠️ Çizelge yüklenemedi. Veritabanı bağlantısını kontrol edip "
-            "sayfayı yenileyin."
-        ),
+        on_error=_on_auto_load_error,
     ):
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
-    # Yeni dönemin verisi yüklendi; 30 sn sayacını buradan başlat.
-    st.session_state.last_auto_save = time.time()
+    # Yüklenen durum zaten veritabanındakiyle aynı; ilk kayıt ilk değişiklikte yapılır.
+    st.session_state.autosave_baseline_pending = True
 else:
     # Ensure schedule matches current team and columns
     current_schedule = st.session_state.schedule_bool
@@ -1663,8 +1721,17 @@ df_liste = pd.DataFrame(rows_liste)
 
 # Auto-save only after role rows have been generated or reconciled with the
 # current schedule, so both database payloads describe the same snapshot.
-elapsed = time.time() - st.session_state.last_auto_save
-if elapsed >= 30:
+# Her değişiklik hemen kaydedilir (eskiden 30 sn bekleniyordu ve son
+# değişiklikler sayfa yenilenince kayboluyordu).
+_persist_fp = persistence_fingerprint(
+    st.session_state.schedule_bool, st.session_state.get('pref_df'), rows_liste
+)
+if st.session_state.pop("autosave_baseline_pending", False):
+    st.session_state.last_saved_fingerprint = _persist_fp
+elif (
+    st.session_state.get("autosave_blocked_period") != (yil, ay)
+    and _persist_fp != st.session_state.get("last_saved_fingerprint")
+):
     auto_name = f"Otomatik_{yil}_{ay:02d}"
     _saved_ok = False
     try:
@@ -1674,6 +1741,7 @@ if elapsed >= 30:
     except Exception:
         _saved_ok = False
     if _saved_ok:
+        st.session_state.last_saved_fingerprint = _persist_fp
         st.session_state.last_auto_save = time.time()
         update_persistence_feedback(st.session_state, True)
     else:
