@@ -26,7 +26,7 @@ def _fresh_modules():
 
 try:
     from db import (
-        init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
+        init_db, save_schedule, load_schedule,
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
         create_share_link, get_share_link, delete_share_link, resolve_share_token,
     )
@@ -49,6 +49,13 @@ try:
         normalize_owner_email,
         apply_app_settings,
         apply_role_edits,
+        ignored_role_edits,
+        normalize_role_names,
+        detect_renames,
+        rename_people_in_rows,
+        import_schedule_table,
+        YEAR_MIN,
+        YEAR_MAX,
         official_holidays,
         official_holidays_summary,
         holidays_to_text,
@@ -84,7 +91,7 @@ try:
 except ImportError:
     _fresh_modules()
     from db import (
-        init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
+        init_db, save_schedule, load_schedule,
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
         create_share_link, get_share_link, delete_share_link, resolve_share_token,
     )
@@ -107,6 +114,13 @@ except ImportError:
         normalize_owner_email,
         apply_app_settings,
         apply_role_edits,
+        ignored_role_edits,
+        normalize_role_names,
+        detect_renames,
+        rename_people_in_rows,
+        import_schedule_table,
+        YEAR_MIN,
+        YEAR_MAX,
         official_holidays,
         official_holidays_summary,
         holidays_to_text,
@@ -246,7 +260,7 @@ if _share_token:
 # --- GOOGLE İLE GİRİŞ (isteğe bağlı) ---
 # .streamlit/secrets.toml içinde [auth] ayarları varsa giriş zorunludur ve her
 # kullanıcının verisi Google e-postasına bağlı saklanır. Yoksa uygulama eskisi
-# gibi tek kullanıcılı çalışır (scripts/write_streamlit_secrets.py'ye bakın).
+# gibi tek kullanıcılı çalışır.
 def _auth_configured():
     try:
         _auth = st.secrets.get("auth")
@@ -366,13 +380,6 @@ st.markdown("""
         min-width: 112px !important;
     }
     
-    /* Make buttons smaller on mobile */
-    .stButton > button {
-        padding: 2px 4px !important;
-        min-height: 24px !important;
-        font-size: 9px !important;
-    }
-    
     /* Reduce text sizes */
     h1 { font-size: 1.8rem !important; }
     h2 { font-size: 1.4rem !important; }
@@ -406,15 +413,6 @@ st.markdown("""
     }
     .st-key-preference-grid :is([data-testid="column"],[data-testid="stColumn"]):first-child {
         min-width: 112px !important;
-    }
-
-    /* Four legend items per row keeps each state label readable on mobile. */
-    .st-key-preference-legend [data-testid="stHorizontalBlock"] {
-        flex-wrap: wrap !important;
-    }
-    .st-key-preference-legend :is([data-testid="column"],[data-testid="stColumn"]) {
-        flex: 1 1 25% !important;
-        min-width: 25% !important;
     }
 }
 
@@ -534,6 +532,52 @@ def save_undo_state(schedule_df=None):
     st.session_state.undo_history.append(_current_state_snapshot())
     st.session_state.redo_history = []  # Clear redo on new action
 
+def _restore_snapshot(snap):
+    """Geri al / ileri al ile gelen durumu uygular."""
+    if not isinstance(snap, dict):
+        st.session_state.schedule_bool = snap
+        st.session_state.cached_rows_liste = None
+        st.session_state.should_regenerate_assignments = True
+        return
+    if snap.get('schedule') is not None:
+        st.session_state.schedule_bool = snap['schedule']
+    if snap.get('pref') is not None:
+        st.session_state.pref_df = snap['pref']
+    if snap.get('locked') is not None:
+        st.session_state.locked_cells = set(snap['locked'])
+    if snap.get('rows_liste') is not None:
+        st.session_state.cached_rows_liste = snap['rows_liste']
+        st.session_state.cached_role_names = snap.get('role_names')
+        st.session_state.should_regenerate_assignments = False
+    else:
+        st.session_state.cached_rows_liste = None
+        st.session_state.should_regenerate_assignments = True
+
+
+def _rotate_roles_for_day(day_number):
+    """O günün nöbetçilerini görev yerleri arasında döngüsel kaydırır.
+
+    Takvimdeki ve Günlük Liste'deki 🔄 düğmeleri bunu kullanır."""
+    _rows = st.session_state.get('cached_rows_liste')
+    if not _rows or not 1 <= day_number <= len(_rows):
+        return False
+    _roles = st.session_state.get('cached_role_names') or st.session_state.get('rol_isimleri', [])
+    _team = set(st.session_state.get('isimler_cache', []))
+    _row = dict(_rows[day_number - 1])
+    _slots = [_r for _r in _roles if _row.get(_r) not in (None, "", "-") and _row.get(_r) in _team]
+    if len(_slots) < 2:
+        return False
+    save_undo_state()
+    _people = [_row[_r] for _r in _slots]
+    _people = [_people[-1]] + _people[:-1]
+    for _r, _p in zip(_slots, _people):
+        _row[_r] = _p
+    st.session_state.cached_rows_liste[day_number - 1] = _row
+    st.session_state.should_regenerate_assignments = False
+    st.toast(f"{day_number}. gün görev yerleri değiştirildi", icon="🔄")
+    return True
+
+
 # --- ANA ALGORİTMA: nobet_core.run_scheduling_core kullanır ---
 def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None, initial_last_shift=None, history_special=None, fixed_assignments=None):
     progress_bar = st.progress(0)
@@ -561,6 +605,26 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
     return best_schedule
 
 
+def _apply_renames(renames):
+    """Yeniden adlandırılan kişilerin verisini yeni adlarına taşır."""
+    for _key in ("schedule_bool", "pref_df", "cached_role_schedule"):
+        _df = st.session_state.get(_key)
+        if isinstance(_df, pd.DataFrame):
+            st.session_state[_key] = _df.rename(index=renames)
+    st.session_state.locked_cells = {
+        (renames.get(_p, _p), _c) for _p, _c in st.session_state.get("locked_cells", set())
+    }
+    if st.session_state.get("cached_rows_liste"):
+        st.session_state.cached_rows_liste = rename_people_in_rows(st.session_state.cached_rows_liste, renames)
+    _key = st.session_state.get("cached_key")
+    if isinstance(_key, tuple) and len(_key) == 5:
+        st.session_state.cached_key = _key[:2] + (tuple(renames.get(_p, _p) for _p in _key[2]),) + _key[3:]
+    _ctx = st.session_state.get("prev_month_context")
+    if _ctx:
+        for _field in ("last_shift", "history_counts"):
+            _ctx[_field] = {renames.get(_p, _p): _v for _p, _v in _ctx.get(_field, {}).items()}
+
+
 # --- AYARLAR (Ana Sayfada Açılır Panel) ---
 # Check if team exists to determine if settings should be expanded
 prev_isimler = st.session_state.get('isimler_cache', [])
@@ -583,6 +647,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         if len(isimler) < len(_raw_isimler):
             _dupes = sorted({x for x in _raw_isimler if _raw_isimler.count(x) > 1})
             st.warning(f"⚠️ Birden fazla yazılan isim(ler) bir kez kullanıldı: **{', '.join(_dupes)}**")
+        # Bir ismin yazımı düzeltilince o kişinin nöbetleri/tercihleri silinmesin.
+        _renames = detect_renames(prev_isimler, isimler)
+        if _renames:
+            _apply_renames(_renames)
+            st.toast("İsim değişikliği uygulandı: " + ", ".join(f"{a} → {b}" for a, b in _renames.items()), icon="✏️")
         st.session_state.isimler_cache = isimler
         
         # Tarayıcı deposuna yalnızca ekip listesi değiştiğinde yaz.
@@ -598,7 +667,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         else:
             current_year = _now.year
             current_month = _now.month + 1
-        yil = st.number_input("📅 Yıl", 2024, 2030, value=st.session_state.get('yil_val', current_year), key='yil_input_direct')
+        yil = st.number_input("📅 Yıl", YEAR_MIN, YEAR_MAX, value=st.session_state.get('yil_val', current_year), key='yil_input_direct')
         st.session_state.yil_val = yil
         
         ay_options = list(range(1, 13))
@@ -653,13 +722,10 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         )
         st.session_state.role_names_text = role_names_input
         
-        if role_names_input.strip():
-            role_names = [r.strip() for r in role_names_input.split(",") if r.strip()]
-        else:
-            role_names = []
-        while len(role_names) < kişi_sayısı:
-            role_names.append(f"Görev{len(role_names)+1}")
-        role_names = role_names[:kişi_sayısı]
+        # Aynı ad iki kez ya da "Tarih" yazılırsa kişiler listeden kayboluyordu.
+        role_names, _role_adjusted = normalize_role_names(role_names_input, kişi_sayısı)
+        if _role_adjusted:
+            st.caption("Görev adları benzersiz olmalı: " + ", ".join(f"{a} → {b}" for a, b in _role_adjusted))
         st.session_state.rol_isimleri = role_names
         st.session_state.balance_history = st.checkbox(
             "⚖️ Önceki ayların hafta sonu/tatil nöbetlerini dengele",
@@ -686,7 +752,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         st.session_state.limits_text = limits_text
     
     # Yasak çiftler ve kişisel limitler (ayrıştırma nobet_core'da, test edilir)
-    forbidden_pairs = parse_forbidden_pairs(forbidden_input)
+    forbidden_pairs = parse_forbidden_pairs(forbidden_input, isimler)
     _fp_unknown = unknown_names([name for pair in forbidden_pairs for name in pair], isimler)
     st.session_state.forbidden_pairs = forbidden_pairs
     st.session_state.fp_unknown_names = _fp_unknown
@@ -1019,47 +1085,13 @@ with tab_grid:
         if st.button("↩️ Geri", width="stretch", disabled=len(st.session_state.undo_history)==0):
             _snap = undo_history_state(st.session_state, _current_state_snapshot())
             if _snap is not None:
-                if isinstance(_snap, dict):
-                    if _snap.get('schedule') is not None:
-                        st.session_state.schedule_bool = _snap['schedule']
-                    if _snap.get('pref') is not None:
-                        st.session_state.pref_df = _snap['pref']
-                    if _snap.get('locked') is not None:
-                        st.session_state.locked_cells = set(_snap['locked'])
-                    if _snap.get('rows_liste') is not None:
-                        st.session_state.cached_rows_liste = _snap['rows_liste']
-                        st.session_state.cached_role_names = _snap.get('role_names')
-                        st.session_state.should_regenerate_assignments = False
-                    else:
-                        st.session_state.cached_rows_liste = None
-                        st.session_state.should_regenerate_assignments = True
-                else:
-                    st.session_state.schedule_bool = _snap
-                    st.session_state.cached_rows_liste = None
-                    st.session_state.should_regenerate_assignments = True
+                _restore_snapshot(_snap)
                 st.rerun()
     with action_cols[3]:
         if st.button("↪️ İleri", width="stretch", disabled=len(st.session_state.redo_history)==0):
             _snap = redo_history_state(st.session_state, _current_state_snapshot())
             if _snap is not None:
-                if isinstance(_snap, dict):
-                    if _snap.get('schedule') is not None:
-                        st.session_state.schedule_bool = _snap['schedule']
-                    if _snap.get('pref') is not None:
-                        st.session_state.pref_df = _snap['pref']
-                    if _snap.get('locked') is not None:
-                        st.session_state.locked_cells = set(_snap['locked'])
-                    if _snap.get('rows_liste') is not None:
-                        st.session_state.cached_rows_liste = _snap['rows_liste']
-                        st.session_state.cached_role_names = _snap.get('role_names')
-                        st.session_state.should_regenerate_assignments = False
-                    else:
-                        st.session_state.cached_rows_liste = None
-                        st.session_state.should_regenerate_assignments = True
-                else:
-                    st.session_state.schedule_bool = _snap
-                    st.session_state.cached_rows_liste = None
-                    st.session_state.should_regenerate_assignments = True
+                _restore_snapshot(_snap)
                 st.rerun()
 
     if st.session_state.get("reset_pending", False):
@@ -1111,6 +1143,22 @@ with tab_grid:
         "soft_amber_text": "#fcd34d" if _dark_theme else "#92400e",
         "soft_red_bg": "rgba(239,68,68,0.18)" if _dark_theme else "#fee2e2",
         "soft_red_text": "#fca5a5" if _dark_theme else "#991b1b",
+        # Takvim sekmesi ve kişi kartı
+        "card_bg": "#1e293b" if _dark_theme else "#f8fafc",
+        "stat_bg": "#0f172a" if _dark_theme else "#ffffff",
+        "strong_text": "#e5e7eb" if _dark_theme else "#1f2937",
+        "label_text": "#9ca3af" if _dark_theme else "#6b7280",
+        "stat_blue": "#93c5fd" if _dark_theme else "#1d4ed8",
+        "stat_gray": "#e5e7eb" if _dark_theme else "#374151",
+        "stat_red": "#fca5a5" if _dark_theme else "#dc2626",
+        "stat_green": "#4ade80" if _dark_theme else "#16a34a",
+        "stat_purple": "#c084fc" if _dark_theme else "#9333ea",
+        "cal_head_bg": "#1e293b" if _dark_theme else "#f1f5f9",
+        "cal_head_we_bg": "rgba(59,130,246,0.25)" if _dark_theme else "#dbeafe",
+        "cal_cell": ("#111827", "1px solid #334155") if _dark_theme else ("#f8fafc", "1px solid #e2e8f0"),
+        "cal_cell_we": ("rgba(59,130,246,0.15)", "1px solid #1e3a8a") if _dark_theme else ("#dbeafe", "1px solid #bfdbfe"),
+        "cal_cell_hol": ("rgba(239,68,68,0.15)", "1px solid #7f1d1d") if _dark_theme else ("#fee2e2", "1px solid #fca5a5"),
+        "cal_cell_today": ("rgba(245,158,11,0.18)", "2px solid #f59e0b") if _dark_theme else ("#fef3c7", "2px solid #f59e0b"),
     }
     grid_css_selector = (
         ".st-key-preference-grid"
@@ -1300,44 +1348,44 @@ with tab_grid:
     grid_container = st.container(key=grid_key, border=False)
 
     tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
-    header_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
-    with header_cols[0]:
-        st.markdown(f"<div style='font-size:13px;font-weight:700;color:{ui['muted']};padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
-    for i, col in enumerate(sutunlar):
-        with header_cols[i + 1]:
-            _info = gun_detaylari[col]
-            day_num = _info['day_num']
-            is_we = _info['weekend']
-            is_hol = _info['holiday']
-            _is_today = (date(yil, ay, day_num) == today_date)
-            day_name = tr_gunler_short[date(yil, ay, day_num).weekday()]
-            if _is_today:
-                num_style = f"color:{ui['today_text']};font-weight:800;font-size:15px;"
-                name_style = f"color:{ui['today_text']};font-size:11px;"
-                badge = ""
-            elif is_hol:
-                num_style = f"color:{ui['holiday_text']};font-weight:700;font-size:14px;"
-                name_style = f"color:{ui['holiday_text']};font-size:11px;"
-                badge = ""
-            elif is_we:
-                num_style = f"color:{ui['weekend_text']};font-weight:700;font-size:14px;"
-                name_style = f"color:{ui['weekend_text']};font-size:11px;"
-                badge = ""
-            else:
-                num_style = f"color:{ui['day_text']};font-size:14px;"
-                name_style = f"color:{ui['muted']};font-size:11px;"
-                badge = ""
-            st.markdown(
-                f"<div style='text-align:center;line-height:1.35;padding:2px 0;'>"
-                # Rozet (★/🎉) dar sütunda rakamı ikiye bölüyordu; bugün sarı çerçeve,
-                # tatil kırmızı renkle zaten belli. Rakam hiç bölünmez.
-                f"<div style='{num_style}white-space:nowrap;'>{day_num}</div>"
-                f"<div style='{name_style}'>{day_name}</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+    _compact_editor = use_compact_schedule_editor(len(isimler), len(sutunlar))
 
-    if use_compact_schedule_editor(len(isimler), len(sutunlar)):
+    def _draw_day_header():
+        header_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
+        with header_cols[0]:
+            st.markdown(f"<div style='font-size:13px;font-weight:700;color:{ui['muted']};padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
+        for i, col in enumerate(sutunlar):
+            with header_cols[i + 1]:
+                day_num = gun_detaylari[col]['day_num']
+                day_name = tr_gunler_short[date(yil, ay, day_num).weekday()]
+                if date(yil, ay, day_num) == today_date:
+                    num_style = f"color:{ui['today_text']};font-weight:800;font-size:15px;"
+                    name_style = f"color:{ui['today_text']};font-size:11px;"
+                elif gun_detaylari[col]['holiday']:
+                    num_style = f"color:{ui['holiday_text']};font-weight:700;font-size:14px;"
+                    name_style = f"color:{ui['holiday_text']};font-size:11px;"
+                elif gun_detaylari[col]['weekend']:
+                    num_style = f"color:{ui['weekend_text']};font-weight:700;font-size:14px;"
+                    name_style = f"color:{ui['weekend_text']};font-size:11px;"
+                else:
+                    num_style = f"color:{ui['day_text']};font-size:14px;"
+                    name_style = f"color:{ui['muted']};font-size:11px;"
+                # Bugün sarı çerçeve, tatil kırmızı renkle belli; rozet eklenmez
+                # (dar sütunda rakamı ikiye bölüyordu).
+                st.markdown(
+                    f"<div style='text-align:center;line-height:1.35;padding:2px 0;'>"
+                    f"<div style='{num_style}white-space:nowrap;'>{day_num}</div>"
+                    f"<div style='{name_style}'>{day_name}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+    # Hızlı düzenleme tablosunun kendi başlıkları var; gün başlığı yalnızca
+    # düğmeli tabloda çizilir (eskiden tablonun üstünde hizasız duruyordu).
+    if not _compact_editor:
+        _draw_day_header()
+
+    if _compact_editor:
         st.caption(
             "⚡ Büyük çizelge hızlı düzenleme modunda. Hücre başına ayrı buton yerine "
             "tek tablo kullanılır; bu nedenle düzenlemeler daha akıcı kalır."
@@ -1486,30 +1534,9 @@ with tab_cal:
     _cal_role_names = st.session_state.get('rol_isimleri', [f"Görev{i+1}" for i in range(kişi_sayısı)])
 
     # ── Takvimden gelen görev yeri değişim isteği ────────
-    _swap_dn = st.session_state.get('cal_swap_day', None)
-    if _swap_dn is not None:
-        if 'cal_swap_day' in st.session_state:
-            del st.session_state['cal_swap_day']
-        # cached_rows_liste içindeki rol isimlerini kullan (schedule ile tutarlı)
-        _swap_role_names = st.session_state.get('cached_role_names', _cal_role_names)
-        if st.session_state.get('cached_rows_liste'):
-            _row_idx = _swap_dn - 1
-            if 0 <= _row_idx < len(st.session_state.cached_rows_liste):
-                _srow = dict(st.session_state.cached_rows_liste[_row_idx])
-                _valid = [_srow.get(rn, "-") for rn in _swap_role_names]
-                _valid = [p for p in _valid if p and p != "-" and p in isimler]
-                if len(_valid) >= 2:
-                    save_undo_state()
-                    _valid = [_valid[-1]] + _valid[:-1]  # döngüsel kaydırma
-                    _vi = 0
-                    for _rn in _swap_role_names:
-                        _old = _srow.get(_rn, "-")
-                        if _old and _old != "-" and _old in isimler:
-                            _srow[_rn] = _valid[_vi]; _vi += 1
-                    st.session_state.cached_rows_liste[_row_idx] = _srow
-                    st.session_state.should_regenerate_assignments = False
-                    st.toast(f"{_swap_dn}. gün görev yerleri değiştirildi", icon="🔄")
-                    st.rerun()
+    _swap_dn = st.session_state.pop('cal_swap_day', None)
+    if _swap_dn is not None and _rotate_roles_for_day(_swap_dn):
+        st.rerun()
 
     # ── Filtre + açıklama satırı ──────────────────────────
     cal_top1, cal_top2 = st.columns([3, 2])
@@ -1523,7 +1550,7 @@ with tab_cal:
         )
     with cal_top2:
         st.markdown(
-            "<div style='padding-top:28px;font-size:12px;color:#6b7280;'>"
+            f"<div style='padding-top:28px;font-size:12px;color:{ui['label_text']};'>"
             "🟢 Tercih &nbsp; 🟡 Kaçın &nbsp; 🔴 Müsait Değil &nbsp; 🔄 Görev Yeri Değiştir"
             "</div>",
             unsafe_allow_html=True
@@ -1565,43 +1592,43 @@ with tab_cal:
         )
 
         st.markdown(
-            f"<div style='background:linear-gradient(135deg,{dp_color}55 0%,#f8fafc 60%);"
+            f"<div style='background:linear-gradient(135deg,{dp_color}55 0%,{ui['card_bg']} 60%);"
             f"border:2px solid {dp_color};border-radius:14px;padding:16px 20px;margin-bottom:12px;'>"
             f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:10px;'>"
             f"<span style='background:{dp_color};border-radius:50%;width:36px;height:36px;"
             f"display:inline-flex;align-items:center;justify-content:center;"
             f"font-size:16px;font-weight:800;color:#1f2937;border:2px solid rgba(0,0,0,0.1);'>"
             f"{escape_html(dp[0].upper())}</span>"
-            f"<span style='font-size:20px;font-weight:800;color:#1f2937;'>{escape_html(dp)}</span>"
-            f"<span style='font-size:13px;color:#6b7280;margin-left:4px;'>"
+            f"<span style='font-size:20px;font-weight:800;color:{ui['strong_text']};'>{escape_html(dp)}</span>"
+            f"<span style='font-size:13px;color:{ui['label_text']};margin-left:4px;'>"
             f"— {ay} / {yil}</span></div>"
             f"<div style='display:flex;flex-wrap:wrap;gap:10px;'>"
-            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"<div style='background:{ui['stat_bg']};border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
             f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
-            f"<div style='font-size:22px;font-weight:800;color:#1d4ed8;'>{len(dp_shifts)}</div>"
-            f"<div style='font-size:11px;color:#6b7280;'>Toplam Nöbet</div></div>"
-            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"<div style='font-size:22px;font-weight:800;color:{ui['stat_blue']};'>{len(dp_shifts)}</div>"
+            f"<div style='font-size:11px;color:{ui['label_text']};'>Toplam Nöbet</div></div>"
+            f"<div style='background:{ui['stat_bg']};border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
             f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
-            f"<div style='font-size:22px;font-weight:800;color:#374151;'>{dp_weekday}</div>"
-            f"<div style='font-size:11px;color:#6b7280;'>Hafta İçi</div></div>"
-            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"<div style='font-size:22px;font-weight:800;color:{ui['stat_gray']};'>{dp_weekday}</div>"
+            f"<div style='font-size:11px;color:{ui['label_text']};'>Hafta İçi</div></div>"
+            f"<div style='background:{ui['stat_bg']};border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
             f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
-            f"<div style='font-size:22px;font-weight:800;color:#1d4ed8;'>{dp_we}</div>"
-            f"<div style='font-size:11px;color:#6b7280;'>Hafta Sonu</div></div>"
-            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"<div style='font-size:22px;font-weight:800;color:{ui['stat_blue']};'>{dp_we}</div>"
+            f"<div style='font-size:11px;color:{ui['label_text']};'>Hafta Sonu</div></div>"
+            f"<div style='background:{ui['stat_bg']};border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
             f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
-            f"<div style='font-size:22px;font-weight:800;color:#dc2626;'>{dp_hol}</div>"
-            f"<div style='font-size:11px;color:#6b7280;'>Tatil</div></div>"
-            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"<div style='font-size:22px;font-weight:800;color:{ui['stat_red']};'>{dp_hol}</div>"
+            f"<div style='font-size:11px;color:{ui['label_text']};'>Tatil</div></div>"
+            f"<div style='background:{ui['stat_bg']};border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
             f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
-            f"<div style='font-size:22px;font-weight:800;color:#16a34a;'>{'%{}'.format(dp_pref_score) if dp_pref_score is not None else '—'}</div>"
-            f"<div style='font-size:11px;color:#6b7280;'>Tercih Başarısı</div></div>"
-            f"<div style='background:white;border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
+            f"<div style='font-size:22px;font-weight:800;color:{ui['stat_green']};'>{'%{}'.format(dp_pref_score) if dp_pref_score is not None else '—'}</div>"
+            f"<div style='font-size:11px;color:{ui['label_text']};'>Tercih Başarısı</div></div>"
+            f"<div style='background:{ui['stat_bg']};border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
             f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
-            f"<div style='font-size:22px;font-weight:800;color:#9333ea;'>{dp_pay:.0f} ₺</div>"
-            f"<div style='font-size:11px;color:#6b7280;'>Tahmini Ödeme</div></div>"
+            f"<div style='font-size:22px;font-weight:800;color:{ui['stat_purple']};'>{dp_pay:.0f} ₺</div>"
+            f"<div style='font-size:11px;color:{ui['label_text']};'>Tahmini Ödeme</div></div>"
             f"</div>"
-            f"<div style='margin-top:10px;font-size:11px;color:#6b7280;'>"
+            f"<div style='margin-top:10px;font-size:11px;color:{ui['label_text']};'>"
             f"🟢 {dp_green_ok} tercih tuttu &nbsp;·&nbsp; "
             f"🟡 {dp_yellow_hit} kaçın gününde atandı &nbsp;·&nbsp; "
             f"🔴 {dp_red_hit} yasak günde atandı</div>"
@@ -1639,8 +1666,8 @@ with tab_cal:
     cal_hdr = st.columns(7)
     for j, gn in enumerate(cal_day_names):
         with cal_hdr[j]:
-            bg = "#dbeafe" if j >= 5 else "#f1f5f9"
-            tc = "#1d4ed8" if j >= 5 else "#374151"
+            bg = ui["cal_head_we_bg"] if j >= 5 else ui["cal_head_bg"]
+            tc = ui["weekend_text"] if j >= 5 else ui["day_text"]
             st.markdown(
                 f"<div style='text-align:center;background:{bg};border-radius:8px;padding:6px 2px;"
                 f"font-size:12px;font-weight:700;color:{tc};'>{gn[:3]}</div>",
@@ -1673,13 +1700,13 @@ with tab_cal:
 
                     # ── Hücre arkaplanı: gün tipi renkleri korunur ──
                     if _is_tod:
-                        cell_bg = "#fef3c7"; border = "2px solid #f59e0b"; day_c = "#b45309"
+                        (cell_bg, border), day_c = ui["cal_cell_today"], ui["today_text"]
                     elif _is_hol:
-                        cell_bg = "#fee2e2"; border = "1px solid #fca5a5"; day_c = "#dc2626"
+                        (cell_bg, border), day_c = ui["cal_cell_hol"], ui["holiday_text"]
                     elif _is_we:
-                        cell_bg = "#dbeafe"; border = "1px solid #bfdbfe"; day_c = "#1d4ed8"
+                        (cell_bg, border), day_c = ui["cal_cell_we"], ui["weekend_text"]
                     else:
-                        cell_bg = "#f8fafc"; border = "1px solid #e2e8f0"; day_c = "#374151"
+                        (cell_bg, border), day_c = ui["cal_cell"], ui["day_text"]
 
                     # Kişi renk bandı: nöbetçilerin renkleri hücre altında ince bant olarak
                     color_bar_html = ""
@@ -1719,7 +1746,7 @@ with tab_cal:
                             f"<span style='background:{pc};border-radius:8px;padding:2px 8px;"
                             f"font-size:12px;font-weight:700;color:#1f2937;white-space:nowrap;"
                             f"outline:{outline};'>{escape_html(p)}</span>"
-                            f"<span style='font-size:10px;color:#6b7280;white-space:nowrap;'>{escape_html(rl)}</span>"
+                            f"<span style='font-size:10px;color:{ui['label_text']};white-space:nowrap;'>{escape_html(rl)}</span>"
                             f"</div>"
                         )
 
@@ -1758,6 +1785,20 @@ for person in isimler:
             df_preferred.at[person, col] = 1
         elif status == 2:
             df_preferred.at[person, col] = 2
+
+def _simulation_context():
+    """Simülasyon girdilerinin özeti: değişirse bekleyen eksik sonuç geçersiz olur."""
+    return (
+        yil, ay, tuple(isimler), tuple(sutunlar), kişi_sayısı, min_bosluk,
+        schedule_fingerprint(df_unwanted), schedule_fingerprint(df_preferred),
+        tuple(sorted(st.session_state.forbidden_pairs)),
+        tuple(sorted((p, tuple(sorted(limits.items())))
+                     for p, limits in st.session_state.get('person_limits', {}).items())),
+        tuple(sorted(active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool))),
+        tuple(sorted(prev_last_shift.items())),
+        tuple(sorted(history_special.items())),
+    )
+
 
 # Handle simulation trigger
 sim_clicked = st.session_state.get('run_simulation', False)
@@ -1810,13 +1851,7 @@ if sim_clicked:
                 st.session_state.incomplete_simulation = {
                     "schedule": _new_schedule,
                     "missing": _missing,
-                    "context": (
-                        yil, ay, tuple(isimler), tuple(sutunlar), kişi_sayısı, min_bosluk,
-                        schedule_fingerprint(df_unwanted), schedule_fingerprint(df_preferred),
-                        tuple(sorted(st.session_state.forbidden_pairs)),
-                        tuple(sorted((p, tuple(sorted(limits.items())))
-                                     for p, limits in st.session_state.get('person_limits', {}).items())),
-                    ),
+                    "context": _simulation_context(),
                     "previous_fingerprint": schedule_fingerprint(st.session_state.schedule_bool),
                 }
             else:
@@ -1828,14 +1863,7 @@ if sim_clicked:
 
 _incomplete = st.session_state.incomplete_simulation
 if _incomplete is not None:
-    _context = (
-        yil, ay, tuple(isimler), tuple(sutunlar), kişi_sayısı, min_bosluk,
-        schedule_fingerprint(df_unwanted), schedule_fingerprint(df_preferred),
-        tuple(sorted(st.session_state.forbidden_pairs)),
-        tuple(sorted((p, tuple(sorted(limits.items())))
-                     for p, limits in st.session_state.get('person_limits', {}).items())),
-    )
-    if (_incomplete["context"] != _context
+    if (_incomplete["context"] != _simulation_context()
             or _incomplete["previous_fingerprint"] != schedule_fingerprint(st.session_state.schedule_bool)):
         st.session_state.incomplete_simulation = None
         st.info("Çizelge veya ekip ayarları değiştiği için eksik simülasyon sonucu iptal edildi. Yeniden simülasyon çalıştırın.")
@@ -1931,25 +1959,8 @@ else:
 
 # ── Günlük Listeden gelen görev yeri değişim isteği ──────────────────────────
 _liste_swap_dn = st.session_state.pop('liste_swap_day', None)
-if _liste_swap_dn is not None and st.session_state.get('cached_rows_liste'):
-    _ls_role_names = st.session_state.get('cached_role_names', [f"Görev{i+1}" for i in range(kişi_sayısı)])
-    _ls_row_idx = _liste_swap_dn - 1
-    if 0 <= _ls_row_idx < len(st.session_state.cached_rows_liste):
-        _ls_row = dict(st.session_state.cached_rows_liste[_ls_row_idx])
-        _ls_valid = [_ls_row.get(rn, "-") for rn in _ls_role_names]
-        _ls_valid = [p for p in _ls_valid if p and p != "-" and p in isimler]
-        if len(_ls_valid) >= 2:
-            save_undo_state()
-            _ls_valid = [_ls_valid[-1]] + _ls_valid[:-1]  # döngüsel kaydırma
-            _lsvi = 0
-            for _lsrn in _ls_role_names:
-                _lsold = _ls_row.get(_lsrn, "-")
-                if _lsold and _lsold != "-" and _lsold in isimler:
-                    _ls_row[_lsrn] = _ls_valid[_lsvi]; _lsvi += 1
-            st.session_state.cached_rows_liste[_ls_row_idx] = _ls_row
-            st.session_state.should_regenerate_assignments = False
-            st.toast(f"{_liste_swap_dn}. gün görev yerleri değiştirildi", icon="🔄")
-            st.rerun()
+if _liste_swap_dn is not None and _rotate_roles_for_day(_liste_swap_dn):
+    st.rerun()
 
 # --- VERİ HAZIRLIĞI ---
 # Only regenerate assignments when AI button is clicked, not on manual edits.
@@ -2115,9 +2126,11 @@ with _export_col:
                            on_click="ignore", width="stretch", disabled=not EXCEL_AVAILABLE)
         st.download_button("🖨️ Yazdırılabilir sayfa", _html_bytes, f"nobet_{yil}_{ay:02d}.html", "text/html",
                            on_click="ignore", width="stretch")
-        st.download_button("🖼️ Resim (PNG)", _png_bytes, "liste.png", "image/png",
+        st.download_button("🖼️ Resim (PNG)", _png_bytes, f"nobet_{yil}_{ay:02d}.png", "image/png",
                            on_click="ignore", width="stretch")
-        st.download_button("📄 CSV", df_liste.to_csv(index=False).encode('utf-8'), "liste.csv", "text/csv",
+        # BOM'lu UTF-8: Excel'de Ş, ğ, ı gibi harfler bozulmadan açılır.
+        st.download_button("📄 CSV", df_liste.to_csv(index=False).encode('utf-8-sig'),
+                           f"nobet_{yil}_{ay:02d}.csv", "text/csv",
                            on_click="ignore", width="stretch")
         st.markdown("**💬 WhatsApp metni**")
         st.caption("Sağ üstteki simgeyle kopyalayıp yapıştırın. Hafta sonu ve tatiller kalın görünür.")
@@ -2159,127 +2172,70 @@ with _share_col:
 with _import_col:
     with st.popover("📂 Excel Yükle", width="stretch"):
         st.caption("Daha önce indirilen Excel dosyasını veya aynı formatta hazırladığınız listeyi yükleyin.")
+        for _level, _msg in st.session_state.pop("excel_import_messages", []):
+            getattr(st, _level)(_msg)
         _uploaded = st.file_uploader("Excel dosyası seçin (.xlsx)", type=["xlsx"], key="excel_import_uploader", label_visibility="collapsed")
-        if _uploaded is not None:
+        # Dosya kutuda kaldıkça sayfa her yenilendiğinde yeniden içe aktarılıp
+        # sonsuz döngüye giriyordu (elle yapılan değişiklikler de eziliyordu).
+        # Her yüklenen dosya yalnızca bir kez işlenir.
+        _upload_id = (
+            getattr(_uploaded, "file_id", None) or (_uploaded.name, _uploaded.size)
+            if _uploaded is not None else None
+        )
+        if _uploaded is not None and _upload_id != st.session_state.get("excel_import_done"):
+            st.session_state.excel_import_done = _upload_id
+            _msgs = []
             try:
                 _xl = pd.ExcelFile(_uploaded)
                 _sheet = "Günlük Liste" if "Günlük Liste" in _xl.sheet_names else _xl.sheet_names[0]
-                _df_imp = pd.read_excel(_xl, sheet_name=_sheet)
-                # Tarih sütunundan gün numarasını çıkar (örn: "01.06.2026 Paz" → 1)
-                _imp_role_cols = [c for c in _df_imp.columns if c != "Tarih"]
-                if "Tarih" not in _df_imp.columns or not _imp_role_cols:
-                    st.error("Dosya formatı uyumsuz: 'Tarih' sütunu ve en az bir görev sütunu gerekli.")
-                else:
-                    _new_sched = pd.DataFrame(False, index=isimler, columns=sutunlar)
-                    _day_rows_dict = {}  # day_num -> row_data (Excel sırasından bağımsız)
-                    _skipped_names = set()
-                    _date_mismatches = []
-                    _unreadable_date_rows = 0
-                    for _, _irow in _df_imp.iterrows():
-                        _parsed_date = parse_schedule_import_date(_irow.get("Tarih"))
-                        if _parsed_date is None:
-                            _unreadable_date_rows += 1
-                            continue
-                        _day_num = _parsed_date["day"]
-                        # Month/year-bearing dates must belong to the selected
-                        # period. Do this before changing any session state.
-                        if (
-                            (_parsed_date["month"] is not None and _parsed_date["month"] != ay)
-                            or (_parsed_date["year"] is not None and _parsed_date["year"] != yil)
-                            or _day_num > gun_sayisi
-                        ):
-                            _date_mismatches.append(_parsed_date)
-                            continue
-                        # Sutunlar içinde eşleşen kolonu bul
-                        _match_col = None
-                        for _sc in sutunlar:
-                            if gun_detaylari[_sc]['day_num'] == _day_num:
-                                _match_col = _sc; break
-                        if _match_col is None:
-                            continue
-                        _row_data = {"Tarih": gun_detaylari[_match_col]['full_date']}
-                        for _ri, _rn in enumerate(role_names):
-                            _src_col = _imp_role_cols[_ri] if _ri < len(_imp_role_cols) else None
-                            _person = str(_irow.get(_src_col, "-")).strip() if _src_col else "-"
-                            if _person and _person != "-" and _person != "nan" and _person in isimler:
-                                _new_sched.at[_person, _match_col] = True
-                                _row_data[_rn] = _person
-                            else:
-                                if _person and _person != "-" and _person != "nan":
-                                    _skipped_names.add(_person)
-                                _row_data[_rn] = "-"
-                        _day_rows_dict[_day_num] = _row_data
-                    # sutunlar sırasıyla _new_rows oluştur; eksik günler boş satırla doldur
-                    _new_rows = []
-                    _matched = 0
-                    for _sc in sutunlar:
-                        _dn = gun_detaylari[_sc]['day_num']
-                        if _dn in _day_rows_dict:
-                            _new_rows.append(_day_rows_dict[_dn])
-                            _matched += 1
-                        else:
-                            _empty = {"Tarih": gun_detaylari[_sc]['full_date']}
-                            for _rn in role_names:
-                                _empty[_rn] = "-"
-                            _new_rows.append(_empty)
-                    if _date_mismatches:
-                        st.warning(
-                            f"⚠️ Excel tarihleri seçili dönemle uyuşmuyor "
-                            f"({ay:02d}/{yil}). {_date_mismatches[0]['day']} günü için "
-                            "farklı ay/yıl veya geçersiz gün bulundu; yükleme iptal edildi."
-                        )
-                    elif _matched > 0:
-                        save_undo_state()
-                        st.session_state.schedule_bool = _new_sched
-                        st.session_state.locked_cells = set()
-                        st.session_state.cached_rows_liste = _new_rows
-                        st.session_state.cached_role_names = role_names
-                        st.session_state.cached_key = (yil, ay, tuple(isimler), tuple(sutunlar), tuple(role_names))
-                        st.session_state.should_regenerate_assignments = False
-                        _xl_save_ok = save_schedule(f"Otomatik_{yil}_{ay:02d}", yil, ay, isimler, _new_sched,
-                                                    pref_df=st.session_state.get('pref_df'),
-                                                    rows_liste=_new_rows, owner=current_owner)
-                        if not _xl_save_ok:
-                            update_persistence_feedback(
-                                st.session_state,
-                                False,
-                                "❌ Excel verisi yüklendi ancak çizelge "
-                                "kaydedilemedi. Veritabanı bağlantısını kontrol edin.",
-                            )
-                        else:
-                            update_persistence_feedback(st.session_state, True)
-                        if _skipped_names:
-                            st.warning(f"⚠️ {len(_skipped_names)} isim mevcut ekipte bulunamadığı için atlandı: {', '.join(sorted(_skipped_names))}")
-                        if _matched < len(sutunlar):
-                            st.warning(
-                                f"⚠️ Excel'de {len(sutunlar)} çalışma gününden "
-                                f"{_matched} gün eşleşti; {len(sutunlar) - _matched} gün "
-                                "boş bırakıldı."
-                            )
-                        if _unreadable_date_rows:
-                            st.warning(
-                                f"⚠️ {_unreadable_date_rows} satırın tarihi okunamadığı "
-                                "için atlandı."
-                            )
-                        if _xl_save_ok:
-                            st.success(f"{_matched}/{len(sutunlar)} gün yüklendi ve kaydedildi!")
-                        st.rerun()
-                    else:
-                        if _unreadable_date_rows:
-                            st.warning(
-                                "Eşleşen gün bulunamadı; Excel tarihleri okunamadı. "
-                                "Tarih sütununda gün/ay/yıl bilgilerinin bulunduğunu kontrol edin."
-                            )
-                        else:
-                            st.warning(
-                                f"Eşleşen gün bulunamadı. Excel tarihleri seçili "
-                                f"dönemle ({ay:02d}/{yil}) uyumlu değil; yükleme iptal edildi."
-                            )
-            except Exception as _e:
-                st.error(
-                    "Dosya okunamadı. Lütfen uygulamadan indirilen Excel formatını "
-                    f"('Tarih' + görev sütunları) kullandığınızdan emin olun.\n\nDetay: {_e}"
+                _imp = import_schedule_table(
+                    pd.read_excel(_xl, sheet_name=_sheet),
+                    isimler, sutunlar, gun_detaylari, role_names, yil, ay,
                 )
+            except Exception as _e:
+                _imp = None
+                _msgs.append(("error",
+                    "Dosya okunamadı. Lütfen uygulamadan indirilen Excel formatını "
+                    f"('Tarih' + görev sütunları) kullandığınızdan emin olun.\n\nDetay: {_e}"))
+            if _imp is None:
+                pass
+            elif not _imp["format_ok"]:
+                _msgs.append(("error", "Dosya formatı uyumsuz: 'Tarih' sütunu ve en az bir görev sütunu gerekli."))
+            elif _imp["date_mismatch"]:
+                _msgs.append(("warning",
+                    f"⚠️ Excel tarihleri seçili dönemle uyuşmuyor ({ay:02d}/{yil}). "
+                    f"{_imp['date_mismatch']['day']} günü için farklı ay/yıl veya geçersiz gün "
+                    "bulundu; yükleme iptal edildi."))
+            elif _imp["matched"] == 0:
+                _msgs.append(("warning",
+                    "Eşleşen gün bulunamadı; Excel tarihleri okunamadı. Tarih sütununda "
+                    "gün/ay/yıl bilgilerinin bulunduğunu kontrol edin."
+                    if _imp["unreadable_rows"] else
+                    f"Eşleşen gün bulunamadı. Excel tarihleri seçili dönemle ({ay:02d}/{yil}) "
+                    "uyumlu değil; yükleme iptal edildi."))
+            else:
+                save_undo_state()
+                st.session_state.schedule_bool = _imp["schedule"]
+                st.session_state.locked_cells = set()
+                st.session_state.cached_rows_liste = _imp["rows"]
+                st.session_state.cached_role_names = role_names
+                st.session_state.cached_key = (yil, ay, tuple(isimler), tuple(sutunlar), tuple(role_names))
+                st.session_state.cached_role_schedule = _imp["schedule"].copy(deep=True)
+                st.session_state.should_regenerate_assignments = False
+                # Kayıt, sayfa yenilenince otomatik kayıtla yapılır (hata olursa orada görünür).
+                _msgs.append(("success", f"{_imp['matched']}/{len(sutunlar)} gün yüklendi."))
+                if _imp["skipped_names"]:
+                    _msgs.append(("warning",
+                        f"⚠️ {len(_imp['skipped_names'])} isim mevcut ekipte bulunamadığı için "
+                        f"atlandı: {', '.join(_imp['skipped_names'])}"))
+                if _imp["matched"] < len(sutunlar):
+                    _msgs.append(("warning",
+                        f"⚠️ Excel'de {len(sutunlar)} günden {_imp['matched']} gün eşleşti; "
+                        f"{len(sutunlar) - _imp['matched']} gün boş bırakıldı."))
+                if _imp["unreadable_rows"]:
+                    _msgs.append(("warning", f"⚠️ {_imp['unreadable_rows']} satırın tarihi okunamadığı için atlandı."))
+            st.session_state.excel_import_messages = _msgs
+            st.rerun()
 
 st.divider()
 
@@ -2343,16 +2299,20 @@ with tab_liste:
                 {k: v for k, v in r.items() if k == "Tarih" or k in role_names}
                 for r in rows_liste
             ])
+            for _msg in st.session_state.pop("role_edit_notice", []):
+                st.warning(_msg)
             _edited_roles = st.data_editor(
                 _role_edit_df,
                 column_config=_edit_col_cfg,
                 width="stretch",
                 hide_index=True,
-                key="role_editor_table",
+                # Her düzenlemeden sonra sürüm artar; uygulanamayan yazım tabloda kalmaz.
+                key=f"role_editor_table_{st.session_state.get('role_editor_version', 0)}",
                 num_rows="fixed",
             )
             if _edited_roles is not None:
                 _role_changed = False
+                _role_ignored = []
                 _new_rows_edit = []
                 # to_dict: görev adında boşluk/tire olsa da sütun okunur (itertuples
                 # bu adları değiştirdiği için düzenlemeler sessizce kayboluyordu).
@@ -2366,10 +2326,22 @@ with tab_liste:
                     _new_r, _row_changed = apply_role_edits(_orow, _erow, role_names, _assigned_today)
                     _role_changed = _role_changed or _row_changed
                     _new_rows_edit.append(_new_r)
+                    for _role, _value in ignored_role_edits(_orow, _erow, role_names, _assigned_today):
+                        _day_label = _orow.get("Tarih", "")
+                        _role_ignored.append(
+                            f"{_day_label} · {_role}: **{_value}** o gün nöbetçi değil."
+                            if _value else
+                            f"{_day_label} · {_role}: görev boş bırakılamaz; kişiyi çıkarmak için tablodan nöbetini kaldırın."
+                        )
+                if _role_ignored:
+                    st.session_state.role_edit_notice = ["⚠️ Uygulanmadı — " + _m for _m in _role_ignored[:5]]
                 if _role_changed:
                     save_undo_state()
                     st.session_state.cached_rows_liste = _new_rows_edit
                     st.session_state.should_regenerate_assignments = False
+                if _role_changed or _role_ignored:
+                    # Tablo bir sonraki çizimde güncel satırlarla temiz başlasın.
+                    st.session_state.role_editor_version = st.session_state.get("role_editor_version", 0) + 1
                     st.rerun()
         else:
             st.info("Önce simülasyon çalıştırın veya nöbet ataması yapın.")

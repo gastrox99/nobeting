@@ -14,7 +14,6 @@ import time
 from unittest.mock import patch
 import db
 from nobet_core import (
-    parse_unwanted_days,
     parse_holiday_days,
     validate_inputs,
     parse_forbidden_pairs,
@@ -55,49 +54,6 @@ from nobet_core import (
     redo_history_state,
     update_persistence_feedback,
 )
-
-
-# ------------------------------------------------------------------------------
-# 1. parse_unwanted_days testleri
-# ------------------------------------------------------------------------------
-class TestParseUnwantedDays(unittest.TestCase):
-
-    def test_bos_girdi(self):
-        self.assertEqual(parse_unwanted_days("", 30), [])
-
-    def test_none_girdi(self):
-        self.assertEqual(parse_unwanted_days(None, 30), [])
-
-    def test_tek_gun(self):
-        self.assertEqual(parse_unwanted_days("5", 30), [5])
-
-    def test_virgulle_ayrilmis_gunler(self):
-        result = parse_unwanted_days("1,5,10", 30)
-        self.assertEqual(sorted(result), [1, 5, 10])
-
-    def test_aralik_girdi(self):
-        result = parse_unwanted_days("3-7", 30)
-        self.assertEqual(sorted(result), [3, 4, 5, 6, 7])
-
-    def test_karisik_tek_ve_aralik(self):
-        result = parse_unwanted_days("1,5-7,15", 30)
-        self.assertEqual(sorted(result), [1, 5, 6, 7, 15])
-
-    def test_max_day_siniri(self):
-        result = parse_unwanted_days("28-35", 30)
-        self.assertEqual(sorted(result), [28, 29, 30])
-
-    def test_sinir_disi_gun(self):
-        result = parse_unwanted_days("0,31,99", 30)
-        self.assertEqual(result, [])
-
-    def test_gecersiz_metin(self):
-        result = parse_unwanted_days("abc,xyz", 30)
-        self.assertEqual(result, [])
-
-    def test_bosluklu_girdi(self):
-        result = parse_unwanted_days("  3 , 5 , 10  ", 30)
-        self.assertEqual(sorted(result), [3, 5, 10])
 
 
 class TestParseHolidayDays(unittest.TestCase):
@@ -1351,8 +1307,11 @@ class TestOfficialHolidaysAndReminder(unittest.TestCase):
         self.assertEqual(holidays_to_text([29, 20, 21, 22, 1]), "1, 20-22, 29")
         self.assertEqual(official_holidays_summary(2026, 5)[-1], "27-30 Mayıs Kurban Bayramı")
         self.assertTrue(religious_holidays_known(2027))
-        self.assertFalse(religious_holidays_known(2029))
-        self.assertEqual(official_holidays(2029, 10), [(29, "Cumhuriyet Bayramı")])
+        self.assertEqual([d for d, _ in official_holidays(2028, 2)], [26, 27, 28])
+        self.assertEqual([d for d, _ in official_holidays(2028, 5)], [1, 5, 6, 7, 8, 19])
+        self.assertTrue(religious_holidays_known(2029))
+        self.assertFalse(religious_holidays_known(2030))
+        self.assertEqual(official_holidays(2030, 10), [(29, "Cumhuriyet Bayramı")])
 
     def test_takvimde_bir_gun_once_hatirlatici(self):
         rows = [{"Tarih": "03.10.2026 Cmt", "AYB": "Ali", "GYB": "Ayşe"}]
@@ -1516,11 +1475,11 @@ class TestSharedCoreFunctions(unittest.TestCase):
 
     def test_uygulama_kopya_fonksiyon_tanimlamaz(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
-        for name in ("escape_html", "parse_unwanted_days", "validate_inputs", "create_print_html"):
+        for name in ("escape_html", "validate_inputs", "create_print_html"):
             self.assertNotIn(f"\ndef {name}(", source, f"{name} nobet_core'dan alınmalı")
         self.assertIn("build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)", source)
         self.assertIn("parse_person_limits_with_issues(limits_text)", source)
-        self.assertIn("parse_forbidden_pairs(forbidden_input)", source)
+        self.assertIn("parse_forbidden_pairs(forbidden_input, isimler)", source)
 
 
 class TestAssignmentWarnings(unittest.TestCase):
@@ -1605,26 +1564,6 @@ class TestGoogleLoginSupport(unittest.TestCase):
         self.assertIn("WHERE legacy.owner = ''", cursor.executed[0][0])
         self.assertEqual(cursor.executed[1][1], ("user:ali@gmail.com",))
         self.assertFalse(db.claim_legacy_data(""))
-
-    def test_secrets_dosyasi_ortam_degiskenlerinden_uretilir(self):
-        import importlib.util, tomllib
-        spec = importlib.util.spec_from_file_location(
-            "write_streamlit_secrets",
-            Path(__file__).with_name("scripts") / "write_streamlit_secrets.py",
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        self.assertIsNone(module.build_secrets_toml({}))
-        content = module.build_secrets_toml({
-            "GOOGLE_CLIENT_ID": "id", "GOOGLE_CLIENT_SECRET": 'gizli"değer',
-            "AUTH_REDIRECT_URI": "https://ornek.replit.app/oauth2callback",
-            "AUTH_COOKIE_SECRET": "cerez",
-        })
-        auth = tomllib.loads(content)["auth"]
-        self.assertEqual(auth["client_secret"], 'gizli"değer')
-        self.assertEqual(auth["redirect_uri"], "https://ornek.replit.app/oauth2callback")
-        self.assertTrue(auth["server_metadata_url"].startswith("https://accounts.google.com/"))
 
     def test_uygulama_tum_kayitlari_kullaniciya_baglar(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
@@ -1855,14 +1794,6 @@ class TestSchedulePersistence(unittest.TestCase):
                 db.save_schedule("Ocak", 2025, 1, ["Ali"], schedule)
             )
 
-    def test_delete_db_hatasi_basarisizlik_dondurur(self):
-        with patch.object(
-            db.psycopg2,
-            "connect",
-            side_effect=RuntimeError("database unavailable"),
-        ):
-            self.assertFalse(db.delete_schedule("Ocak", 2025, 1))
-
     def test_save_serializes_role_rows_alongside_schedule(self):
         cursor = _FakeDbCursor()
         connection = _FakeDbConnection(cursor)
@@ -2028,3 +1959,148 @@ class _FakeDbConnection:
 
     def close(self):
         pass
+
+
+# ------------------------------------------------------------------------------
+# İnceleme raporundaki düzeltmeler (Ekim 2026)
+# ------------------------------------------------------------------------------
+class TestReviewFixes(unittest.TestCase):
+
+    def test_buyuk_harfli_turkce_ay_adlari_okunur(self):
+        from nobet_core import parse_schedule_import_date
+        expected = {"OCAK": 1, "ŞUBAT": 2, "MART": 3, "NİSAN": 4, "MAYIS": 5, "HAZİRAN": 6,
+                    "TEMMUZ": 7, "AĞUSTOS": 8, "EYLÜL": 9, "EKİM": 10, "KASIM": 11, "ARALIK": 12,
+                    "NISAN": 4, "Haziran": 6, "eki": 10}
+        for name, month in expected.items():
+            parsed = parse_schedule_import_date(f"5 {name} 2026")
+            self.assertEqual((parsed["month"], parsed["year"]), (month, 2026), name)
+
+    def test_gorev_adlari_benzersiz_ve_tarih_olamaz(self):
+        from nobet_core import normalize_role_names
+        self.assertEqual(normalize_role_names("AYB, AYB", 2)[0], ["AYB", "AYB 2"])
+        self.assertEqual(normalize_role_names("Görev2", 2)[0], ["Görev2", "Görev1"])
+        names, adjusted = normalize_role_names("Tarih, GYB, gyb", 3)
+        self.assertEqual(names, ["Tarih 2", "GYB", "gyb 2"])
+        self.assertEqual(len(adjusted), 2)
+        self.assertEqual(normalize_role_names("", 2)[0], ["Görev1", "Görev2"])
+        self.assertEqual(normalize_role_names("A, B, C", 2)[0], ["A", "B"])
+
+    def test_isim_degisikligi_algilanir(self):
+        from nobet_core import detect_renames, rename_people_in_rows
+        self.assertEqual(detect_renames(["Ali", "Veli"], ["Ali", "Veli Can"]), {"Veli": "Veli Can"})
+        self.assertEqual(detect_renames(["Ali", "Veli"], ["Veli", "Ali"]), {})
+        self.assertEqual(detect_renames(["Ali", "Veli"], ["Ali", "Veli", "Can"]), {})
+        self.assertEqual(detect_renames([], ["Ali"]), {})
+        rows = [{"Tarih": "Veli", "AYB": "Veli", "GYB": "Ali"}]
+        self.assertEqual(rename_people_in_rows(rows, {"Veli": "Veli Can"}),
+                         [{"Tarih": "Veli", "AYB": "Veli Can", "GYB": "Ali"}])
+
+    def test_ekipte_olmayan_isimler_satirlardan_silinir(self):
+        from nobet_core import drop_unknown_people_from_rows
+        rows = [{"Tarih": "01.10.2026 Per", "AYB": "Eski", "GYB": "Ali"}]
+        self.assertEqual(drop_unknown_people_from_rows(rows, ["Ali"]),
+                         [{"Tarih": "01.10.2026 Per", "AYB": "-", "GYB": "Ali"}])
+
+    def test_uygulanamayan_gorev_duzenlemesi_bildirilir(self):
+        from nobet_core import ignored_role_edits
+        row = {"Tarih": "1", "AYB": "Ali", "GYB": "Ayşe"}
+        self.assertEqual(ignored_role_edits(row, {"AYB": "Can", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]),
+                         [("AYB", "Can")])
+        self.assertEqual(ignored_role_edits(row, {"AYB": "", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]),
+                         [("AYB", "")])
+        self.assertEqual(ignored_role_edits(row, {"AYB": "Ayşe", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]), [])
+
+    def test_tireli_isimler_yasak_ciftte_dogru_ayrilir(self):
+        team = ["Ayşe-Nur", "Ali", "Can", "Ece"]
+        self.assertEqual(parse_forbidden_pairs("Ayşe-Nur-Ali, Can-Ece", team),
+                         {("Ali", "Ayşe-Nur"), ("Can", "Ece")})
+        self.assertEqual(parse_forbidden_pairs("Ali-Can"), {("Ali", "Can")})
+
+    def _import_args(self):
+        isimler = ["Ali", "Ayşe"]
+        gun = build_gun_detaylari(2026, 10, 31, [])
+        return isimler, list(gun), gun
+
+    def test_excel_tablosu_cizelgeye_cevrilir(self):
+        from nobet_core import import_schedule_table
+        isimler, sutunlar, gun = self._import_args()
+        table = pd.DataFrame({
+            "Tarih": ["01.10.2026 Per", "2 EKİM 2026", "x"],
+            "AYB": ["Ali", "Ayşe", "Ali"],
+            "GYB": ["Zeynep", "-", "-"],
+        })
+        result = import_schedule_table(table, isimler, sutunlar, gun, ["AYB", "GYB"], 2026, 10)
+        self.assertTrue(result["format_ok"])
+        self.assertIsNone(result["date_mismatch"])
+        self.assertEqual(result["matched"], 2)
+        self.assertEqual(result["unreadable_rows"], 1)
+        self.assertEqual(result["skipped_names"], ["Zeynep"])
+        self.assertTrue(result["schedule"].at["Ali", sutunlar[0]])
+        self.assertTrue(result["schedule"].at["Ayşe", sutunlar[1]])
+        self.assertEqual(len(result["rows"]), 31)
+        self.assertEqual(result["rows"][0]["GYB"], "-")
+
+    def test_excel_baska_ayin_tarihini_reddeder(self):
+        from nobet_core import import_schedule_table
+        isimler, sutunlar, gun = self._import_args()
+        table = pd.DataFrame({"Tarih": ["5 NİSAN 2026"], "AYB": ["Ali"]})
+        result = import_schedule_table(table, isimler, sutunlar, gun, ["AYB"], 2026, 10)
+        self.assertEqual(result["date_mismatch"]["month"], 4)
+        bad = import_schedule_table(pd.DataFrame({"Ad": ["Ali"]}), isimler, sutunlar, gun, ["AYB"], 2026, 10)
+        self.assertFalse(bad["format_ok"])
+
+    def test_geri_yuklemede_ekipten_cikan_kisi_listeden_duser(self):
+        gun = build_gun_detaylari(2026, 10, 31, [])
+        sutunlar = list(gun)
+        saved = pd.DataFrame(False, index=["Ali", "Eski"], columns=sutunlar)
+        saved.loc[:, sutunlar[0]] = True
+        rows = [{"Tarih": gun[c]["full_date"], "AYB": "Ali" if i == 0 else "-",
+                 "GYB": "Eski" if i == 0 else "-"} for i, c in enumerate(sutunlar)]
+        state = {}
+        ok = restore_auto_saved_schedule(
+            state, lambda *_: (["Ali", "Eski"], saved, None, None, rows),
+            "Otomatik_2026_10", 2026, 10, ["Ali", "Ayşe"], sutunlar, gun, ["AYB", "GYB"],
+        )
+        self.assertTrue(ok)
+        self.assertEqual(state["cached_rows_liste"][0]["GYB"], "-")
+        self.assertEqual(state["cached_rows_liste"][0]["AYB"], "Ali")
+
+    def test_rakamdan_olusan_isimlerin_tercihleri_korunur(self):
+        prefs = pd.DataFrame([[1, 3], [2, 0]], index=["1", "2"], columns=["1 Çar", "2 Per"])
+        schedule = pd.DataFrame(False, index=prefs.index, columns=prefs.columns)
+        save_cursor = _FakeDbCursor()
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(save_cursor)), \
+                patch.object(db, "execute_values"):
+            self.assertTrue(db.save_schedule("Ocak", 2025, 1, ["1", "2"], schedule, pref_df=prefs))
+        load_cursor = _FakeDbCursor(
+            schedule_row={"id": 1, "team_members": json.dumps(["1", "2"]),
+                          "pref_json": save_cursor.executed[0][1][4]},
+            data_rows=[{"person": "1", "day_col": "1 Çar", "assigned": False}],
+        )
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)):
+            _, _, loaded_prefs, _, _ = db.load_schedule("Ocak", 2025, 1)
+        self.assertEqual(loaded_prefs.loc["1", "2 Per"], 3)
+
+    def test_veritabani_sifresi_gunluge_yazilmaz(self):
+        import io, contextlib
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            db._log_error("Test", RuntimeError("bad postgresql://u:cokgizli@host/db"))
+        self.assertNotIn("cokgizli", out.getvalue())
+
+    def test_yil_araligi_genis(self):
+        from nobet_core import apply_app_settings, YEAR_MAX
+        state = {}
+        apply_app_settings(state, {"year": 2031})
+        self.assertEqual(state["yil_val"], 2031)
+        self.assertGreaterEqual(YEAR_MAX, 2031)
+
+    def test_uygulama_kaynaginda_duzeltmeler_var(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        # Excel her dosya için bir kez işlenir (sonsuz döngü düzeltmesi).
+        self.assertIn('excel_import_done', source)
+        # CSV Excel'de Türkçe karakterlerle açılır.
+        self.assertIn("encode('utf-8-sig')", source)
+        # Telefonda tüm düğmeleri küçülten kural kaldırıldı.
+        self.assertNotIn("font-size: 9px", source)
+        self.assertNotIn("2024, 2030", source)

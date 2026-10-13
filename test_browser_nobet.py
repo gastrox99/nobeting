@@ -137,3 +137,87 @@ def test_manual_assignment_updates_visible_total_without_simulation(app_url):
             wait_for_total(page, baseline)
         finally:
             browser.close()
+
+def _open_app(playwright, app_url, team):
+    browser_path = os.environ.get("CHROMIUM_EXECUTABLE") or shutil.which("chromium")
+    browser = playwright.chromium.launch(headless=True, executable_path=browser_path, args=["--no-sandbox"])
+    page = browser.new_context(viewport={"width": 1600, "height": 1000}).new_page()
+    page.goto(app_url)
+    box = page.get_by_role("textbox", name="👥 Ekip (virgülle ayırın):")
+    box.fill(team)
+    box.press("Tab")
+    page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
+    return browser, page
+
+
+def _wait_idle(page, seconds=3.0):
+    """Sayfa yeniden çizimi bitene kadar bekle; sürekli çalışıyorsa hata ver."""
+    status = page.locator("[data-testid='stStatusWidget']")
+    deadline = time.monotonic() + 20
+    quiet_since = None
+    while time.monotonic() < deadline:
+        if status.count() and status.first.is_visible():
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = time.monotonic()
+        elif time.monotonic() - quiet_since >= seconds:
+            return
+        time.sleep(0.1)
+    raise AssertionError("Sayfa durmadan yeniden çiziliyor (sonsuz döngü?)")
+
+
+def _day_button(page, person, day_index):
+    row = page.locator(".st-key-schedule-grid [data-testid='stHorizontalBlock']").filter(
+        has=page.locator("b", has_text=person)
+    ).first
+    return row.locator(":scope > [data-testid='stColumn']").nth(day_index + 1).get_by_role("button")
+
+
+def test_excel_yukleme_bir_kez_islenir_ve_dongu_olmaz(app_url, tmp_path):
+    import pandas as pd
+    from datetime import datetime
+    now = datetime.now()
+    year, month = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+    path = tmp_path / "liste.xlsx"
+    pd.DataFrame({
+        "Tarih": [f"01.{month:02d}.{year}"],
+        "Görev1": [PERSON],
+        "Görev2": ["-"],
+    }).to_excel(path, sheet_name="Günlük Liste", index=False)
+
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, f"{PERSON}, Browser Test Ayşe")
+        try:
+            assert page.locator("[data-testid='stException']").count() == 0
+            page.get_by_text("📂 Excel Yükle").click()
+            page.locator("[data-testid='stFileUploader'] input[type=file]").set_input_files(str(path))
+            page.get_by_text("gün yüklendi").wait_for(timeout=20000)
+            _wait_idle(page)
+            assert _day_button(page, PERSON, 0).inner_text() == "✓"
+            # Dosya kutuda dururken elle yapılan değişiklik Excel'le ezilmemeli.
+            page.keyboard.press("Escape")
+            second = _day_button(page, "Browser Test Ayşe", 1)
+            second.click()
+            second.get_by_text("✓").wait_for()
+            _wait_idle(page)
+            assert _day_button(page, "Browser Test Ayşe", 1).inner_text() == "✓"
+            assert page.locator("[data-testid='stException']").count() == 0
+        finally:
+            browser.close()
+
+
+def test_isim_duzeltilince_nobetler_korunur(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Rename Ali, Rename Ayşe")
+        try:
+            first = _day_button(page, "Rename Ali", 0)
+            first.click()
+            first.get_by_text("✓").wait_for()
+            _wait_idle(page)
+            box = page.get_by_role("textbox", name="👥 Ekip (virgülle ayırın):")
+            box.fill("Rename Ali Can, Rename Ayşe")
+            box.press("Tab")
+            _wait_idle(page)
+            assert _day_button(page, "Rename Ali Can", 0).inner_text() == "✓"
+        finally:
+            browser.close()

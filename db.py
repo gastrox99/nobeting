@@ -3,13 +3,10 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 import pandas as pd
-from datetime import datetime
 from io import StringIO
 import json
-
 import re
 
-DATABASE_URL = os.getenv('DATABASE_URL')
 _last_error = None
 
 
@@ -40,6 +37,11 @@ def _describe_error(exc):
     message = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
     message = re.sub(r'(://[^:/@\s]+):[^@\s]+@', r'\1:***@', message)
     return message[:200]
+
+
+def _log_error(action, exc):
+    """Sunucu günlüğüne şifresiz hata satırı yazar."""
+    print(f"{action} error: {_describe_error(exc)}")
 
 
 def get_last_error():
@@ -138,7 +140,7 @@ def init_db():
         _last_error = None
         return True
     except Exception as e:
-        print(f"Database init error: {e}")
+        _log_error("Database init", e)
         _last_error = _describe_error(e)
         return False
     finally:
@@ -217,7 +219,7 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
 
         return True
     except Exception as e:
-        print(f"Save schedule error: {e}")
+        _log_error("Save schedule", e)
         return False
     finally:
         if conn is not None:
@@ -262,6 +264,9 @@ def load_schedule(name, year, month, raise_on_error=False, owner=""):
                     # pandas 3 treats a bare string as a file path, so the
                     # saved JSON must be wrapped in a file-like object.
                     pref_df = pd.read_json(StringIO(raw_pref))
+                    # "1", "2" gibi rakamdan oluşan isimler sayıya dönüşmesin.
+                    pref_df.index = pref_df.index.map(str)
+                    pref_df.columns = pref_df.columns.map(str)
                 except Exception:
                     pref_df = None
 
@@ -312,7 +317,7 @@ def load_schedule(name, year, month, raise_on_error=False, owner=""):
         return team_members, df, pref_df, settings_dict, rows_liste
 
     except Exception as e:
-        print(f"Load schedule error: {e}")
+        _log_error("Load schedule", e)
         if raise_on_error:
             raise
         return None, None, None, None, None
@@ -336,7 +341,7 @@ def save_app_settings(settings, owner=""):
                 ''', (settings_key(owner), json.dumps(settings, ensure_ascii=False)))
         return True
     except Exception as e:
-        print(f"Save settings error: {e}")
+        _log_error("Save settings", e)
         return False
     finally:
         if conn is not None:
@@ -356,7 +361,7 @@ def load_app_settings(owner="", raise_on_error=False):
         settings = json.loads(row['value'])
         return settings if isinstance(settings, dict) else None
     except Exception as e:
-        print(f"Load settings error: {e}")
+        _log_error("Load settings", e)
         if raise_on_error:
             raise
         return None
@@ -394,7 +399,7 @@ def claim_legacy_data(owner):
                 ''', (settings_key(owner),))
         return True
     except Exception as e:
-        print(f"Claim legacy data error: {e}")
+        _log_error("Claim legacy data", e)
         return False
     finally:
         if conn is not None:
@@ -418,7 +423,7 @@ def create_share_link(owner, year, month):
                 ''', (token, owner, year, month))
         return token
     except Exception as e:
-        print(f"Create share link error: {e}")
+        _log_error("Create share link", e)
         return None
     finally:
         if conn is not None:
@@ -438,7 +443,7 @@ def get_share_link(owner, year, month):
             row = cur.fetchone()
         return row['token'] if row else None
     except Exception as e:
-        print(f"Get share link error: {e}")
+        _log_error("Get share link", e)
         return None
     finally:
         if conn is not None:
@@ -457,7 +462,7 @@ def delete_share_link(owner, year, month):
                 )
         return True
     except Exception as e:
-        print(f"Delete share link error: {e}")
+        _log_error("Delete share link", e)
         return False
     finally:
         if conn is not None:
@@ -476,47 +481,8 @@ def resolve_share_token(token):
             row = cur.fetchone()
         return (row['owner'], row['year'], row['month']) if row else None
     except Exception as e:
-        print(f"Resolve share link error: {e}")
+        _log_error("Resolve share link", e)
         return None
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def list_schedules(owner=""):
-    """List all saved schedules"""
-    conn = None
-    try:
-        conn = _connect()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute('''
-                SELECT name, year, month, updated_at FROM schedules
-                WHERE owner = %s
-                ORDER BY updated_at DESC
-            ''', (owner,))
-            schedules = cur.fetchall()
-        return schedules
-    except Exception as e:
-        print(f"List schedules error: {e}")
-        return []
-    finally:
-        if conn is not None:
-            conn.close()
-
-def delete_schedule(name, year, month, owner=""):
-    """Delete a schedule"""
-    conn = None
-    try:
-        conn = _connect()
-        with conn:  # auto-commit on success, rollback on exception
-            with conn.cursor() as cur:
-                cur.execute('''
-                    DELETE FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s
-                ''', (owner, name, year, month))
-        return True
-    except Exception as e:
-        print(f"Delete schedule error: {e}")
-        return False
     finally:
         if conn is not None:
             conn.close()
