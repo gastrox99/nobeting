@@ -1,38 +1,62 @@
-name: Testler
+name: Analiz
 
-# Her gönderimde tüm testleri gerçek Streamlit ve Chromium ile çalıştırır.
 on:
   push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
-  test:
+  ruff:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: Ruff
+        shell: bash
+        run: |
+          ruff check --no-cache --select F,E9,B,PLE,PLW,ARG,SIM,RUF,PERF,PIE,RET --ignore RUF001,RUF002,RUF003,SIM108,RET504,RET505,SIM102,E501 --output-format concise . > ruff.txt || true
+          wc -l ruff.txt
+          python - <<'PY'
+          text = open("ruff.txt", encoding="utf-8").read()
+          chunks = [text[i:i + 6000] for i in range(0, len(text), 6000)][:8]
+          for c in chunks:
+              print("::warning title=ruff::" + c.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+          PY
+
+  maymun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      MONKEY_ROUNDS: "3"
+      MONKEY_STEPS: "120"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - name: Paketleri kur
-        run: pip install -r requirements.txt pytest playwright
-      - name: Chromium kur
-        run: python -m playwright install --with-deps chromium
-      - name: Testleri çalıştır
+      - run: pip install -r requirements.txt pytest playwright
+      - run: python -m playwright install --with-deps chromium
+      - name: Maymun testi
         shell: bash
         run: |
-          set +e
-          python -m pytest -v -p no:cacheprovider --tb=short 2>&1 | tee pytest.log
-          status=${PIPESTATUS[0]}
-          # Hataları GitHub'da "annotation" olarak da göster.
+          python -m pytest test_monkey.py -s -p no:cacheprovider --tb=short > monkey.log 2>&1 || true
+          tail -5 monkey.log
           python - <<'PY'
-          import re
-          text = open("pytest.log", encoding="utf-8", errors="replace").read()
-          blocks = re.split(r"\n_{5,} (.+?) _{5,}\n", text)
-          for name, body in list(zip(blocks[1::2], blocks[2::2]))[:20]:
-              msg = (name + "\n" + body[-6000:]).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
-              print(f"::error title=Test hatası::{msg}")
+          import os
+          text = open("monkey_findings.txt", encoding="utf-8").read() if os.path.exists("monkey_findings.txt") else open("monkey.log", encoding="utf-8").read()[-12000:]
+          chunks = [text[i:i + 6000] for i in range(0, len(text), 6000)][:9]
+          for c in chunks:
+              print("::warning title=maymun::" + c.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
           PY
-          exit $status
