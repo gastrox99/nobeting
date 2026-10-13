@@ -968,6 +968,21 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
             self.assertIn(color, self.app_source)
         self.assertIn("get_preference_grid_state(", self.app_source)
 
+    def test_renk_kurallari_yeni_streamlit_sutunlarini_ve_iki_modu_hedefler(self):
+        # Streamlit 1.38+ sütunları data-testid="stColumn" ile işaretler;
+        # yalnızca eski "column" adını hedefleyen kurallar hiç eşleşmez.
+        self.assertNotRegex(
+            self.app_source,
+            r"""(?<!:is\()\[data-testid=["']column["']\](?!,\[data-testid=["']stColumn)""",
+        )
+        for state in ("0", "1", "2", "3", "conflict"):
+            self.assertIn(
+                ":is(.st-key-preference-grid, .st-key-schedule-grid) "
+                ':is([data-testid="column"],[data-testid="stColumn"])'
+                f":has(.preference-state-{state}) .stButton > button",
+                self.app_source,
+            )
+
     def test_hucre_ve_lejant_ayni_durum_sozlugunu_kullanir(self):
         legend = get_preference_grid_legend()
         self.assertEqual(len(legend), 9)
