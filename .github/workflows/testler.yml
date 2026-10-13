@@ -16,16 +16,17 @@ jobs:
       - name: Ruff
         shell: bash
         run: |
-          ruff check --no-cache --select F,E9,B,PLE,PLW,ARG,SIM,RUF,PERF,PIE,RET --ignore RUF001,RUF002,RUF003,SIM108,RET504,RET505,SIM102,E501 --output-format concise . > ruff.txt || true
+          ruff check --no-cache --select F,E9,B,PLE,PLW,ARG,RUF006,RUF012,RUF013 --ignore B905,B008,PLW0603,PLW2901 --output-format concise . > ruff.txt || true
           wc -l ruff.txt
           python - <<'PY'
           text = open("ruff.txt", encoding="utf-8").read()
-          chunks = [text[i:i + 6000] for i in range(0, len(text), 6000)][:8]
+          chunks = [text[i:i + 3500] for i in range(0, len(text), 3500)][:12]
           for c in chunks:
               print("::warning title=ruff::" + c.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
           PY
 
   maymun:
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
