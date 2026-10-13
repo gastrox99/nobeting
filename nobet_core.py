@@ -132,7 +132,7 @@ def parse_schedule_import_date(value):
 PREFERENCE_GRID_STATES = (
     {
         "key": "assigned_neutral",
-        "symbol": "•",
+        "symbol": "✓",
         "color": "#475569",
         "css_class": "preference-state-0",
         "description": "Atandı",

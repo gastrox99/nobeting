@@ -1047,6 +1047,26 @@ with tab_grid:
 
     # Dynamic column background CSS
     col_bg_css_parts = []
+    # Karanlık modda açık renkli yazılar/zeminler; eskiden isimler açık zemin
+    # üzerinde açık renkte kalıp görünmüyordu.
+    try:
+        _dark_theme = st.context.theme.type == "dark"
+    except Exception:
+        _dark_theme = False
+    ui = {
+        "name_text": "#e5e7eb" if _dark_theme else "#1f2937",
+        "name_bg": "#1e293b" if _dark_theme else "#f8fafc",
+        "name_border": "#334155" if _dark_theme else "#e2e8f0",
+        "muted": "#9ca3af",
+        "day_text": "#e5e7eb" if _dark_theme else "#374151",
+        "weekend_text": "#93c5fd" if _dark_theme else "#1d4ed8",
+        "holiday_text": "#fca5a5" if _dark_theme else "#c62828",
+        "today_text": "#fcd34d" if _dark_theme else "#b45309",
+        "weekend_bg": "rgba(59,130,246,0.18)" if _dark_theme else "rgba(219,234,254,0.5)",
+        "holiday_bg": "rgba(239,68,68,0.18)" if _dark_theme else "rgba(254,226,226,0.55)",
+        "today_bg": "rgba(245,158,11,0.22)" if _dark_theme else "rgba(254,243,199,0.75)",
+        "legend_text": "#d1d5db" if _dark_theme else "#374151",
+    }
     grid_css_selector = (
         ".st-key-preference-grid"
         if st.session_state.edit_mode == "tercih"
@@ -1059,17 +1079,17 @@ with tab_grid:
         if _is_today:
             col_bg_css_parts.append(
                 f"{grid_css_selector} [data-testid='stHorizontalBlock'] > :is([data-testid='column'],[data-testid='stColumn']):nth-child({_idx})"
-                f"{{ background:rgba(254,243,199,0.75)!important; border-radius:6px; outline:2px solid #f59e0b; }}"
+                f"{{ background:{ui['today_bg']}!important; border-radius:6px; outline:2px solid #f59e0b; }}"
             )
         elif _info['holiday']:
             col_bg_css_parts.append(
                 f"{grid_css_selector} [data-testid='stHorizontalBlock'] > :is([data-testid='column'],[data-testid='stColumn']):nth-child({_idx})"
-                f"{{ background:rgba(254,226,226,0.55)!important; border-radius:6px; }}"
+                f"{{ background:{ui['holiday_bg']}!important; border-radius:6px; }}"
             )
         elif _info['weekend']:
             col_bg_css_parts.append(
                 f"{grid_css_selector} [data-testid='stHorizontalBlock'] > :is([data-testid='column'],[data-testid='stColumn']):nth-child({_idx})"
-                f"{{ background:rgba(219,234,254,0.5)!important; border-radius:6px; }}"
+                f"{{ background:{ui['weekend_bg']}!important; border-radius:6px; }}"
             )
     col_bg_css = "\n".join(col_bg_css_parts)
 
@@ -1077,9 +1097,27 @@ with tab_grid:
 <style>
 .st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1),
 .st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
-    background: #f8fafc !important;
-    border-right: 2px solid #e2e8f0;
+    background: {ui['name_bg']} !important;
+    border-right: 2px solid {ui['name_border']};
     min-width: 80px;
+}}
+/* Ayın tüm günleri tek satırda kalsın; sığmazsa tablo yana kayar
+   (eskiden son günler alt satıra geniş şeritler olarak düşüyordu). */
+.st-key-schedule-grid [data-testid="stHorizontalBlock"],
+.st-key-preference-grid [data-testid="stHorizontalBlock"] {{
+    flex-wrap: nowrap !important;
+}}
+@media (min-width: 769px) {{
+    /* Masaüstü/tablet: hücreler küçülerek tek satıra sığar (mobil kuralı ayrı). */
+    .st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]),
+    .st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]) {{
+        min-width: 26px !important;
+        flex-shrink: 1 !important;
+    }}
+    .st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1),
+    .st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
+        min-width: 96px !important;
+    }}
 }}
 {col_bg_css}
 .st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]),
@@ -1175,7 +1213,7 @@ with tab_grid:
     tr_gunler_short = {0:"Pzt", 1:"Sal", 2:"Çar", 3:"Per", 4:"Cum", 5:"Cmt", 6:"Paz"}
     header_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
     with header_cols[0]:
-        st.markdown("<div style='font-size:13px;font-weight:700;color:#6b7280;padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:13px;font-weight:700;color:{ui['muted']};padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
     for i, col in enumerate(sutunlar):
         with header_cols[i + 1]:
             _info = gun_detaylari[col]
@@ -1185,20 +1223,20 @@ with tab_grid:
             _is_today = (date(yil, ay, day_num) == today_date)
             day_name = tr_gunler_short[date(yil, ay, day_num).weekday()]
             if _is_today:
-                num_style = "color:#b45309;font-weight:800;font-size:15px;"
-                name_style = "color:#b45309;font-size:11px;"
+                num_style = f"color:{ui['today_text']};font-weight:800;font-size:15px;"
+                name_style = f"color:{ui['today_text']};font-size:11px;"
                 badge = "★"
             elif is_hol:
-                num_style = "color:#c62828;font-weight:700;font-size:14px;"
-                name_style = "color:#c62828;font-size:11px;"
+                num_style = f"color:{ui['holiday_text']};font-weight:700;font-size:14px;"
+                name_style = f"color:{ui['holiday_text']};font-size:11px;"
                 badge = "🎉"
             elif is_we:
-                num_style = "color:#1d4ed8;font-weight:700;font-size:14px;"
-                name_style = "color:#1d4ed8;font-size:11px;"
+                num_style = f"color:{ui['weekend_text']};font-weight:700;font-size:14px;"
+                name_style = f"color:{ui['weekend_text']};font-size:11px;"
                 badge = ""
             else:
-                num_style = "color:#374151;font-size:14px;"
-                name_style = "color:#9ca3af;font-size:11px;"
+                num_style = f"color:{ui['day_text']};font-size:14px;"
+                name_style = f"color:{ui['muted']};font-size:11px;"
                 badge = ""
             st.markdown(
                 f"<div style='text-align:center;line-height:1.35;padding:2px 0;'>"
@@ -1259,7 +1297,7 @@ with tab_grid:
                 badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
                 pc = person_colors.get(person, "#e2e8f0")
                 st.markdown(
-                    f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;"
+                    f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;color:{ui['name_text']};"
                     f"display:flex;align-items:center;gap:4px;min-height:30px;'>"
                     f"<span style='flex-shrink:0;width:11px;height:11px;border-radius:50%;"
                     f"background:{pc};border:1px solid rgba(0,0,0,0.12);'></span>"
@@ -1303,7 +1341,7 @@ with tab_grid:
             st.markdown(
                 f"<div style='text-align:center;font-size:16px;'>"
                 f"<span class='preference-legend-swatch' style='background:{legend['color']};'>{legend['symbol']}</span><br/>"
-                f"<span style='color:#374151;font-size:12px;font-weight:600;'>{legend['description']}</span></div>",
+                f"<span style='color:{ui['legend_text']};font-size:12px;font-weight:600;'>{legend['description']}</span></div>",
                 unsafe_allow_html=True
             )
 
