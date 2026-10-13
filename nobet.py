@@ -11,54 +11,117 @@ import numpy as np
 import time
 import json
 import os
-from db import (
-    init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
-    save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
-    create_share_link, get_share_link, delete_share_link, resolve_share_token,
-)
+# Streamlit Cloud yeni kodu çektiğinde db / nobet_core modüllerinin eski
+# hâli hafızada kalabiliyor ve yeni fonksiyonlar "ImportError" veriyor.
+# Böyle olursa modülleri tazeleyip yeniden dene (Reboot gerekmesin).
+import importlib
+import db as _db_module
+import nobet_core as _core_module
+
+
+def _fresh_modules():
+    for _module in (_db_module, _core_module):
+        importlib.reload(_module)
+
+
+try:
+    from db import (
+        init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
+        save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
+        create_share_link, get_share_link, delete_share_link, resolve_share_token,
+    )
+    from nobet_core import (
+        TR_AY_ADLARI,
+        TR_GUN_KISA,
+        build_person_ics,
+        build_share_text,
+        history_special_adjustment,
+        last_shift_offsets,
+        previous_period,
+        special_shift_counts,
+        build_gun_detaylari,
+        create_print_html,
+        escape_html,
+        parse_forbidden_pairs,
+        parse_person_limits_with_issues,
+        unknown_names,
+        validate_inputs,
+        normalize_owner_email,
+        apply_app_settings,
+        assignment_warnings,
+        collect_app_settings,
+        persistence_fingerprint,
+        build_schedule_analysis,
+        changed_schedule_columns,
+        find_person_role,
+        get_preference_grid_legend,
+        get_preference_grid_state,
+        normalize_preference_grid,
+        parse_schedule_import_date,
+        parse_holiday_days,
+        period_key,
+        restore_auto_saved_schedule,
+        run_scheduling_core,
+        schedule_fingerprint,
+        missing_shift_coverage,
+        synchronize_changed_role_rows,
+        switch_schedule_period,
+        use_compact_schedule_editor,
+        build_limit_violation_messages,
+        undo_history_state,
+        redo_history_state,
+        update_persistence_feedback,
+    )
+except ImportError:
+    _fresh_modules()
+    from db import (
+        init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
+        save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
+        create_share_link, get_share_link, delete_share_link, resolve_share_token,
+    )
+    from nobet_core import (
+        TR_AY_ADLARI,
+        TR_GUN_KISA,
+        build_person_ics,
+        build_share_text,
+        history_special_adjustment,
+        last_shift_offsets,
+        previous_period,
+        special_shift_counts,
+        build_gun_detaylari,
+        create_print_html,
+        escape_html,
+        parse_forbidden_pairs,
+        parse_person_limits_with_issues,
+        unknown_names,
+        validate_inputs,
+        normalize_owner_email,
+        apply_app_settings,
+        assignment_warnings,
+        collect_app_settings,
+        persistence_fingerprint,
+        build_schedule_analysis,
+        changed_schedule_columns,
+        find_person_role,
+        get_preference_grid_legend,
+        get_preference_grid_state,
+        normalize_preference_grid,
+        parse_schedule_import_date,
+        parse_holiday_days,
+        period_key,
+        restore_auto_saved_schedule,
+        run_scheduling_core,
+        schedule_fingerprint,
+        missing_shift_coverage,
+        synchronize_changed_role_rows,
+        switch_schedule_period,
+        use_compact_schedule_editor,
+        build_limit_violation_messages,
+        undo_history_state,
+        redo_history_state,
+        update_persistence_feedback,
+    )
 from streamlit_local_storage import LocalStorage
-from nobet_core import (
-    TR_AY_ADLARI,
-    TR_GUN_KISA,
-    build_person_ics,
-    build_share_text,
-    history_special_adjustment,
-    last_shift_offsets,
-    previous_period,
-    special_shift_counts,
-    build_gun_detaylari,
-    create_print_html,
-    escape_html,
-    parse_forbidden_pairs,
-    parse_person_limits_with_issues,
-    unknown_names,
-    validate_inputs,
-    normalize_owner_email,
-    apply_app_settings,
-    assignment_warnings,
-    collect_app_settings,
-    persistence_fingerprint,
-    build_schedule_analysis,
-    changed_schedule_columns,
-    find_person_role,
-    get_preference_grid_legend,
-    get_preference_grid_state,
-    normalize_preference_grid,
-    parse_schedule_import_date,
-    parse_holiday_days,
-    period_key,
-    restore_auto_saved_schedule,
-    run_scheduling_core,
-    schedule_fingerprint,
-    missing_shift_coverage,
-    synchronize_changed_role_rows,
-    switch_schedule_period,
-    use_compact_schedule_editor,
-    build_limit_violation_messages,
-    undo_history_state,
-    redo_history_state,
-    update_persistence_feedback,
-)
 
 # Excel export
 try:
