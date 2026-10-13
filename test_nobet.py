@@ -1374,6 +1374,11 @@ class TestFairDistribution(unittest.TestCase):
         self.assertTrue(all(schedule.at[p, c] for p, c in fixed))
         self.assertLessEqual(int(schedule.loc["Can"].sum()), 12)
 
+    def test_isimler_ve_dugmeler_ayni_hizada(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertIn(':is([data-testid="stElementContainer"], .element-container):has(.preference-state) {{\n    display: none !important;', source)
+        self.assertIn('[data-testid="stHorizontalBlock"] {{\n    align-items: center !important;', source)
+
     def test_gun_basligi_bolunmez(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
         self.assertIn("f\"<div style='{num_style}white-space:nowrap;'>{day_num}</div>\"", source)

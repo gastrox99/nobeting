@@ -1189,6 +1189,15 @@ with tab_grid:
 :is(.st-key-preference-grid, .st-key-schedule-grid) .preference-state {{
     display: none !important;
 }}
+/* Renk işaretinin kapsayıcısı da yer kaplamasın: düğmeleri aşağı itip
+   isimlerle hizayı bozuyordu. (Gizli öğe DOM'da kalır; :has() eşleşmeye devam eder.) */
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="stElementContainer"], .element-container):has(.preference-state) {{
+    display: none !important;
+}}
+/* İsim, sayı ve gün düğmeleri satırda dikeyde ortalı */
+:is(.st-key-preference-grid, .st-key-schedule-grid) [data-testid="stHorizontalBlock"] {{
+    align-items: center !important;
+}}
 :is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button {{
     color: #ffffff !important;
     border-width: 2px !important;
