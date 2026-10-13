@@ -14,10 +14,18 @@ import os
 from db import (
     init_db, save_schedule, load_schedule, list_schedules, delete_schedule,
     save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
+    create_share_link, get_share_link, delete_share_link, resolve_share_token,
 )
 from streamlit_local_storage import LocalStorage
 from nobet_core import (
+    TR_AY_ADLARI,
     TR_GUN_KISA,
+    build_person_ics,
+    build_share_text,
+    history_special_adjustment,
+    last_shift_offsets,
+    previous_period,
+    special_shift_counts,
     build_gun_detaylari,
     create_print_html,
     escape_html,
@@ -83,6 +91,76 @@ if not _db_ready:
         "⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt "
         f"özellikleri şu an çalışmayabilir.{_db_reason}"
     )
+
+# --- SALT OKUNUR PAYLAŞIM SAYFASI (?paylas=...) ---
+# Ekip arkadaşları giriş yapmadan yalnızca listeyi görür.
+def _rows_from_schedule(schedule, year, month):
+    _rows = []
+    _days = {}
+    for _col in schedule.columns:
+        try:
+            _days[int(str(_col).split()[0])] = _col
+        except (ValueError, IndexError):
+            continue
+    for _day in sorted(_days):
+        _assigned = schedule.index[schedule[_days[_day]].fillna(False).astype(bool)].tolist()
+        _weekday = TR_GUN_KISA[date(year, month, _day).weekday()]
+        _rows.append({
+            "Tarih": f"{_day:02d}.{month:02d}.{year} {_weekday}",
+            "Nöbetçiler": ", ".join(_assigned) or "-",
+        })
+    return _rows
+
+
+def _render_shared_view(token):
+    st.markdown("<h1 style='text-align: center; font-size: 2.2rem;'>Nöbet Listesi</h1>", unsafe_allow_html=True)
+    _target = resolve_share_token(token) if _db_ready else None
+    if not _target:
+        st.error("Bu paylaşım bağlantısı geçersiz ya da kapatılmış.")
+        return
+    _owner, _year, _month = _target
+    _loaded = load_schedule(f"Otomatik_{_year}_{_month:02d}", _year, _month, owner=_owner)
+    _rows = _loaded[4] if _loaded and len(_loaded) > 4 and _loaded[4] else None
+    _schedule = _loaded[1] if _loaded else None
+    st.subheader(f"{TR_AY_ADLARI[_month]} {_year}")
+    if _rows:
+        _roles = []
+        for _row in _rows:
+            for _key in _row:
+                if _key != "Tarih" and _key not in _roles:
+                    _roles.append(_key)
+    elif _schedule is not None and not _schedule.empty:
+        _rows = _rows_from_schedule(_schedule, _year, _month)
+        _roles = ["Nöbetçiler"]
+    else:
+        st.info("Bu ay için henüz çizelge yok.")
+        return
+    _people = sorted({
+        _row.get(_role) for _row in _rows for _role in _roles
+        if _row.get(_role) not in (None, "", "-") and _role != "Nöbetçiler"
+    })
+    _selected = st.selectbox("Kendi nöbetlerini görmek için adını seç:", ["Tümü"] + _people) if _people else "Tümü"
+    _shown = _rows if _selected == "Tümü" else [
+        _row for _row in _rows if any(_row.get(_role) == _selected for _role in _roles)
+    ]
+    st.dataframe(
+        pd.DataFrame([{_k: _row.get(_k, "-") for _k in ["Tarih"] + _roles} for _row in _shown]),
+        hide_index=True, width="stretch",
+    )
+    if _selected != "Tümü":
+        st.download_button(
+            "📅 Nöbetlerimi takvime ekle",
+            build_person_ics(_selected, _rows, _roles, _year, _month).encode("utf-8"),
+            f"nobet_{_year}_{_month:02d}.ics", "text/calendar",
+            on_click="ignore", width="stretch",
+        )
+    st.caption("Bu sayfa salt okunurdur ve liste sahibi değişiklik yaptıkça güncellenir.")
+
+
+_share_token = st.query_params.get("paylas")
+if _share_token:
+    _render_shared_view(_share_token)
+    st.stop()
 
 # --- GOOGLE İLE GİRİŞ (isteğe bağlı) ---
 # .streamlit/secrets.toml içinde [auth] ayarları varsa giriş zorunludur ve her
@@ -375,7 +453,7 @@ def save_undo_state(schedule_df=None):
     st.session_state.redo_history = []  # Clear redo on new action
 
 # --- ANA ALGORİTMA: nobet_core.run_scheduling_core kullanır ---
-def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None):
+def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None, initial_last_shift=None, history_special=None):
     progress_bar = st.progress(0)
     def _progress(n):
         if n % 10 == 0:
@@ -384,7 +462,8 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
         best_schedule, _ = run_scheduling_core(
             isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             min_bosluk, kisi_sayisi, forbidden_pairs, person_limits, df_preferred,
-            simulation_count=100, progress_callback=_progress
+            simulation_count=100, progress_callback=_progress,
+            initial_last_shift=initial_last_shift, history_special=history_special,
         )
     except ValueError as exc:
         st.error(f"🚨 Simülasyon başlatılamadı: {exc}")
@@ -491,6 +570,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             role_names.append(f"Görev{len(role_names)+1}")
         role_names = role_names[:kişi_sayısı]
         st.session_state.rol_isimleri = role_names
+        st.session_state.balance_history = st.checkbox(
+            "⚖️ Önceki ayların hafta sonu/tatil nöbetlerini dengele",
+            value=st.session_state.get("balance_history", True),
+            help="Son 3 ayda daha çok hafta sonu/tatil nöbeti tutanlara bu ay biraz daha az verilir.",
+        )
     
     with adv_col2:
         forbidden_input = st.text_area(
@@ -689,6 +773,7 @@ def _queue_assignment_warnings(cells):
             st.session_state.get('pref_df'),
             st.session_state.get('forbidden_pairs', set()),
             kişi_sayısı,
+            prev_last_shift,
         ))
     if _queued:
         st.session_state.pending_assignment_warnings = _queued
@@ -731,9 +816,46 @@ if 'edit_mode' not in st.session_state:
 if 'selected_cal_day' not in st.session_state:
     st.session_state.selected_cal_day = None
 
+# --- ÖNCEKİ AYLAR (ay geçişi dinlenme kuralı + hafta sonu dengesi) ---
+def _load_previous_context(year, month):
+    _ctx = {"period": (year, month), "last_shift": {}, "history_counts": {}, "months": 0}
+    if not _db_ready:
+        return _ctx
+    _holiday_texts = st.session_state.get("holidays_by_period", {})
+    for _back in (1, 2, 3):
+        _py, _pm = previous_period(year, month, _back)
+        try:
+            _loaded = load_schedule(f"Otomatik_{_py}_{_pm:02d}", _py, _pm, owner=current_owner)
+        except Exception:
+            continue
+        _prev = _loaded[1] if _loaded else None
+        if _prev is None or _prev.empty:
+            continue
+        _prev = _prev.fillna(False).astype(bool)
+        _days_in_prev = calendar.monthrange(_py, _pm)[1]
+        if _back == 1:
+            _ctx["last_shift"] = last_shift_offsets(_prev, _days_in_prev)
+        _prev_holidays, _ = parse_holiday_days(_holiday_texts.get(period_key(_py, _pm), ""), _days_in_prev)
+        for _person, _count in special_shift_counts(_prev, _py, _pm, _prev_holidays).items():
+            _ctx["history_counts"][_person] = _ctx["history_counts"].get(_person, 0) + _count
+        _ctx["months"] += 1
+    return _ctx
+
+
+_prev_ctx = st.session_state.get("prev_month_context")
+if not _prev_ctx or _prev_ctx.get("period") != (yil, ay):
+    _prev_ctx = _load_previous_context(yil, ay)
+    st.session_state.prev_month_context = _prev_ctx
+prev_last_shift = {p: d for p, d in _prev_ctx["last_shift"].items() if p in isimler}
+history_special = (
+    history_special_adjustment(_prev_ctx["history_counts"], isimler)
+    if st.session_state.get("balance_history", True) and _prev_ctx["months"]
+    else {}
+)
+
 # --- ÇAKIŞMA HÜCRELERİ (grid vurgulaması için önceden hesapla) ---
 conflict_cells = set()  # (kişi, col) çiftleri
-_last_cf = {i: -10 for i in isimler}
+_last_cf = {i: prev_last_shift.get(i, -10) for i in isimler}
 for _cf_col in sutunlar:
     _cf_gun = gun_detaylari[_cf_col]['day_num']
     _cf_assigned = (
@@ -1439,7 +1561,9 @@ if sim_clicked:
             kişi_sayısı,
             st.session_state.forbidden_pairs,
             st.session_state.get('person_limits', {}),
-            df_preferred
+            df_preferred,
+            initial_last_shift=prev_last_shift,
+            history_special=history_special,
         )
         if _new_schedule is not None:
             _missing = missing_shift_coverage(_new_schedule, sutunlar, kişi_sayısı)
@@ -1511,7 +1635,7 @@ conflict_msg = []
 forbidden_msg = []
 max_person_msg = []
 min_person_msg = []
-last_shift_check = {i: -10 for i in isimler}
+last_shift_check = {i: prev_last_shift.get(i, -10) for i in isimler}
 
 for col in sutunlar:
     gun_no = gun_detaylari[col]['day_num']
@@ -1743,11 +1867,61 @@ with dl3:
     else:
         st.caption("Excel yok")
 with dl4:
-    with st.popover("💬 Metin", width="stretch"):
-        st.text_area("Kopyala:", value=df_liste.to_markdown(index=False), height=200)
+    with st.popover("💬 WhatsApp", width="stretch"):
+        st.caption("Sağ üstteki simgeyle kopyalayıp WhatsApp'a yapıştırın. Hafta sonu ve tatiller kalın görünür.")
+        st.code(
+            build_share_text(
+                rows_liste, role_names, yil, ay,
+                special_days=[d["day_num"] for d in gun_detaylari.values() if d["weekend"] or d["holiday"]],
+            ),
+            language=None,
+        )
 with dl5:
     st.download_button("🖨️ Yazdır", _html_bytes, f"nobet_{yil}_{ay:02d}.html", "text/html",
                        on_click="ignore", width="stretch")
+def _app_base_url():
+    try:
+        _url = st.context.url
+    except Exception:
+        _url = None
+    if _url:
+        return _url.split("?")[0].split("#")[0].rstrip("/")
+    try:
+        return st.secrets["auth"]["redirect_uri"].rsplit("/oauth2callback", 1)[0]
+    except Exception:
+        return ""
+
+
+_share_cache = st.session_state.setdefault("share_token_cache", {})
+_share_row = st.columns([1, 5])
+with _share_row[0]:
+    with st.popover("🔗 Paylaş", width="stretch"):
+        if not _db_ready:
+            st.caption("Paylaşım için veritabanı bağlantısı gerekli.")
+        else:
+            if (yil, ay) not in _share_cache:
+                _share_cache[(yil, ay)] = get_share_link(current_owner, yil, ay)
+            _token = _share_cache[(yil, ay)]
+            st.caption(
+                f"{TR_AY_ADLARI[ay]} {yil} listesini ekip arkadaşlarınız giriş yapmadan görebilir. "
+                "Kendi adlarını seçip nöbetlerini takvimlerine ekleyebilirler."
+            )
+            if _token:
+                st.code(f"{_app_base_url()}?paylas={_token}", language=None)
+                if st.button("🔄 Yeni bağlantı oluştur (eskisi çalışmaz)", width="stretch"):
+                    _share_cache[(yil, ay)] = create_share_link(current_owner, yil, ay)
+                    st.rerun()
+                if st.button("🚫 Paylaşımı kapat", width="stretch"):
+                    if delete_share_link(current_owner, yil, ay):
+                        _share_cache[(yil, ay)] = None
+                    st.rerun()
+            elif st.button("🔗 Bağlantı oluştur", type="primary", width="stretch"):
+                _share_cache[(yil, ay)] = create_share_link(current_owner, yil, ay)
+                if not _share_cache[(yil, ay)]:
+                    st.error("Bağlantı oluşturulamadı.")
+                else:
+                    st.rerun()
+
 with dl6:
     with st.popover("📂 Excel Yükle", width="stretch"):
         st.caption("Daha önce indirilen Excel dosyasını veya aynı formatta hazırladığınız listeyi yükleyin.")
@@ -1973,6 +2147,14 @@ an1, an2 = st.columns(2)
 
 with an1:
     st.markdown("**Nöbet Yükü**")
+    if history_special:
+        _hist_text = " · ".join(
+            f"{_p} {_prev_ctx['history_counts'].get(_p, 0)}" for _p in isimler
+        )
+        st.caption(
+            f"⚖️ Önceki {_prev_ctx['months']} ayın hafta sonu/tatil nöbetleri dengelemede "
+            f"hesaba katılıyor: {_hist_text}"
+        )
     st.dataframe(
         df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
                            .background_gradient(cmap="Oranges", subset=["Özel"]),
@@ -2013,6 +2195,14 @@ with an1:
 with an2:
     st.markdown("**Kişisel Detay**")
     kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
+    st.download_button(
+        f"📅 {kisi_sec} — takvime ekle (.ics)",
+        lambda _p=kisi_sec, _rows=list(rows_liste), _roles=list(role_names), _y=yil, _m=ay:
+            build_person_ics(_p, _rows, _roles, _y, _m).encode("utf-8"),
+        f"nobet_{yil}_{ay:02d}.ics", "text/calendar",
+        on_click="ignore", width="stretch",
+        help="Telefonda açınca nöbetler takvime eklenir; başlıkta görev yeri (birim) yazar.",
+    )
     kisi_rows = []
     for index, row in df_liste.iterrows():
         roller = []

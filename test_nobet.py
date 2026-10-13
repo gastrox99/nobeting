@@ -21,6 +21,12 @@ from nobet_core import (
     parse_person_limits,
     parse_person_limits_with_issues,
     unknown_names,
+    previous_period,
+    last_shift_offsets,
+    special_shift_counts,
+    history_special_adjustment,
+    build_share_text,
+    build_person_ics,
     restore_auto_saved_schedule,
     build_gun_detaylari,
     build_schedule_analysis,
@@ -1043,6 +1049,148 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
+class TestPreviousMonths(unittest.TestCase):
+    def test_onceki_ay_yil_gecisi(self):
+        self.assertEqual(previous_period(2026, 1), (2025, 12))
+        self.assertEqual(previous_period(2026, 3, back=3), (2025, 12))
+        self.assertEqual(previous_period(2026, 10), (2026, 9))
+
+    def test_son_nobet_bu_aya_gore_gun(self):
+        prev = pd.DataFrame(False, index=["Ali", "Ayşe", "Can"], columns=["28 Pzt", "29 Sal", "30 Çar"])
+        prev.at["Ali", "30 Çar"] = True
+        prev.at["Ayşe", "28 Pzt"] = True
+        prev.at["Ayşe", "29 Sal"] = True
+        self.assertEqual(last_shift_offsets(prev, 30), {"Ali": 0, "Ayşe": -1})
+
+    def test_ozel_gun_sayilari_hafta_sonu_ve_tatil(self):
+        # Ekim 2026: 3 Cmt, 4 Paz; 29 tatil
+        sched = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=["2 Cum", "3 Cmt", "4 Paz", "29 Per"])
+        sched.loc["Ali", ["3 Cmt", "4 Paz", "29 Per"]] = True
+        sched.at["Ayşe", "2 Cum"] = True
+        self.assertEqual(special_shift_counts(sched, 2026, 10, [29]), {"Ali": 3})
+
+    def test_gecmis_farki_sinirlanir(self):
+        adjustment = history_special_adjustment({"Ali": 9, "Ayşe": 3}, ["Ali", "Ayşe", "Yeni"])
+        self.assertEqual(adjustment["Ali"], 2)
+        self.assertEqual(adjustment["Yeni"], -2)
+        self.assertAlmostEqual(adjustment["Ayşe"], -1)
+
+    def _env(self):
+        names = ["Ali", "Ayşe", "Can", "Deniz"]
+        days = build_gun_detaylari(2026, 10, 31, [])
+        cols = list(days)
+        return names, cols, pd.DataFrame(False, index=names, columns=cols), days
+
+    def test_onceki_ayin_son_gunu_nobet_tutan_1inde_atanmaz(self):
+        names, cols, unwanted, days = self._env()
+        random.seed(3)
+        for _ in range(5):
+            schedule, _ = run_scheduling_core(
+                names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2,
+                simulation_count=3, initial_last_shift={"Ali": 0},
+            )
+            self.assertFalse(schedule.at["Ali", cols[0]])
+
+    def test_gecmiste_fazla_hafta_sonu_tutan_bu_ay_daha_az_alir(self):
+        names, cols, unwanted, days = self._env()
+        special_cols = [c for c in cols if days[c]["weekend"]]
+        random.seed(5)
+        heavy, light = 0, 0
+        for _ in range(4):
+            schedule, _ = run_scheduling_core(
+                names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=10,
+                history_special={"Ali": 2, "Ayşe": -2, "Can": 0, "Deniz": 0},
+            )
+            heavy += int(schedule.loc["Ali", special_cols].sum())
+            light += int(schedule.loc["Ayşe", special_cols].sum())
+        self.assertLess(heavy, light)
+
+    def test_anlik_uyari_onceki_ayi_bilir(self):
+        cols = ["1 Per", "2 Cum"]
+        days = {"1 Per": {"day_num": 1}, "2 Cum": {"day_num": 2}}
+        schedule = pd.DataFrame([[True, False]], index=["Ali"], columns=cols)
+        warnings = assignment_warnings(schedule, "Ali", "1 Per", cols, days, 1,
+                                       previous_last_shift={"Ali": 0})
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("önceki ayın son günü", warnings[0])
+        self.assertEqual(
+            assignment_warnings(schedule, "Ali", "1 Per", cols, days, 1, previous_last_shift={"Ali": -3}),
+            [],
+        )
+
+
+class TestShareAndCalendar(unittest.TestCase):
+    ROWS = [
+        {"Tarih": "03.10.2026 Cmt", "AYB": "Ali", "GYB": "Ayşe"},
+        {"Tarih": "05.10.2026 Pzt", "AYB": "Can", "GYB": "Ali"},
+        {"Tarih": "06.10.2026 Sal", "AYB": "Can", "GYB": "-"},
+    ]
+
+    def test_whatsapp_metni(self):
+        text = build_share_text(self.ROWS, ["AYB", "GYB"], 2026, 10, special_days=[3])
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "📅 Ekim 2026 Nöbet Listesi")
+        self.assertIn("*3 Ekim Cmt* — AYB: Ali · GYB: Ayşe", lines)
+        self.assertIn("5 Ekim Pzt — AYB: Can · GYB: Ali", lines)
+        self.assertIn("6 Ekim Sal — AYB: Can", lines)
+
+    def _unfold(self, ics):
+        return ics.replace("\r\n ", "").split("\r\n")
+
+    def test_takvim_dosyasi_birim_ve_partneri_icerir(self):
+        ics = build_person_ics("Ali", self.ROWS, ["AYB", "GYB"], 2026, 10)
+        self.assertTrue(ics.startswith("BEGIN:VCALENDAR\r\n"))
+        self.assertTrue(ics.endswith("END:VCALENDAR\r\n"))
+        lines = self._unfold(ics)
+        self.assertEqual(lines.count("BEGIN:VEVENT"), 2)
+        self.assertIn("DTSTART;VALUE=DATE:20261003", lines)
+        self.assertIn("DTEND;VALUE=DATE:20261004", lines)
+        self.assertIn("SUMMARY:Nöbet — AYB", lines)
+        self.assertIn("SUMMARY:Nöbet — GYB", lines)
+        self.assertIn("DESCRIPTION:Görev yeri: AYB\\nBirlikte: Ayşe (GYB)", lines)
+        uids = [l for l in lines if l.startswith("UID:")]
+        self.assertEqual(len(set(uids)), 2)
+
+    def test_takvim_satirlari_75_bayti_asmaz_ve_ozel_karakterler_kacirilir(self):
+        rows = [{"Tarih": "01.10.2026 Per", "Acil Servis; Sarı Alan, Gece Nöbeti Uzun Birim Adı": "Ali",
+                 "GYB": "Çağlayan Öztürkmenoğlu"}]
+        ics = build_person_ics("Ali", rows, list(rows[0])[1:], 2026, 10)
+        for raw_line in ics.split("\r\n"):
+            self.assertLessEqual(len(raw_line.encode("utf-8")), 75)
+        unfolded = "".join(self._unfold(ics))
+        self.assertIn("Acil Servis\\; Sarı Alan\\, Gece", unfolded)
+
+
+class TestShareLinksDb(unittest.TestCase):
+    def test_baglanti_olusturulur_ve_cozumlenir(self):
+        cursor = _FakeDbCursor()
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)):
+            token = db.create_share_link("ali@gmail.com", 2026, 10)
+        self.assertTrue(token and len(token) >= 16)
+        sql, params = cursor.executed[0]
+        self.assertIn("ON CONFLICT (owner, year, month)", sql)
+        self.assertEqual(params, (token, "ali@gmail.com", 2026, 10))
+
+        lookup = _FakeDbCursor(schedule_row={"owner": "ali@gmail.com", "year": 2026, "month": 10})
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(lookup)):
+            self.assertEqual(db.resolve_share_token(token), ("ali@gmail.com", 2026, 10))
+
+    def test_gecersiz_token_veritabanina_gitmez(self):
+        with patch.object(db.psycopg2, "connect") as connect:
+            self.assertIsNone(db.resolve_share_token(""))
+            self.assertIsNone(db.resolve_share_token("x" * 65))
+            self.assertIsNone(db.resolve_share_token(None))
+        connect.assert_not_called()
+
+    def test_paylasim_sayfasi_giristen_once_ve_salt_okunur(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertLess(source.index('st.query_params.get("paylas")'),
+                        source.index("AUTH_ENABLED = _auth_configured()"))
+        shared = source[source.index("def _render_shared_view"):source.index('_share_token = st.query_params')]
+        for forbidden in ("save_schedule", "save_app_settings", "st.button("):
+            self.assertNotIn(forbidden, shared)
+
+
 class TestSharedCoreFunctions(unittest.TestCase):
     def test_limit_sorunlari_kullaniciya_gosterilmek_uzere_ayrilir(self):
         limits, invalid, errors = parse_person_limits_with_issues(
@@ -1182,7 +1330,14 @@ class TestGoogleLoginSupport(unittest.TestCase):
                            source, flags=re.S)
         self.assertGreaterEqual(len(calls), 6)
         for name, args in calls:
-            self.assertIn("owner=current_owner", args, f"{name} kullanıcıya bağlı değil")
+            # Paylaşım sayfası bağlantının sahibine ait listeyi okur (owner=_owner).
+            self.assertTrue(
+                "owner=current_owner" in args or "owner=_owner" in args,
+                f"{name} kullanıcıya bağlı değil",
+            )
+        shared = source[source.index("def _render_shared_view"):source.index('_share_token = st.query_params')]
+        self.assertEqual(shared.count("owner=_owner"), 1)
+        self.assertNotIn("owner=_owner", source.replace(shared, ""))
         # Giriş kontrolü ayarlar yüklenmeden önce yapılmalı.
         self.assertLess(source.index("AUTH_ENABLED = _auth_configured()"),
                         source.index("load_app_settings(owner=current_owner"))
