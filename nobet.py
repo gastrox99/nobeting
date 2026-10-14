@@ -907,13 +907,9 @@ if (
         st.session_state.last_saved_settings = _current_settings
 
 # --- YEDEK: tüm aylar ve ayarlar tek dosyada; aynı dosyadan geri yükleme ---
-def _backup_bytes():
-    _settings, _schedules = export_owner_data(owner=current_owner)
-    return backup_to_bytes(build_backup(_settings, _schedules))
-
-
 def _mark_backup_downloaded():
     st.session_state.last_backup_at = now_tr().strftime("%Y-%m-%d %H:%M")
+    st.session_state.pop("backup_bytes", None)
 
 
 if _db_ready:
@@ -932,11 +928,21 @@ if _db_ready:
             )
             if st.session_state.get("last_backup_at"):
                 st.caption(f"Son indirme: {st.session_state.last_backup_at}")
-            st.download_button(
-                "⬇️ Yedeği indir (.json)", _backup_bytes,
-                f"nobet_yedek_{now_tr():%Y-%m-%d}.json", "application/json",
-                on_click=_mark_backup_downloaded, width="stretch",
-            )
+            if st.session_state.get("backup_bytes") is None:
+                if st.button("📦 Yedeği hazırla", width="stretch"):
+                    try:
+                        _settings_bk, _schedules_bk = export_owner_data(owner=current_owner)
+                    except Exception:
+                        st.error("❌ Yedek hazırlanamadı (veritabanına ulaşılamadı). Tekrar deneyin.")
+                    else:
+                        st.session_state.backup_bytes = backup_to_bytes(build_backup(_settings_bk, _schedules_bk))
+                        st.rerun()
+            else:
+                st.download_button(
+                    "⬇️ Yedeği indir (.json)", st.session_state.backup_bytes,
+                    f"nobet_yedek_{now_tr():%Y-%m-%d}.json", "application/json",
+                    on_click=_mark_backup_downloaded, width="stretch",
+                )
         with _bk_col2:
             st.markdown("**Yedekten geri yükle**")
             st.caption("Yedekteki aylar mevcut kayıtların yerine geçer; yedekte olmayan aylara dokunulmaz.")

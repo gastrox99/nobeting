@@ -1461,6 +1461,12 @@ class TestBackup(unittest.TestCase):
             lambda d: d["schedules"].append(dict(d["schedules"][0])),
             lambda d: d.update(settings=[1]),
             lambda d: d.update(version=99),
+            # Küçük dosyadan milyonlarca satır üretilmesin.
+            lambda d: d.update(schedules=[
+                dict(d["schedules"][0], name=f"Ay{i}", team=[f"K{j}" for j in range(300)],
+                     days=[str(k) for k in range(31)], assigned=[])
+                for i in range(60)
+            ]),
         ):
             data = json.loads(json.dumps(good))
             mutate(data)
@@ -1509,6 +1515,8 @@ class TestBackup(unittest.TestCase):
     def test_uygulama_yedegi_kullaniciya_baglar(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
         self.assertIn("export_owner_data(owner=current_owner)", source)
+        # Veritabanı hatası kullanıcıya ham mesajla gösterilmez.
+        self.assertIn("Yedek hazırlanamadı", source)
         self.assertIn("restore_owner_data(_parsed_backup, owner=current_owner)", source)
         # Geri yüklemeden sonra eski ekran durumu yedeğin üzerine yazılmasın.
         self.assertIn("st.session_state.clear()", source)

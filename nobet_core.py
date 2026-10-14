@@ -2531,6 +2531,7 @@ BACKUP_MAX_BYTES = 20 * 1024 * 1024
 _BACKUP_MAX_SCHEDULES = 1200
 _BACKUP_MAX_PEOPLE = 300
 _BACKUP_MAX_TEXT = 255
+_BACKUP_MAX_CELLS = 500_000
 
 
 def _parse_json_text(value):
@@ -2659,6 +2660,8 @@ def parse_backup(raw):
             "assigned": [tuple(cell) for cell in assigned],
             "preferences": preferences, "settings": sched_settings, "rows": rows,
         })
+    if not errors and sum(len(item["team"]) * len(item["days"]) for item in clean) > _BACKUP_MAX_CELLS:
+        errors.append("Yedek çok büyük (çok fazla kişi/gün).")
     if errors:
         return None, errors[:10]
     return {
