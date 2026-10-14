@@ -10,7 +10,7 @@ import hashlib
 import json
 import math
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from itertools import combinations as _combinations
 from html import escape as _escape_html
 from numbers import Integral
@@ -26,6 +26,21 @@ def normalize_owner_email(value):
 def escape_html(value):
     """Convert any displayed value to safe HTML text."""
     return _escape_html(str(value), quote=True)
+
+
+# Türkiye 2016'dan beri yaz saati uygulamıyor; sunucu UTC'de çalışsa da
+# "bugün" ve yazdırma saati Türkiye saatine göre olsun.
+TR_TZ = timezone(timedelta(hours=3))
+
+
+def now_tr():
+    """Türkiye saatiyle şu an."""
+    return datetime.now(TR_TZ)
+
+
+def as_bool_frame(frame):
+    """Kayıttan gelen çizelgeyi bool'a çevirir; eksik hücre (NaN) atanmamış sayılır."""
+    return frame.map(lambda value: False if pd.isna(value) else bool(value)).astype(bool)
 
 
 _TR_MONTHS = {
@@ -687,6 +702,142 @@ def drop_unknown_people_from_rows(rows, people):
     ]
 
 
+def record_renames(aliases, renames):
+    """Ad değişikliklerini {eski_ad: güncel_ad} sözlüğüne işler.
+
+    Diğer aylar veritabanında eski adla kalır; açılırken bu sözlükle güncel
+    ada çevrilir. Zincirler (A→B, B→C) tek adıma indirilir, geri dönüş
+    (A→B, B→A) eski kaydı siler.
+    """
+    aliases = dict(aliases or {})
+    for old, new in (renames or {}).items():
+        if old == new:
+            continue
+        aliases.pop(new, None)
+        for key, value in list(aliases.items()):
+            if value == old:
+                aliases[key] = new
+        aliases[old] = new
+    return {key: value for key, value in aliases.items() if key != value}
+
+
+def resolve_alias(name, aliases, team):
+    """Kayıttaki eski adı ekipteki güncel adına çevirir.
+
+    Ekipte zaten olan bir isim (ör. eski adı alan yeni biri) değişmez; güncel
+    adı ekipte olmayan eski adlar da olduğu gibi kalır.
+    """
+    if name in team or not aliases:
+        return name
+    seen = set()
+    current = name
+    while current in aliases and current not in seen:
+        seen.add(current)
+        current = aliases[current]
+    return current if current in team else name
+
+
+def _alias_map(names, aliases, team):
+    """Kayıttaki isimler için {eski: yeni}; aynı kişiye iki kayıt düşerse dokunmaz."""
+    names = list(names)
+    mapping = {}
+    for name in names:
+        target = resolve_alias(name, aliases, team)
+        if target != name and target not in names and target not in mapping.values():
+            mapping[name] = target
+    return mapping
+
+
+def _clean_hidden(value):
+    """Kayıttaki saklı kişileri doğrular: {kişi: {"shifts": [gün], "prefs": {"gün": kod}}}."""
+    cleaned = {}
+    if not isinstance(value, dict):
+        return cleaned
+    for person, data in value.items():
+        if not isinstance(person, str) or not isinstance(data, dict):
+            continue
+        shifts = sorted({
+            day for day in data.get("shifts", [])
+            if isinstance(day, int) and not isinstance(day, bool) and 1 <= day <= 31
+        })
+        prefs = {}
+        raw_prefs = data.get("prefs", {})
+        if isinstance(raw_prefs, dict):
+            for day, code in raw_prefs.items():
+                if (
+                    str(day).isdecimal() and 1 <= int(day) <= 31
+                    and isinstance(code, int) and not isinstance(code, bool) and 1 <= code <= 3
+                ):
+                    prefs[str(int(day))] = code
+        if shifts or prefs:
+            cleaned[person] = {"shifts": shifts, "prefs": prefs}
+    return cleaned
+
+
+def stash_removed_people(hidden, schedule, preferences, team):
+    """Ekipten çıkan kişilerin bu aydaki nöbet ve tercihlerini saklar.
+
+    Eskiden ekipten silinen (ya da virgülü bozulan) bir ismin nöbetleri
+    hemen kaydedilip kalıcı olarak kayboluyordu. Saklanan veri gün
+    numarasıyla tutulur; isim ekibe geri yazılınca ``take_back_people``
+    ile geri gelir. Dönüş: (saklananlar, bu çağrıda saklanan kişiler).
+    """
+    hidden = {person: dict(data) for person, data in (hidden or {}).items()}
+    stashed = []
+    if schedule is None:
+        return hidden, stashed
+    team = set(team)
+    for person in schedule.index:
+        if person in team:
+            continue
+        shifts = sorted(
+            _column_day(column) for column in schedule.columns
+            if _column_day(column) is not None and bool(schedule.at[person, column])
+        )
+        prefs = {}
+        if preferences is not None and person in preferences.index:
+            for column in preferences.columns:
+                day = _column_day(column)
+                try:
+                    code = int(preferences.at[person, column])
+                except (TypeError, ValueError):
+                    continue
+                if day is not None and 1 <= code <= 3:
+                    prefs[str(day)] = code
+        if shifts or prefs:
+            hidden[person] = {"shifts": shifts, "prefs": prefs}
+            stashed.append(person)
+    return hidden, stashed
+
+
+def take_back_people(hidden, schedule, preferences, team):
+    """Ekibe geri yazılan kişilerin saklı nöbet ve tercihlerini geri koyar.
+
+    ``schedule`` ve ``preferences`` yerinde güncellenir.
+    Dönüş: (kalan saklılar, geri gelen kişiler).
+    """
+    hidden = dict(hidden or {})
+    returned = []
+    if schedule is None:
+        return hidden, returned
+    day_to_column = {_column_day(column): column for column in schedule.columns}
+    for person in team:
+        if person not in hidden or person not in schedule.index:
+            continue
+        data = hidden.pop(person)
+        for day in data.get("shifts", []):
+            column = day_to_column.get(day)
+            if column is not None:
+                schedule.at[person, column] = True
+        if preferences is not None and person in preferences.index:
+            for day, code in data.get("prefs", {}).items():
+                column = day_to_column.get(int(day))
+                if column is not None and column in preferences.columns:
+                    preferences.at[person, column] = int(code)
+        returned.append(person)
+    return hidden, returned
+
+
 def update_locked_cells(locked, cells_now_assigned, cells_now_free):
     """Elle atanan hücreleri sabitler, elle kaldırılanların sabitliğini siler."""
     updated = set(locked or ())
@@ -797,12 +948,17 @@ def restore_auto_saved_schedule(
     gun_detaylari,
     role_names=None,
     on_error=None,
+    aliases=None,
 ):
     """Otomatik kaydı session state'e geri yükler; başarısız olursa state'e dokunmaz.
 
     ``on_error`` yalnızca yükleyici bir istisna oluşturduğunda çağrılır. Böylece
     veritabanında henüz otomatik kayıt bulunmaması ile gerçek bir DB hatası
     birbirinden ayrılabilir.
+
+    ``aliases`` ({eski_ad: güncel_ad}) ile kayıttaki eski adlar güncel ekibe
+    eşlenir. Ekipte olmayan kişilerin verisi silinmez, ``hidden_people``
+    içinde saklanır.
     """
     try:
         loaded = load_schedule_fn(schedule_name, yil, ay)
@@ -819,7 +975,26 @@ def restore_auto_saved_schedule(
     if saved_schedule is None or saved_schedule.empty:
         return False
     # Eksik hücre (NaN) bool'a çevrilince True olurdu; atanmamış say.
-    saved_schedule = saved_schedule.fillna(False)
+    saved_schedule = as_bool_frame(saved_schedule)
+
+    # Ad değişikliğinden önceki kayıtlar eski adla durur; güncel ada çevir.
+    renames = _alias_map(saved_schedule.index, aliases, isimler)
+    saved_hidden = _clean_hidden(saved_settings.get("hidden")) if isinstance(saved_settings, dict) else {}
+    if renames:
+        saved_schedule = saved_schedule.rename(index=renames)
+        if saved_preferences is not None:
+            saved_preferences = saved_preferences.rename(index=renames)
+        if saved_rows:
+            saved_rows = rename_people_in_rows(saved_rows, renames)
+        if isinstance(saved_settings, dict) and saved_settings.get("locked"):
+            saved_settings = dict(saved_settings)
+            saved_settings["locked"] = [
+                [renames.get(item[0], item[0]), item[1]]
+                for item in saved_settings["locked"]
+                if isinstance(item, (list, tuple)) and len(item) == 2
+            ]
+    hidden_renames = _alias_map(saved_hidden, aliases, isimler)
+    saved_hidden = {hidden_renames.get(person, person): data for person, data in saved_hidden.items()}
 
     restored_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
     saved_days = {}
@@ -921,6 +1096,20 @@ def restore_auto_saved_schedule(
                         continue
         session_state["pref_df"] = restored_preferences
 
+    # Ekipte olmayanların verisi silinmesin: saklanır, ekibe dönünce geri gelir.
+    hidden, _ = stash_removed_people(saved_hidden, saved_schedule, saved_preferences, isimler)
+    if session_state.get("pref_df") is None and any(
+        hidden.get(person, {}).get("prefs") for person in isimler
+    ):
+        session_state["pref_df"] = pd.DataFrame(0, index=isimler, columns=sutunlar)
+    hidden, returned = take_back_people(
+        hidden, restored_schedule, session_state.get("pref_df"), isimler
+    )
+    session_state["hidden_people"] = hidden
+    if returned and not session_state.get("should_regenerate_assignments"):
+        # Geri gelen kişiler görev satırlarına yerleşsin.
+        session_state["cached_role_schedule"] = None
+
     return True
 
 
@@ -971,6 +1160,16 @@ def _non_negative_float(value):
     return number if math.isfinite(number) and number >= 0 else None
 
 
+def _aliases(value):
+    """{eski_ad: güncel_ad} biçimindeki ad değişikliği kayıtlarını doğrular."""
+    if not isinstance(value, dict):
+        return None
+    return {
+        old: new for old, new in value.items()
+        if isinstance(old, str) and isinstance(new, str) and old and new and old != new
+    }
+
+
 # Yıl seçimi aralığı (eskiden 2030'da bitiyordu; Aralık 2030'da varsayılan
 # "gelecek ay" 2031 olacağı için uygulama açılmazdı).
 YEAR_MIN = 2024
@@ -988,6 +1187,7 @@ APP_SETTINGS_FIELDS = {
     "forbidden_pairs": ("forbidden_pairs_text", _text),
     "limits": ("limits_text", _text),
     "balance_history": ("balance_history", _bool),
+    "name_aliases": ("name_aliases", _aliases),
 }
 
 
@@ -1014,13 +1214,14 @@ def collect_app_settings(session_state):
     return json.loads(json.dumps(settings, ensure_ascii=False))
 
 
-def persistence_fingerprint(schedule, preferences, rows, locked=None):
-    """Veritabanına yazılan anlık görüntünün (çizelge+tercih+roller+sabitler) kimliği."""
+def persistence_fingerprint(schedule, preferences, rows, locked=None, hidden=None):
+    """Veritabanına yazılan anlık görüntünün (çizelge+tercih+roller+sabitler+saklılar) kimliği."""
     parts = [
         schedule_fingerprint(schedule) if schedule is not None else "-",
         schedule_fingerprint(preferences) if preferences is not None else "-",
         json.dumps(rows or [], ensure_ascii=False, sort_keys=True, default=str),
         json.dumps(locks_to_json(locked), ensure_ascii=False),
+        json.dumps(hidden or {}, ensure_ascii=False, sort_keys=True),
     ]
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
@@ -1038,6 +1239,7 @@ PERIOD_STATE_KEYS = (
     "reset_pending",
     "prev_month_context",
     "locked_cells",
+    "hidden_people",
 )
 
 
@@ -1683,6 +1885,33 @@ def official_holidays_summary(yil, ay):
     ]
 
 
+def default_holiday_text(yil, ay):
+    """Tatil kutusunun bu ay için varsayılan metni (resmi tatiller)."""
+    return holidays_to_text([day for day, _ in official_holidays(yil, ay)])
+
+
+def holiday_text_for_period(holidays_by_period, yil, ay):
+    """Ayın tatil metni: elle değiştirildiyse kaydı, değilse güncel resmi tatiller.
+
+    Varsayılan metin ayarlara yazılmaz; böylece koddaki bayram tarihleri
+    düzeltilince (ör. 2029) daha önce açılmış aylara da yansır.
+    """
+    return (holidays_by_period or {}).get(period_key(yil, ay), default_holiday_text(yil, ay))
+
+
+def prune_default_holidays(holidays_by_period):
+    """Resmi tatillerle aynı olan (elle değiştirilmemiş) ay kayıtlarını siler."""
+    for key in list(holidays_by_period or {}):
+        try:
+            yil, ay = (int(part) for part in key.split("-"))
+            default = default_holiday_text(yil, ay)
+        except (ValueError, KeyError):
+            continue
+        if holidays_by_period[key] == default:
+            del holidays_by_period[key]
+    return holidays_by_period
+
+
 def holidays_to_text(days):
     """[20, 21, 22, 29] -> "20-22, 29" (tatil kutusuna yazılan biçim)."""
     days = sorted(set(days))
@@ -1864,6 +2093,45 @@ def build_person_ics(person, rows, role_names, yil, ay):
     return "\r\n".join(_ics_fold(line) for line in lines) + "\r\n"
 
 
+def add_overflow_roles(rows, role_names, schedule, columns):
+    """Görev sayısından fazla atanan kişileri "Ek 1", "Ek 2"… sütunlarına ekler.
+
+    Bir güne görev sayısından fazla kişi atanınca (ya da nöbet başına kişi
+    sayısı sonradan düşürülünce) fazla kişi Günlük Liste, WhatsApp, Excel,
+    paylaşım bağlantısı ve takvim dosyasında hiç görünmüyordu.
+    Dönüş: (satırlar, görevler); fazla kişi yoksa girdiler aynen döner.
+    """
+    role_names = list(role_names)
+    extras = []
+    for index, column in enumerate(columns):
+        row = rows[index] if index < len(rows) else {}
+        placed = {row.get(role) for role in role_names}
+        assigned = (
+            schedule.index[schedule[column].astype(bool)].tolist()
+            if column in schedule.columns else []
+        )
+        extras.append([person for person in assigned if person not in placed])
+    most = max((len(extra) for extra in extras), default=0)
+    if not most:
+        return rows, role_names
+    used = {name.casefold() for name in role_names} | {"tarih"}
+    extra_roles = []
+    number = 1
+    while len(extra_roles) < most:
+        name = f"Ek {number}"
+        number += 1
+        if name.casefold() not in used:
+            extra_roles.append(name)
+    out = []
+    for index, row in enumerate(rows):
+        new_row = dict(row)
+        extra = extras[index] if index < len(extras) else []
+        for position, role in enumerate(extra_roles):
+            new_row[role] = extra[position] if position < len(extra) else "-"
+        out.append(new_row)
+    return out, role_names + extra_roles
+
+
 def create_print_html(df_liste, df_stats_load, yil, ay):
     """Yazdırma dostu HTML oluşturur (günlük liste + nöbet yükü özeti)."""
     ay_isimleri = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran",
@@ -1911,7 +2179,7 @@ def create_print_html(df_liste, df_stats_load, yil, ay):
     html += """
         </table>
         <p style="text-align: center; color: #666; margin-top: 30px;">
-            Oluşturulma: """ + datetime.now().strftime("%d.%m.%Y %H:%M") + """
+            Oluşturulma: """ + now_tr().strftime("%d.%m.%Y %H:%M") + """
         </p>
     </body>
     </html>

@@ -1132,10 +1132,10 @@ class TestFixedShifts(unittest.TestCase):
     def test_uygulama_baglantilari(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
         self.assertIn('fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)', source)
-        self.assertIn('settings_dict={"locked": locks_to_json(_active_locks)}', source)
+        self.assertIn('settings_dict={"locked": locks_to_json(_active_locks),', source)
         self.assertIn("'locked': set(st.session_state.get('locked_cells', set())),", source)
         self.assertIn(':has(.cell-locked) .stButton > button', source)
-        self.assertIn("st.session_state.locked_cells = set()\n                st.session_state.cached_rows_liste = None", source)
+        self.assertIn("st.session_state.locked_cells = set()\n                st.session_state.hidden_people = {}\n                st.session_state.cached_rows_liste = None", source)
 
 
 class TestAlgorithmFixes(unittest.TestCase):
@@ -1373,8 +1373,9 @@ class TestOfficialHolidaysAndReminder(unittest.TestCase):
 
     def test_uygulama_resmi_tatilleri_varsayilan_yapar(self):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
-        self.assertIn("value=_holidays_by_period.get(_holiday_period, holidays_to_text([d for d, _ in _official])),", source)
+        self.assertIn("value=holiday_text_for_period(_holidays_by_period, yil, ay),", source)
         self.assertIn("_holidays_by_period[_holiday_period] = holiday_input", source)
+        self.assertIn("_holidays_by_period.pop(_holiday_period, None)", source)
 
 
 class TestFairDistribution(unittest.TestCase):
@@ -2151,3 +2152,135 @@ class TestReviewFixes(unittest.TestCase):
         # Telefonda tüm düğmeleri küçülten kural kaldırıldı.
         self.assertNotIn("font-size: 9px", source)
         self.assertNotIn("2024, 2030", source)
+
+
+class TestInceleme20261014(unittest.TestCase):
+    """14 Ekim 2026 kod incelemesi bulguları."""
+
+    def setUp(self):
+        from nobet_core import build_gun_detaylari as _b
+        self.days = _b(2026, 9, 30, [])
+        self.cols = list(self.days)
+
+    def _saved(self, team, shifts):
+        schedule = pd.DataFrame(False, index=team, columns=self.cols)
+        for person, count in shifts.items():
+            schedule.loc[person, self.cols[:count]] = True
+        return schedule
+
+    def test_ad_degisikligi_eski_aylara_tasinir(self):
+        saved = self._saved(["Ali", "Ayşe"], {"Ali": 5})
+        rows = [{"Tarih": self.days[c]["full_date"], "AYB": "Ali" if i < 5 else "-", "GYB": "-"}
+                for i, c in enumerate(self.cols)]
+        settings = {"locked": [["Ali", self.cols[0]]]}
+        state = {}
+        restore_auto_saved_schedule(
+            state, lambda *a: (["Ali", "Ayşe"], saved, None, settings, rows), "x", 2026, 9,
+            ["Ali K.", "Ayşe"], self.cols, self.days, ["AYB", "GYB"], aliases={"Ali": "Ali K."},
+        )
+        self.assertEqual(int(state["schedule_bool"].loc["Ali K."].sum()), 5)
+        self.assertEqual(state["cached_rows_liste"][0]["AYB"], "Ali K.")
+        self.assertEqual(state["locked_cells"], {("Ali K.", self.cols[0])})
+        self.assertEqual(state["hidden_people"], {})
+
+    def test_eski_adi_alan_yeni_kisi_eslenmez(self):
+        from nobet_core import resolve_alias
+        self.assertEqual(resolve_alias("Ali", {"Ali": "Ali K."}, ["Ali", "Ali K."]), "Ali")
+        self.assertEqual(resolve_alias("Can", {"Ali": "Ali K."}, ["Ali K."]), "Can")
+
+    def test_ad_degisikligi_zinciri_ve_geri_donus(self):
+        from nobet_core import record_renames, resolve_alias
+        aliases = record_renames({}, {"A": "B"})
+        aliases = record_renames(aliases, {"B": "C"})
+        self.assertEqual(aliases, {"A": "C", "B": "C"})
+        self.assertEqual(resolve_alias("A", aliases, ["C"]), "C")
+        self.assertEqual(record_renames({"A": "B"}, {"B": "A"}), {"B": "A"})
+
+    def test_ad_kayitlari_ayarlarda_saklanir(self):
+        state = {"name_aliases": {"Ali": "Ali K."}}
+        self.assertEqual(collect_app_settings(state)["name_aliases"], {"Ali": "Ali K."})
+        target = {}
+        apply_app_settings(target, {"name_aliases": {"Ali": "Ali K.", "": "x", "a": 1}})
+        self.assertEqual(target["name_aliases"], {"Ali": "Ali K."})
+
+    def test_ekipten_cikan_saklanir_geri_yazilinca_doner(self):
+        from nobet_core import stash_removed_people, take_back_people
+        schedule = self._saved(["Ali", "Ayşe"], {"Ali": 3, "Ayşe": 2})
+        prefs = pd.DataFrame(0, index=["Ali", "Ayşe"], columns=self.cols)
+        prefs.loc["Ali", self.cols[10]] = 3
+        hidden, stashed = stash_removed_people({}, schedule, prefs, ["Ayşe"])
+        self.assertEqual(stashed, ["Ali"])
+        self.assertEqual(hidden, {"Ali": {"shifts": [1, 2, 3], "prefs": {"11": 3}}})
+        json.dumps(hidden)  # veritabanına yazılabilir olmalı
+
+        new_schedule = pd.DataFrame(False, index=["Ayşe", "Ali"], columns=self.cols)
+        new_prefs = pd.DataFrame(0, index=["Ayşe", "Ali"], columns=self.cols)
+        hidden, returned = take_back_people(hidden, new_schedule, new_prefs, ["Ayşe", "Ali"])
+        self.assertEqual(returned, ["Ali"])
+        self.assertEqual(hidden, {})
+        self.assertEqual(int(new_schedule.loc["Ali"].sum()), 3)
+        self.assertEqual(int(new_prefs.at["Ali", self.cols[10]]), 3)
+
+    def test_kayittaki_ekip_disi_kisi_silinmez(self):
+        saved = self._saved(["Ali", "Ayşe"], {"Ali": 4, "Ayşe": 1})
+        state = {}
+        restore_auto_saved_schedule(
+            state, lambda *a: (["Ali", "Ayşe"], saved, None, None, None), "x", 2026, 9,
+            ["Ayşe"], self.cols, self.days,
+        )
+        self.assertEqual(state["hidden_people"]["Ali"]["shifts"], [1, 2, 3, 4])
+        # Ali ekipte yokken kaydedilen ay tekrar açılınca (settings'te saklı) geri gelir.
+        later = {}
+        restore_auto_saved_schedule(
+            later,
+            lambda *a: (["Ayşe"], saved.loc[["Ayşe"]], None, {"hidden": state["hidden_people"]}, None),
+            "x", 2026, 9, ["Ayşe", "Ali"], self.cols, self.days,
+        )
+        self.assertEqual(int(later["schedule_bool"].loc["Ali"].sum()), 4)
+        self.assertEqual(later["hidden_people"], {})
+
+    def test_saklilar_parmak_izine_girer(self):
+        schedule = self._saved(["Ayşe"], {})
+        self.assertNotEqual(
+            persistence_fingerprint(schedule, None, [], None, {}),
+            persistence_fingerprint(schedule, None, [], None, {"Ali": {"shifts": [1], "prefs": {}}}),
+        )
+
+    def test_fazla_atanan_kisi_ek_sutunda(self):
+        from nobet_core import add_overflow_roles
+        schedule = self._saved(["Ali", "Ayşe", "Can"], {"Ali": 1, "Ayşe": 1, "Can": 1})
+        rows = [{"Tarih": self.days[c]["full_date"], "AYB": "-", "GYB": "-"} for c in self.cols]
+        rows[0] = {"Tarih": rows[0]["Tarih"], "AYB": "Ali", "GYB": "Ayşe"}
+        out, roles = add_overflow_roles(rows, ["AYB", "GYB"], schedule, self.cols)
+        self.assertEqual(roles, ["AYB", "GYB", "Ek 1"])
+        self.assertEqual(out[0]["Ek 1"], "Can")
+        self.assertEqual(out[1]["Ek 1"], "-")
+        self.assertNotIn("Ek 1", rows[0])
+        self.assertIn("Ek 1: Can", build_share_text(out, roles, 2026, 9))
+        self.assertIn("Ek 1", build_person_ics("Can", out, roles, 2026, 9))
+
+    def test_fazla_kisi_yoksa_liste_aynen(self):
+        from nobet_core import add_overflow_roles
+        schedule = self._saved(["Ali", "Ayşe"], {"Ali": 1})
+        rows = [{"Tarih": "x", "AYB": "Ali" if i == 0 else "-"} for i in range(len(self.cols))]
+        out, roles = add_overflow_roles(rows, ["AYB"], schedule, self.cols)
+        self.assertIs(out, rows)
+        self.assertEqual(roles, ["AYB"])
+
+    def test_turkiye_saati(self):
+        from nobet_core import now_tr
+        from datetime import timedelta
+        self.assertEqual(now_tr().utcoffset(), timedelta(hours=3))
+
+    def test_varsayilan_tatiller_saklanmaz(self):
+        from nobet_core import holiday_text_for_period, prune_default_holidays
+        self.assertEqual(holiday_text_for_period({}, 2026, 10), "29")
+        self.assertEqual(holiday_text_for_period({"2026-10": ""}, 2026, 10), "")
+        stored = {"2026-10": "29", "2026-11": "", "2026-12": "31", "2026-03": "20-22, 25"}
+        prune_default_holidays(stored)
+        self.assertEqual(stored, {"2026-12": "31", "2026-03": "20-22, 25"})
+
+    def test_bos_hucreler_atanmamis_sayilir(self):
+        from nobet_core import as_bool_frame
+        frame = pd.DataFrame({"1 Sal": [True, np.nan], "2 Çar": [np.nan, False]}, index=["Ali", "Ayşe"])
+        self.assertEqual(as_bool_frame(frame).values.tolist(), [[True, False], [False, False]])
