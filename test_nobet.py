@@ -1334,8 +1334,9 @@ class TestCrossMonthBalance(unittest.TestCase):
             specials = schedule[special_cols].sum(axis=1)
             # Hafta sonu/tatil dengesi bozulmaz.
             self.assertLessEqual(specials.max() - specials.min(), 1)
-        # 6 bayram nöbeti / 8 kişi: geçmişi fazla olan ikisi neredeyse hiç almaz.
-        self.assertLessEqual(heavy, 1)
+        # 6 bayram nöbeti / 8 kişi: geçmiş olmasa ikisi 5 ayda ~7-8 alırdı.
+        # Art arda hafta sonu kuralı bazı takasları engellediğinden sıfır değil.
+        self.assertLessEqual(heavy, 3)
 
     def test_bayram_takasi_toplam_ve_ozel_gun_sayisini_degistirmez(self):
         names = ["Ali", "Ayşe"]
@@ -1358,6 +1359,37 @@ class TestCrossMonthBalance(unittest.TestCase):
             {"Ali": 1, "Ayşe": 0},
         )
         self.assertTrue(fixed.at["Ali", "20 Cum"])
+
+    def test_bayram_takasi_art_arda_hafta_sonu_olusturmaz(self):
+        # Mart 2026: 20 Cuma bayram; 14-15 ve 28-29 hafta sonları.
+        names = ["Ali", "Ayşe"]
+        days = build_gun_detaylari(2026, 3, 31, [20])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=names, columns=cols)
+        schedule.at["Ali", "20 Cum"] = True
+        schedule.at["Ali", "14 Cmt"] = True
+        schedule.at["Ayşe", "21 Cmt"] = True  # Ali'ye geçerse 14 ve 21 art arda olur
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        result = _balance_holidays(
+            schedule.copy(), names, cols, days, unwanted, None, 1, set(), set(), {},
+            {"Ali": 1, "Ayşe": 0},
+        )
+        self.assertTrue(result.at["Ali", "20 Cum"])
+        self.assertFalse(result.at["Ali", "21 Cmt"])
+
+    def test_gecmis_olmadan_da_bayram_ay_icinde_dengelenir(self):
+        names = [f"K{i}" for i in range(8)]
+        days = build_gun_detaylari(2026, 3, 31, [20, 21, 22])
+        cols = list(days)
+        holiday_cols = [c for c in cols if days[c]["holiday"]]
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        random.seed(8)
+        for _ in range(5):
+            schedule, _ = run_scheduling_core(
+                names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=10,
+            )
+            holidays = schedule[holiday_cols].sum(axis=1)
+            self.assertLessEqual(holidays.max() - holidays.min(), 1)
 
     def test_nobetler_aya_yayilir(self):
         # 8 kişi, günde 2: beklenen aralık 4 gün. Dinlenme 1 gün; yayma
@@ -1444,6 +1476,13 @@ class TestBackup(unittest.TestCase):
         self.assertEqual(item["preferences"], {"1 Sal": {"Ali": 1, "Ayşe": 0}})
         self.assertEqual(backup["settings"], {"team": "Ali, Ayşe"})
         self.assertEqual(backup_summary(backup), "1 ay (Eylül 2026), ekip ve ayarlar")
+
+    def test_ekip_disindaki_hucreler_yedege_girmez(self):
+        rows = self._rows()
+        rows[0]["cells"].append(("Eski Kişi", "1 Sal", True))
+        backup, errors = parse_backup(backup_to_bytes(build_backup(None, rows)))
+        self.assertEqual(errors, [])
+        self.assertNotIn(("Eski Kişi", "1 Sal"), backup["schedules"][0]["assigned"])
 
     def test_bozuk_yedek_reddedilir(self):
         good = build_backup(None, self._rows())

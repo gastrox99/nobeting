@@ -914,6 +914,10 @@ def _mark_backup_downloaded():
 
 if _db_ready:
     _restored_notice = st.session_state.pop("backup_restored_notice", None)
+    # Yedekteki "son indirme" tarihi, bu yedeği indirmeden önceki tarihtir.
+    _kept_backup_at = st.session_state.pop("backup_restored_last_at", None)
+    if _kept_backup_at and _kept_backup_at > str(st.session_state.get("last_backup_at") or ""):
+        st.session_state.last_backup_at = _kept_backup_at
     if _restored_notice:
         st.success(f"✅ Yedek geri yüklendi: {_restored_notice}.")
     _backup_hint = backup_reminder(st.session_state.get("last_backup_at"))
@@ -969,8 +973,10 @@ if _db_ready:
                         else:
                             # Ekrandaki eski durum yedeğin üzerine otomatik kaydedilmesin:
                             # her şeyi veritabanından baştan yükle.
+                            _kept_backup_at = st.session_state.get("last_backup_at")
                             st.session_state.clear()
                             st.session_state.backup_restored_notice = _summary
+                            st.session_state.backup_restored_last_at = _kept_backup_at
                             st.rerun()
 
 if not isimler: st.stop()
@@ -1218,6 +1224,8 @@ def _load_previous_context(year, month):
     try:
         _loaded_all = load_auto_saved_assignments(_periods, owner=current_owner)
     except Exception:
+        # Bir dakika sonra yeniden denenir; o zamana kadar uyarı gösterilir.
+        _ctx["failed_at"] = time.monotonic()
         return _ctx
     _aliases = st.session_state.get("name_aliases")
     for _back, (_py, _pm) in enumerate(_periods, start=1):
@@ -1251,9 +1259,19 @@ def _load_previous_context(year, month):
 
 
 _prev_ctx = st.session_state.get("prev_month_context")
-if not _prev_ctx or _prev_ctx.get("period") != (yil, ay) or "monthly_totals" not in _prev_ctx:
+if (
+    not _prev_ctx
+    or _prev_ctx.get("period") != (yil, ay)
+    or "monthly_totals" not in _prev_ctx
+    or ("failed_at" in _prev_ctx and time.monotonic() - _prev_ctx["failed_at"] > 60)
+):
     _prev_ctx = _load_previous_context(yil, ay)
     st.session_state.prev_month_context = _prev_ctx
+if "failed_at" in _prev_ctx:
+    st.warning(
+        "⚠️ Önceki aylar okunamadı: ay geçişi dinlenme kuralı ve aylar arası denge "
+        "şu an uygulanmıyor. Bir dakika sonra yeniden denenecek."
+    )
 prev_last_shift = {p: d for p, d in _prev_ctx["last_shift"].items() if p in isimler}
 _balance_history_on = st.session_state.get("balance_history", True)
 history_special = (

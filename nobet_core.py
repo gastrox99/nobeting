@@ -1599,7 +1599,7 @@ def _balance_fridays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_boo
 def _balance_holidays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                       df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
                       initial_last_shift, history_holiday, max_moves=200):
-    """Bayram/tatil sayılarındaki farkı (son 12 ay dahil) takasla azaltır.
+    """Bayram/tatil sayılarındaki farkı (varsa son 12 ay dahil) takasla azaltır.
 
     Çok tatil nöbeti olanın bir tatil nöbeti, az olanın tatil olmayan bir
     hafta sonu nöbetiyle yer değiştirir. Toplam, hafta sonu/tatil ve Cuma
@@ -1609,17 +1609,35 @@ def _balance_holidays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
     weekend_cols = [
         c for c in sutunlar if gun_detaylari[c]["weekend"] and not gun_detaylari[c]["holiday"]
     ]
+    weekend_days = [c for c in sutunlar if gun_detaylari[c]["weekend"]]
+
+    def back_to_back(person):
+        weeks = sorted({
+            gun_detaylari[c].get("week", (gun_detaylari[c]["day_num"] - 1) // 7)
+            for c in weekend_days if bool(schedule.at[person, c])
+        })
+        return sum(1 for a, b in zip(weeks, weeks[1:]) if b == a + 1)
+
+    def swap_ok(giver, receiver, apply_swap, undo_swap):
+        # Takas art arda hafta sonu nöbeti oluşturmasın (simülasyon bundan kaçınır).
+        before = back_to_back(giver) + back_to_back(receiver)
+        apply_swap()
+        after = back_to_back(giver) + back_to_back(receiver)
+        undo_swap()
+        return after <= before
+
     return _balance_by_swaps(
         schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
         min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
         holiday_cols, weekend_cols, extra_counts=history_holiday, max_moves=max_moves,
+        swap_ok=swap_ok,
     )
 
 
 def _balance_by_swaps(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                       df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
                       initial_last_shift, target_cols, partner_cols, extra_counts=None,
-                      max_moves=200):
+                      max_moves=200, swap_ok=None):
     """``target_cols`` sayılarındaki farkı takasla azaltır; toplamlar değişmez.
 
     Çok sayısı olan kişinin bir hedef gün nöbeti, az olanın bir eş gün
@@ -1689,6 +1707,20 @@ def _balance_by_swaps(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
                         ok = can_take(receiver, tcol, pcol) and can_take(giver, pcol, tcol)
                         schedule.at[giver, tcol] = True
                         schedule.at[receiver, pcol] = True
+                        if ok and swap_ok is not None:
+                            def _apply(g=giver, r=receiver, t=tcol, q=pcol):
+                                schedule.at[g, t] = False
+                                schedule.at[g, q] = True
+                                schedule.at[r, q] = False
+                                schedule.at[r, t] = True
+
+                            def _undo(g=giver, r=receiver, t=tcol, q=pcol):
+                                schedule.at[g, t] = True
+                                schedule.at[g, q] = False
+                                schedule.at[r, q] = True
+                                schedule.at[r, t] = False
+
+                            ok = swap_ok(giver, receiver, _apply, _undo)
                         if ok:
                             move = (giver, receiver, tcol, pcol)
                             break
@@ -1847,6 +1879,9 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                     if (giver, col) in fixed or bool(df_unwanted_bool.at[receiver, col]):
                         continue
                     if pref(receiver, col) == 2:
+                        continue
+                    # Yalnızca geçmiş yüzünden yapılan aktarım verenin tercih ettiği günü almaz.
+                    if gap == 1 and pref(giver, col) == 1:
                         continue
                     if col in special_cols and specials[giver] <= specials[receiver]:
                         continue
@@ -2112,7 +2147,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             {(p, c) for c, people in fixed_by_col.items() for p in people},
             initial_last_shift,
         )
-        if history_holiday:
+        if any(gun_detaylari[c]["holiday"] for c in sutunlar):
             best_schedule = _balance_holidays(
                 best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                 df_preferred, min_bosluk, forbidden_pairs,
@@ -2555,7 +2590,10 @@ def build_backup(settings, schedules, created_at=None):
         team = _parse_json_text(row.get("team_members"))
         if not isinstance(team, list):
             team = [m.strip() for m in str(row.get("team_members") or "").split(",") if m.strip()]
-        cells = row.get("cells") or []
+        # Uygulama da çizelgeyi ekip listesine göre okur; listede olmayanın
+        # hücreleri görünmez, yedeğe de girmez (yoksa geri yükleme reddederdi).
+        members = set(str(member) for member in team)
+        cells = [cell for cell in (row.get("cells") or []) if str(cell[0]) in members]
         items.append({
             "name": row["name"],
             "year": int(row["year"]),
