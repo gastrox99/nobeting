@@ -26,6 +26,7 @@ try:
     from db import (
         init_db, save_schedule, load_schedule,
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
+        is_database_configured,
         create_share_link, get_share_link, delete_share_link, resolve_share_token,
     )
     from nobet_core import (
@@ -106,6 +107,7 @@ except ImportError:
     from db import (
         init_db, save_schedule, load_schedule,
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
+        is_database_configured,
         create_share_link, get_share_link, delete_share_link, resolve_share_token,
     )
     from nobet_core import (
@@ -207,13 +209,6 @@ _db_ready = _db_state["ready"]
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Adil Nöbet", layout="wide")
-
-if not _db_ready:
-    _db_reason = f" Sebep: {_db_state['error']}" if _db_state.get("error") else ""
-    st.warning(
-        "⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt "
-        f"özellikleri şu an çalışmayabilir.{_db_reason}"
-    )
 
 # --- SALT OKUNUR PAYLAŞIM SAYFASI (?paylas=...) ---
 # Ekip arkadaşları giriş yapmadan yalnızca listeyi görür.
@@ -325,6 +320,21 @@ def _current_user_email():
 
 
 AUTH_ENABLED = _auth_configured()
+# Veritabanı varken [auth] ayarı silinir ya da bozulursa uygulama herkese açık
+# tek kullanıcı moduna düşmesin. Girişsiz çalışmak bilerek istenirse
+# GIRISSIZ_KULLANIM=1 ortam değişkeni verilir (ör. maymun testi).
+if (
+    not AUTH_ENABLED
+    and is_database_configured()
+    and os.getenv("GIRISSIZ_KULLANIM") != "1"
+):
+    st.markdown("<h1 style='text-align: center; font-size: 2.5rem;'>Nöbet Yönetimi</h1>", unsafe_allow_html=True)
+    st.error(
+        "🔒 Giriş ayarları eksik olduğu için uygulama kilitlendi. Yönetici "
+        "Streamlit Secrets'taki [auth] bölümünü (client_id, client_secret, "
+        "redirect_uri) kontrol etmeli."
+    )
+    st.stop()
 if AUTH_ENABLED:
     if not st.user.is_logged_in:
         st.markdown("<h1 style='text-align: center; font-size: 2.5rem;'>Nöbet Yönetimi</h1>", unsafe_allow_html=True)
@@ -345,6 +355,15 @@ if AUTH_ENABLED:
         st.session_state.legacy_claim_done = claim_legacy_data(current_owner)
 else:
     current_owner = ""
+
+# Bağlantı hatasının nedeni (sunucu adı içerebilir) yalnızca giriş yapmış
+# kullanıcıya gösterilir; paylaşım ve giriş sayfalarında görünmez.
+if not _db_ready:
+    _db_reason = f" Sebep: {_db_state['error']}" if _db_state.get("error") else ""
+    st.warning(
+        "⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt "
+        f"özellikleri şu an çalışmayabilir.{_db_reason}"
+    )
 
 # --- Ekip ve ayarları veritabanından geri yükle (sayfa yenilemesinde) ---
 if 'app_settings_loaded' not in st.session_state:
@@ -525,7 +544,9 @@ def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance, yil=None):
 
         _excel_list["Tarih"] = _excel_list["Tarih"].map(_add_year_to_date_label)
 
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    # "=" ile başlayan isim/görev adı Excel'de formül olarak çalışmasın.
+    with pd.ExcelWriter(output, engine='xlsxwriter',
+                        engine_kwargs={"options": {"strings_to_formulas": False}}) as writer:
         _excel_list.to_excel(writer, sheet_name='Günlük Liste', index=False)
         df_stats_load.to_excel(writer, sheet_name='Nöbet Yükü')
         df_stats_finance.to_excel(writer, sheet_name='Ücret Özeti')

@@ -28,6 +28,11 @@ def _database_url():
     return url or None
 
 
+def is_database_configured():
+    """True when a DATABASE_URL is set (reachable or not)."""
+    return bool(_database_url())
+
+
 def _connect():
     return psycopg2.connect(_database_url(), connect_timeout=10)
 
