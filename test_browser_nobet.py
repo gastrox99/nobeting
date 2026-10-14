@@ -264,6 +264,8 @@ def test_ayni_gorev_adi_numaralanir_ve_uzak_yil_secilir(app_url):
     with sync_playwright() as playwright:
         browser, page = _open_app(playwright, app_url, "Rol Ali, Rol Ayşe, Rol Can")
         try:
+            # Ekip girişinin yeniden çizimi bitmeden yazılan görev adı CI'da kayboluyordu.
+            _wait_idle(page)
             roles = _settings_box(page, "textbox", "🏷️ Görev İsimleri:")
             roles.fill("AYB, AYB")
             roles.press("Enter")
