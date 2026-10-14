@@ -421,7 +421,7 @@ class TestAutoScheduleRestore(unittest.TestCase):
 
     def test_yukleyici_kayitli_rol_atamalarini_aynen_geri_yukler(self):
         saved_schedule = pd.DataFrame(
-            [[True, False], [False, True]],
+            [[True, True], [True, True]],
             index=self.isimler,
             columns=["1 Çar", "2 Per"],
         )
@@ -440,13 +440,60 @@ class TestAutoScheduleRestore(unittest.TestCase):
 
         restored = restore_auto_saved_schedule(
             session_state, mock_load_schedule, "Otomatik_2025_01", 2025, 1,
-            self.isimler, self.sutunlar, day_details, ["Görev1", "Görev2"],
+            self.isimler, self.sutunlar, day_details, ["Başrol", "Destek"],
         )
 
         self.assertTrue(restored)
         self.assertEqual(session_state["cached_rows_liste"], saved_rows)
         self.assertEqual(session_state["cached_role_names"], ["Başrol", "Destek"])
         self.assertFalse(session_state["should_regenerate_assignments"])
+
+    def test_eski_gorev_duzeniyle_kayit_guncel_gorevlere_tasinir(self):
+        # Kayıt tek görevle (Görev1) yapılmış; şimdi nöbet başına 2 kişi var.
+        saved_schedule = pd.DataFrame(
+            [[True, False], [True, True]],
+            index=self.isimler,
+            columns=["1 Çar", "2 Per"],
+        )
+        saved_rows = [
+            {"Tarih": "01.01.2025 Çar", "Görev1": self.isimler[0]},
+            {"Tarih": "02.01.2025 Per", "Görev1": self.isimler[1]},
+        ]
+        session_state = SessionStateMock()
+        day_details = {
+            "1 Pzt": {"day_num": 1, "full_date": "01.01.2025 Çar"},
+            "2 Sal": {"day_num": 2, "full_date": "02.01.2025 Per"},
+        }
+        restored = restore_auto_saved_schedule(
+            session_state, lambda *_: (self.isimler, saved_schedule, None, {}, saved_rows),
+            "Otomatik_2025_01", 2025, 1,
+            self.isimler, self.sutunlar, day_details, ["AYB", "GYB"],
+        )
+        self.assertTrue(restored)
+        self.assertEqual(session_state["cached_role_names"], ["AYB", "GYB"])
+        first, second = session_state["cached_rows_liste"]
+        # Gün 1'de iki kişi nöbetçi: ikisi de listede, eski yerleşim korunur.
+        self.assertEqual(first["AYB"], self.isimler[0])
+        self.assertEqual(first["GYB"], self.isimler[1])
+        self.assertEqual(second, {"Tarih": "02.01.2025 Per", "AYB": self.isimler[1], "GYB": "-"})
+
+    def test_gorev_satirlari_yeni_duzene_tasinir(self):
+        from nobet_core import align_rows_to_roles
+        gun = build_gun_detaylari(2026, 2, 28, [])
+        cols = list(gun)[:2]
+        schedule = pd.DataFrame([[True, True], [True, False], [False, True]],
+                                index=["Ali", "Ayşe", "Can"], columns=cols)
+        rows = [{"Tarih": "d1", "A": "Ayşe", "B": "Ali", "C": "-"},
+                {"Tarih": "d2", "A": "Can", "B": "-", "C": "Ali"}]
+        # Üç görevden ikiye: kaldırılan C'deki kişi boş göreve geçer.
+        out = align_rows_to_roles(rows, ["A", "B", "C"], ["X", "Y"], schedule, cols, gun)
+        self.assertEqual(out, [{"Tarih": "d1", "X": "Ayşe", "Y": "Ali"},
+                               {"Tarih": "d2", "X": "Can", "Y": "Ali"}])
+
+    def test_ayni_kisinin_iki_limiti_bildirilir(self):
+        limits, _, errors = parse_person_limits_with_issues("Ali:3-4\nAli:5-6")
+        self.assertEqual(limits["Ali"], {"min": 5, "max": 6})
+        self.assertTrue(any("birden fazla" in e for e in errors))
 
     def test_yukleme_hatasi_callback_ile_bildirilebilir_ve_state_degismez(self):
         session_state = SessionStateMock({"existing": "state"})

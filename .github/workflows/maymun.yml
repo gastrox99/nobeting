@@ -1,0 +1,55 @@
+name: Maymun testi
+
+# Elle başlatılır: GitHub'da Actions → "Maymun testi" → "Run workflow".
+# Uygulamaya gerçek tarayıcı ve gerçek veritabanıyla rastgele işlemler
+# yaptırır; bulgular çalıştırma sayfasında uyarı olarak görünür.
+on:
+  workflow_dispatch:
+    inputs:
+      turlar:
+        description: "Tur sayısı"
+        default: "3"
+      adim:
+        description: "Tur başına işlem sayısı"
+        default: "120"
+
+jobs:
+  maymun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      RUN_MONKEY: "1"
+      MONKEY_ROUNDS: ${{ inputs.turlar }}
+      MONKEY_STEPS: ${{ inputs.adim }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest playwright
+      - run: python -m playwright install --with-deps chromium
+      - name: Maymun testi
+        shell: bash
+        run: |
+          python -m pytest test_monkey.py -s -p no:cacheprovider --tb=short > monkey.log 2>&1 || true
+          tail -5 monkey.log
+          python - <<'PY'
+          import os
+          path = "monkey_findings.txt"
+          text = open(path, encoding="utf-8").read() if os.path.exists(path) else open("monkey.log", encoding="utf-8").read()[-12000:]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Maymun testi bulguları\n\n```\n" + text + "\n```\n")
+          for i in range(0, min(len(text), 36000), 3500):
+              chunk = text[i:i + 3500]
+              print("::warning title=maymun::" + chunk.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+          PY

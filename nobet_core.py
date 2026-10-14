@@ -646,6 +646,33 @@ def rename_people_in_rows(rows, renames):
     ]
 
 
+def align_rows_to_roles(rows, old_roles, new_roles, schedule, day_columns, day_details):
+    """Görev satırlarını yeni görev düzenine taşır ve çizelgeyle eşitler.
+
+    Görev adları ya da nöbet başına kişi sayısı değiştikten sonra eski bir ay
+    açılınca (ya da geri alınınca) satırlar eski düzende kalıyordu; yeni görev
+    sütunu olmadığı için ikinci nöbetçi listede görünmüyordu. Kişiler sırayla
+    yeni görevlere taşınır, eksikler boş görevlere eklenir.
+    """
+    old_roles = list(old_roles or [])
+    remapped = []
+    for row in rows or []:
+        new_row = {"Tarih": row.get("Tarih", "")}
+        for index, role in enumerate(new_roles):
+            new_row[role] = row.get(old_roles[index], "-") if index < len(old_roles) else "-"
+        # Kaldırılan görevlerdeki kişiler boş kalan görevlere geçer.
+        for old_role in old_roles[len(new_roles):]:
+            person = row.get(old_role, "-")
+            if person in (None, "", "-") or person in new_row.values():
+                continue
+            for role in new_roles:
+                if new_row[role] in (None, "", "-"):
+                    new_row[role] = person
+                    break
+        remapped.append(new_row)
+    return synchronize_changed_role_rows(remapped, None, schedule, list(new_roles), day_columns, day_details)
+
+
 def drop_unknown_people_from_rows(rows, people):
     """Ekipte olmayan isimleri görev satırlarından "-" ile siler."""
     if not rows:
@@ -860,6 +887,13 @@ def restore_auto_saved_schedule(
                 ):
                     restored_role_names.append(restored_role_name)
         active_role_names = role_names or restored_role_names
+        if list(restored_role_names) != list(active_role_names):
+            # Kayıt eski görev düzeniyle yapılmış: satırları güncel görevlere taşı.
+            restored_rows = align_rows_to_roles(
+                restored_rows, restored_role_names, active_role_names,
+                restored_schedule, sutunlar, gun_detaylari,
+            )
+            restored_role_names = list(active_role_names)
         session_state["cached_rows_liste"] = restored_rows
         session_state["cached_role_names"] = restored_role_names or active_role_names
         session_state["cached_key"] = (
@@ -1078,7 +1112,6 @@ def build_schedule_analysis(
         if gun_detaylari[column]["weekend"] or gun_detaylari[column]["holiday"]
     ]
     totals = schedule.sum(axis=1)
-    weekend_totals = schedule[weekend_columns].sum(axis=1) if weekend_columns else pd.Series(0, index=isimler)
     special_totals = schedule[special_columns].sum(axis=1) if special_columns else pd.Series(0, index=isimler)
 
     stats_load = []
@@ -1253,6 +1286,10 @@ def parse_person_limits_with_issues(limits_text):
         elif min_val > max_val:
             errors.append(f"**{name}**: min ({min_val}) > max ({max_val}) — atlandı")
         else:
+            if name in person_limits:
+                errors.append(
+                    f"**{name}** birden fazla satırda — son satır ({min_val}-{max_val}) kullanılıyor"
+                )
             person_limits[name] = {'min': min_val, 'max': max_val}
     return person_limits, invalid_lines, errors
 

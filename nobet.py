@@ -7,9 +7,7 @@ import re
 import matplotlib.pyplot as plt
 from io import BytesIO
 from datetime import date, datetime
-import numpy as np
 import time
-import json
 import os
 # Streamlit Cloud yeni kodu çektiğinde db / nobet_core modüllerinin eski
 # hâli hafızada kalabiliyor ve yeni fonksiyonlar "ImportError" veriyor.
@@ -52,6 +50,7 @@ try:
         ignored_role_edits,
         normalize_role_names,
         detect_renames,
+        align_rows_to_roles,
         rename_people_in_rows,
         import_schedule_table,
         YEAR_MIN,
@@ -117,6 +116,7 @@ except ImportError:
         ignored_role_edits,
         normalize_role_names,
         detect_renames,
+        align_rows_to_roles,
         rename_people_in_rows,
         import_schedule_table,
         YEAR_MIN,
@@ -485,8 +485,6 @@ def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance, yil=None):
         df_stats_load.to_excel(writer, sheet_name='Nöbet Yükü')
         df_stats_finance.to_excel(writer, sheet_name='Ücret Özeti')
         
-        # Format worksheets
-        workbook = writer.book
         def _xl_col(n):
             s = ""
             while n >= 0:
@@ -512,14 +510,11 @@ def _current_state_snapshot():
         'pref': st.session_state.pref_df.copy() if 'pref_df' in st.session_state else None,
         'rows_liste': list(st.session_state.cached_rows_liste) if st.session_state.get('cached_rows_liste') else None,
         'role_names': list(st.session_state.cached_role_names) if st.session_state.get('cached_role_names') else None,
-        'forbidden_pairs_text': st.session_state.get('forbidden_pairs_text', ''),
-        'limits_text': st.session_state.get('limits_text', ''),
-        'rol_isimleri': list(st.session_state.get('rol_isimleri', [])),
         'locked': set(st.session_state.get('locked_cells', set())),
     }
 
-def save_undo_state(schedule_df=None):
-    """Save current state (schedule + preferences) for undo"""
+def save_undo_state():
+    """Geri al için mevcut durumu (çizelge, tercihler, görevler, kilitler) saklar."""
     if 'undo_history' not in st.session_state:
         st.session_state.undo_history = []
     if 'redo_history' not in st.session_state:
@@ -546,8 +541,15 @@ def _restore_snapshot(snap):
     if snap.get('locked') is not None:
         st.session_state.locked_cells = set(snap['locked'])
     if snap.get('rows_liste') is not None:
-        st.session_state.cached_rows_liste = snap['rows_liste']
-        st.session_state.cached_role_names = snap.get('role_names')
+        _rows, _roles = snap['rows_liste'], list(snap.get('role_names') or [])
+        _current_roles = list(st.session_state.get('rol_isimleri') or _roles)
+        if _roles != _current_roles:
+            # Görev adları o zamandan beri değiştiyse satırları güncel düzene taşı.
+            _rows = align_rows_to_roles(_rows, _roles, _current_roles, st.session_state.schedule_bool,
+                                        sutunlar, gun_detaylari)
+            _roles = _current_roles
+        st.session_state.cached_rows_liste = _rows
+        st.session_state.cached_role_names = _roles
         st.session_state.should_regenerate_assignments = False
     else:
         st.session_state.cached_rows_liste = None
@@ -718,7 +720,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         role_names_input = st.text_input(
             "🏷️ Görev İsimleri:",
             value=st.session_state.get("role_names_text", ""),
-            placeholder=f"Örn: AYB, GYB"
+            placeholder="Örn: AYB, GYB"
         )
         st.session_state.role_names_text = role_names_input
         
@@ -764,7 +766,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     st.session_state.person_limits = person_limits
     st.session_state.lim_unknown_names = _lim_unknown
     if _lim_errors:
-        st.error("❌ Geçersiz limit değerleri:\n" + "\n".join(_lim_errors))
+        st.error("❌ Kişisel limit sorunları:\n" + "\n".join(_lim_errors))
     if _lim_invalid_lines:
         st.warning(f"⚠️ {len(_lim_invalid_lines)} satır geçersiz format (doğru format: `İsim:min-max`) — atlandı.")
     if _lim_unknown:
@@ -1855,7 +1857,7 @@ if sim_clicked:
                     "previous_fingerprint": schedule_fingerprint(st.session_state.schedule_bool),
                 }
             else:
-                save_undo_state(st.session_state.schedule_bool)
+                save_undo_state()
                 st.session_state.schedule_bool = _new_schedule
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.simulation_success_pending = True
@@ -1883,7 +1885,7 @@ if _incomplete is not None:
                 st.rerun()
         with _decision_cols[1]:
             if st.button("Eksik sonuçla devam et", key="accept_incomplete_simulation"):
-                save_undo_state(st.session_state.schedule_bool)
+                save_undo_state()
                 st.session_state.schedule_bool = _incomplete["schedule"]
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.incomplete_simulation = None
@@ -1996,7 +1998,13 @@ if (st.session_state.should_regenerate_assignments
     st.session_state.should_regenerate_assignments = False
 else:
     rows_liste = st.session_state.cached_rows_liste
-    role_names = st.session_state.get('cached_role_names', role_names)
+    _cached_roles = list(st.session_state.get('cached_role_names') or role_names)
+    if _cached_roles != list(role_names):
+        # Satırlar eski görev düzenindeyse güncel görevlere taşı (yedek önlem).
+        rows_liste = align_rows_to_roles(rows_liste, _cached_roles, role_names, edited_df, sutunlar, gun_detaylari)
+        st.session_state.cached_rows_liste = rows_liste
+        st.session_state.cached_role_names = list(role_names)
+        st.session_state.cached_role_schedule = edited_df.copy(deep=True)
     if changed_schedule_columns(
         st.session_state.get("cached_role_schedule"),
         edited_df,
@@ -2411,7 +2419,7 @@ with tab_analiz:
             help="Telefonda açınca nöbetler takvime eklenir; başlıkta görev yeri (birim) yazar.",
         )
         kisi_rows = []
-        for index, row in df_liste.iterrows():
+        for _, row in df_liste.iterrows():
             roller = []
             partners_set = set()
             for role_idx, role_name in enumerate(role_names):
