@@ -1247,6 +1247,7 @@ APP_SETTINGS_FIELDS = {
     "limits": ("limits_text", _text),
     "balance_history": ("balance_history", _bool),
     "name_aliases": ("name_aliases", _aliases),
+    "last_backup": ("last_backup_at", _text),
 }
 
 
@@ -2521,3 +2522,176 @@ def create_print_html(df_liste, df_stats_load, yil, ay):
     </html>
     """
     return html
+
+
+# --- YEDEK (tüm veriyi indirme ve geri yükleme) ---
+BACKUP_FORMAT = "nobeting-yedek"
+BACKUP_VERSION = 1
+BACKUP_MAX_BYTES = 20 * 1024 * 1024
+_BACKUP_MAX_SCHEDULES = 1200
+_BACKUP_MAX_PEOPLE = 300
+_BACKUP_MAX_TEXT = 255
+
+
+def _parse_json_text(value):
+    if value in (None, ""):
+        return None
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_backup(settings, schedules, created_at=None):
+    """Veritabanı satırlarından indirilecek yedek sözlüğünü kurar.
+
+    ``schedules``: db.export_owner_data'nın döndürdüğü kayıtlar
+    (name, year, month, team_members, pref_json, settings_json,
+    rows_liste_json, cells=[(kişi, gün, atandı)]).
+    """
+    items = []
+    for row in schedules or ():
+        team = _parse_json_text(row.get("team_members"))
+        if not isinstance(team, list):
+            team = [m.strip() for m in str(row.get("team_members") or "").split(",") if m.strip()]
+        cells = row.get("cells") or []
+        items.append({
+            "name": row["name"],
+            "year": int(row["year"]),
+            "month": int(row["month"]),
+            "team": [str(member) for member in team],
+            "days": list(dict.fromkeys(str(day) for _, day, _ in cells)),
+            "assigned": [[str(person), str(day)] for person, day, assigned in cells if assigned],
+            "preferences": _parse_json_text(row.get("pref_json")),
+            "settings": _parse_json_text(row.get("settings_json")),
+            "rows": _parse_json_text(row.get("rows_liste_json")),
+        })
+    items.sort(key=lambda item: (item["year"], item["month"], item["name"]))
+    return {
+        "format": BACKUP_FORMAT,
+        "version": BACKUP_VERSION,
+        "created_at": (created_at or now_tr()).strftime("%Y-%m-%d %H:%M"),
+        "settings": settings if isinstance(settings, dict) else None,
+        "schedules": items,
+    }
+
+
+def backup_to_bytes(backup):
+    return json.dumps(backup, ensure_ascii=False, indent=1).encode("utf-8")
+
+
+def _short_text(value, limit=_BACKUP_MAX_TEXT):
+    return isinstance(value, str) and 0 < len(value) <= limit
+
+
+def parse_backup(raw):
+    """Yüklenen yedek dosyasını doğrular.
+
+    Dönen değer (yedek, hatalar). Hata varsa yedek None'dır; dosya hiçbir
+    şeye yazılmadan reddedilir.
+    """
+    if raw is None:
+        return None, ["Dosya okunamadı."]
+    if len(raw) > BACKUP_MAX_BYTES:
+        return None, ["Dosya çok büyük (en fazla 20 MB)."]
+    try:
+        data = json.loads(raw.decode("utf-8-sig") if isinstance(raw, (bytes, bytearray)) else raw)
+    except (UnicodeDecodeError, ValueError):
+        return None, ["Dosya bir Nöbet yedeği değil (JSON okunamadı)."]
+    if not isinstance(data, dict) or data.get("format") != BACKUP_FORMAT:
+        return None, ["Dosya bir Nöbet yedeği değil."]
+    if data.get("version") != BACKUP_VERSION:
+        return None, ["Yedek dosyasının sürümü desteklenmiyor."]
+    settings = data.get("settings")
+    if settings is not None and not isinstance(settings, dict):
+        return None, ["Yedekteki ayarlar bozuk."]
+    schedules = data.get("schedules")
+    if not isinstance(schedules, list) or len(schedules) > _BACKUP_MAX_SCHEDULES:
+        return None, ["Yedekteki çizelge listesi bozuk."]
+
+    errors = []
+    clean = []
+    seen = set()
+    for index, item in enumerate(schedules, start=1):
+        label = f"{index}. kayıt"
+        if not isinstance(item, dict):
+            errors.append(f"{label}: bozuk.")
+            continue
+        name, year, month = item.get("name"), item.get("year"), item.get("month")
+        if not _short_text(name):
+            errors.append(f"{label}: adı geçersiz.")
+            continue
+        if (isinstance(year, bool) or not isinstance(year, int) or not YEAR_MIN <= year <= YEAR_MAX
+                or isinstance(month, bool) or not isinstance(month, int) or not 1 <= month <= 12):
+            errors.append(f"{label} ({name}): yıl/ay geçersiz.")
+            continue
+        key = (name, year, month)
+        if key in seen:
+            errors.append(f"{label} ({name} {month}/{year}): iki kez var.")
+            continue
+        seen.add(key)
+        team, days, assigned = item.get("team"), item.get("days"), item.get("assigned")
+        if (not isinstance(team, list) or len(team) > _BACKUP_MAX_PEOPLE
+                or not all(_short_text(person) for person in team)):
+            errors.append(f"{label} ({name} {month}/{year}): ekip listesi geçersiz.")
+            continue
+        if not isinstance(days, list) or len(days) > 31 or not all(_short_text(day, 50) for day in days):
+            errors.append(f"{label} ({name} {month}/{year}): gün listesi geçersiz.")
+            continue
+        if (not isinstance(assigned, list)
+                or not all(isinstance(cell, list) and len(cell) == 2 for cell in assigned)
+                or not all(cell[0] in team and cell[1] in days for cell in assigned)):
+            errors.append(f"{label} ({name} {month}/{year}): nöbetler geçersiz.")
+            continue
+        preferences, sched_settings, rows = item.get("preferences"), item.get("settings"), item.get("rows")
+        if preferences is not None and not isinstance(preferences, dict):
+            errors.append(f"{label} ({name} {month}/{year}): tercihler geçersiz.")
+            continue
+        if sched_settings is not None and not isinstance(sched_settings, dict):
+            errors.append(f"{label} ({name} {month}/{year}): ay ayarları geçersiz.")
+            continue
+        if rows is not None and (not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows)):
+            errors.append(f"{label} ({name} {month}/{year}): görev listesi geçersiz.")
+            continue
+        clean.append({
+            "name": name, "year": year, "month": month,
+            "team": list(dict.fromkeys(team)), "days": list(dict.fromkeys(days)),
+            "assigned": [tuple(cell) for cell in assigned],
+            "preferences": preferences, "settings": sched_settings, "rows": rows,
+        })
+    if errors:
+        return None, errors[:10]
+    return {
+        "created_at": str(data.get("created_at") or "")[:40],
+        "settings": settings,
+        "schedules": clean,
+    }, []
+
+
+def backup_summary(backup):
+    """"14 ay (Ocak 2026 – Şubat 2027), ekip ve ayarlar" gibi kısa açıklama."""
+    schedules = backup.get("schedules") or []
+    parts = []
+    if schedules:
+        periods = sorted({(item["year"], item["month"]) for item in schedules})
+        first, last = periods[0], periods[-1]
+        span = f"{TR_AY_ADLARI[first[1]]} {first[0]}"
+        if last != first:
+            span += f" – {TR_AY_ADLARI[last[1]]} {last[0]}"
+        parts.append(f"{len(periods)} ay ({span})")
+    if backup.get("settings"):
+        parts.append("ekip ve ayarlar")
+    return ", ".join(parts) if parts else "boş yedek"
+
+
+def backup_reminder(last_backup_text, today=None, days=30):
+    """Son yedek eskiyse ya da hiç yoksa hatırlatma metni, değilse None."""
+    today = today or now_tr().date()
+    try:
+        last = datetime.strptime(str(last_backup_text or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return "Henüz yedek indirilmedi."
+    age = (today - last).days
+    if age >= days:
+        return f"Son yedek {age} gün önce indirildi."
+    return None
