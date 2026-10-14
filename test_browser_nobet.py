@@ -287,3 +287,69 @@ def test_buyuk_ekip_hizli_duzenleme_modunda_acilir(app_url):
             _no_exception(page)
         finally:
             browser.close()
+
+
+def _whatsapp_first_day(page):
+    page.get_by_text("📤 Dışa aktar").click()
+    code = page.locator("[data-testid='stPopoverBody'] [data-testid='stCode']").first
+    code.wait_for()
+    line = code.inner_text().splitlines()[2]
+    page.keyboard.press("Escape")
+    return line
+
+
+def test_ekip_degisince_nobet_ve_gorev_yerleri_korunur(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Ek Ali, Ek Ayşe, Ek Can")
+        try:
+            for person in ("Ek Ali", "Ek Ayşe", "Ek Can"):
+                cell = _day_button(page, person, 0)
+                cell.click()
+                cell.get_by_text("✓").wait_for()
+                _wait_idle(page)
+            # Görev sayısından fazla atanan kişi listede "Ek 1" olarak görünür.
+            assert "Ek 1: Ek Can" in _whatsapp_first_day(page)
+
+            # Ekipten çıkan kişinin nöbeti saklanır, geri yazılınca döner.
+            _set_team(page, "Ek Ali, Ek Ayşe")
+            _wait_idle(page)
+            _set_team(page, "Ek Ali, Ek Ayşe, Ek Can")
+            _wait_idle(page)
+            _no_exception(page)
+            assert _day_button(page, "Ek Can", 0).inner_text() == "✓"
+
+            # Elle değiştirilen görev yerleri, ekibe biri eklenince korunur.
+            cell = _day_button(page, "Ek Can", 0)
+            cell.click()
+            cell.get_by_text("·").wait_for()
+            _wait_idle(page)
+            page.get_by_role("tab", name="📅 Takvim Görünümü").click()
+            page.locator(".st-key-cal_swap_1 button, [class*='st-key-cal_swap_1'] button").first.click()
+            _wait_idle(page)
+            before = _whatsapp_first_day(page)
+            _set_team(page, "Ek Ali, Ek Ayşe, Ek Can, Ek Deniz")
+            _wait_idle(page)
+            _no_exception(page)
+            assert _whatsapp_first_day(page) == before
+        finally:
+            browser.close()
+
+
+def test_ayar_kutulari_art_arda_duzenlenebilir(app_url):
+    # Eskiden art arda yapılan iki düzenlemeden ikincisi sessizce geri dönüyordu.
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Kutu 1")
+        try:
+            for team in ("Kutu 1, Kutu 2", "Kutu 1, Kutu 2, Kutu 3", "Kutu 1"):
+                _set_team(page, team)
+                _wait_idle(page)
+                assert _settings_box(page, "textbox", "👥 Ekip (virgülle ayırın):").input_value() == team
+            for roles in ("A, B", "C, D"):
+                box = _settings_box(page, "textbox", "🏷️ Görev İsimleri:")
+                box.fill(roles)
+                box.press("Enter")
+                _wait_idle(page)
+                assert _settings_box(page, "textbox", "🏷️ Görev İsimleri:").input_value() == roles
+            _no_exception(page)
+        finally:
+            browser.close()

@@ -6,7 +6,7 @@ import calendar
 import re
 import matplotlib.pyplot as plt
 from io import BytesIO
-from datetime import date, datetime
+from datetime import date
 import time
 import os
 # Streamlit Cloud yeni kodu çektiğinde db / nobet_core modüllerinin eski
@@ -89,6 +89,17 @@ try:
         undo_history_state,
         redo_history_state,
         update_persistence_feedback,
+        add_overflow_roles,
+        as_bool_frame,
+        holiday_text_for_period,
+        default_holiday_text,
+        prune_default_holidays,
+        now_tr,
+        record_renames,
+        resolve_alias,
+        stash_removed_people,
+        take_back_people,
+        drop_unknown_people_from_rows,
     )
 except ImportError:
     _fresh_modules()
@@ -158,6 +169,17 @@ except ImportError:
         undo_history_state,
         redo_history_state,
         update_persistence_feedback,
+        add_overflow_roles,
+        as_bool_frame,
+        holiday_text_for_period,
+        default_holiday_text,
+        prune_default_holidays,
+        now_tr,
+        record_renames,
+        resolve_alias,
+        stash_removed_people,
+        take_back_people,
+        drop_unknown_people_from_rows,
     )
 from streamlit_local_storage import LocalStorage
 
@@ -204,7 +226,7 @@ def _rows_from_schedule(schedule, year, month):
         except (ValueError, IndexError):
             continue
     for _day in sorted(_days):
-        _assigned = schedule.index[schedule[_days[_day]].fillna(False).astype(bool)].tolist()
+        _assigned = schedule.index[schedule[_days[_day]]].tolist()
         _weekday = TR_GUN_KISA[date(year, month, _day).weekday()]
         _rows.append({
             "Tarih": f"{_day:02d}.{month:02d}.{year} {_weekday}",
@@ -223,6 +245,8 @@ def _render_shared_view(token):
     _loaded = load_schedule(f"Otomatik_{_year}_{_month:02d}", _year, _month, owner=_owner)
     _rows = _loaded[4] if _loaded and len(_loaded) > 4 and _loaded[4] else None
     _schedule = _loaded[1] if _loaded else None
+    if _schedule is not None:
+        _schedule = as_bool_frame(_schedule)
     st.subheader(f"{TR_AY_ADLARI[_month]} {_year}")
     if _rows:
         _roles = []
@@ -230,6 +254,19 @@ def _render_shared_view(token):
             for _key in _row:
                 if _key != "Tarih" and _key not in _roles:
                     _roles.append(_key)
+        if _schedule is not None and not _schedule.empty:
+            # Görev sayısından fazla atanan kişiler de listede görünsün.
+            _day_columns = {}
+            for _col in _schedule.columns:
+                try:
+                    _day_columns[int(str(_col).split()[0])] = _col
+                except (ValueError, IndexError):
+                    continue
+            _row_columns = []
+            for _row in _rows:
+                _parsed = parse_schedule_import_date(_row.get("Tarih"))
+                _row_columns.append(_day_columns.get(_parsed["day"]) if _parsed else None)
+            _rows, _roles = add_overflow_roles(_rows, _roles, _schedule, _row_columns)
     elif _schedule is not None and not _schedule.empty:
         _rows = _rows_from_schedule(_schedule, _year, _month)
         _roles = ["Nöbetçiler"]
@@ -322,6 +359,8 @@ if 'app_settings_loaded' not in st.session_state:
             st.session_state.app_settings_load_failed = True
             st.warning("⚠️ Kayıtlı ekip ve ayarlar okunamadı. Sayfayı yenileyin.")
     apply_app_settings(st.session_state, _stored_settings)
+    # Resmi tatillerle aynı kayıtlar silinir; koddaki bayram düzeltmeleri yansısın.
+    prune_default_holidays(st.session_state.get("holidays_by_period"))
     st.session_state.last_saved_settings = (
         collect_app_settings(st.session_state) if _stored_settings else None
     )
@@ -517,6 +556,7 @@ def _current_state_snapshot():
         'rows_liste': list(st.session_state.cached_rows_liste) if st.session_state.get('cached_rows_liste') else None,
         'role_names': list(st.session_state.cached_role_names) if st.session_state.get('cached_role_names') else None,
         'locked': set(st.session_state.get('locked_cells', set())),
+        'hidden': dict(st.session_state.get('hidden_people') or {}),
     }
 
 def save_undo_state():
@@ -546,6 +586,11 @@ def _restore_snapshot(snap):
         st.session_state.pref_df = snap['pref']
     if snap.get('locked') is not None:
         st.session_state.locked_cells = set(snap['locked'])
+    if snap.get('hidden'):
+        # Birleştir: geri alınan adımdan sonra ekipten çıkarılanlar da kaybolmasın.
+        st.session_state.hidden_people = {
+            **snap['hidden'], **(st.session_state.get('hidden_people') or {})
+        }
     if snap.get('rows_liste') is not None:
         _rows, _roles = snap['rows_liste'], list(snap.get('role_names') or [])
         _current_roles = list(st.session_state.get('rol_isimleri') or _roles)
@@ -614,7 +659,12 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
 
 
 def _apply_renames(renames):
-    """Yeniden adlandırılan kişilerin verisini yeni adlarına taşır."""
+    """Yeniden adlandırılan kişilerin verisini yeni adlarına taşır.
+
+    Diğer aylar veritabanında eski adla durur; ad değişikliği ayarlara
+    kaydedilir ve o aylar açılırken güncel ada çevrilir.
+    """
+    st.session_state.name_aliases = record_renames(st.session_state.get("name_aliases"), renames)
     for _key in ("schedule_bool", "pref_df", "cached_role_schedule"):
         _df = st.session_state.get(_key)
         if isinstance(_df, pd.DataFrame):
@@ -642,9 +692,13 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     set_col1, set_col2, set_col3 = st.columns([2, 1, 1])
     
     with set_col1:
+        # Ayar kutularının sabit bir "key"i var. Eskiden yalnızca value= ile
+        # kurulduklarından her düzenlemede kutu yeniden yaratılıyor ve art arda
+        # yapılan iki düzenlemeden ikincisi sessizce geri dönüyordu.
         isimler_input = st.text_area(
             "👥 Ekip (virgülle ayırın):",
             value=st.session_state.get("isimler_text", ""),
+            key="w_isimler_text",
             height=100,
             placeholder="Ali, Ayşe, Mehmet, Fatma"
         )
@@ -668,7 +722,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             st.session_state.last_stored_team_text = isimler_input
     
     with set_col2:
-        _now = datetime.now()
+        _now = now_tr()
         if _now.month == 12:
             current_year = _now.year + 1
             current_month = 1
@@ -687,7 +741,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         st.session_state.kisi_sayisi_val = kişi_sayısı
     
     with set_col3:
-        min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, st.session_state.get("min_bosluk_val", 1))
+        min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, st.session_state.get("min_bosluk_val", 1), key="w_min_bosluk_val")
         st.session_state.min_bosluk_val = min_bosluk
         # Tatiller her ay için ayrı saklanır ("2026-10": "29"). Hiç girilmemiş
         # bir ayda resmi tatiller kendiliğinden gelir; silinirse boş kalır.
@@ -696,10 +750,16 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         _official = official_holidays(yil, ay)
         holiday_input = st.text_input(
             "🎉 Tatiller (bu ay):",
-            value=_holidays_by_period.get(_holiday_period, holidays_to_text([d for d, _ in _official])),
+            value=holiday_text_for_period(_holidays_by_period, yil, ay),
+            key=f"w_holiday_text_{_holiday_period}",
             placeholder="1,2,5-10,23",
         )
-        _holidays_by_period[_holiday_period] = holiday_input
+        # Yalnızca elle değiştirilen tatiller saklanır; varsayılan resmi
+        # tatiller her açılışta güncel listeden gelir.
+        if holiday_input == default_holiday_text(yil, ay):
+            _holidays_by_period.pop(_holiday_period, None)
+        else:
+            _holidays_by_period[_holiday_period] = holiday_input
         if _official:
             st.caption("Resmi tatiller: " + ", ".join(official_holidays_summary(yil, ay)))
         if not religious_holidays_known(yil):
@@ -715,6 +775,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         nobet_ucreti = st.number_input(
             "💰 Saat Ücreti (TL):",
             value=float(st.session_state.get("nobet_ucreti_val", 1.0)),
+            key="w_nobet_ucreti_val",
         )
         st.session_state.nobet_ucreti_val = nobet_ucreti
     
@@ -726,6 +787,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         role_names_input = st.text_input(
             "🏷️ Görev İsimleri:",
             value=st.session_state.get("role_names_text", ""),
+            key="w_role_names_text",
             placeholder="Örn: AYB, GYB"
         )
         st.session_state.role_names_text = role_names_input
@@ -738,6 +800,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         st.session_state.balance_history = st.checkbox(
             "⚖️ Önceki ayların hafta sonu/tatil nöbetlerini dengele",
             value=st.session_state.get("balance_history", True),
+            key="w_balance_history",
             help="Son 3 ayda daha çok hafta sonu/tatil nöbeti tutanlara bu ay biraz daha az verilir.",
         )
     
@@ -745,6 +808,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         forbidden_input = st.text_area(
             "🚫 Birlikte Çalışamayan:",
             value=st.session_state.get("forbidden_pairs_text", ""),
+            key="w_forbidden_pairs_text",
             height=68,
             placeholder="Ali-Ayşe, Mehmet-Fatma"
         )
@@ -754,6 +818,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         limits_text = st.text_area(
             "📊 Kişisel Limitler:",
             value=st.session_state.get("limits_text", ""),
+            key="w_limits_text",
             height=68,
             placeholder="Ali:5-10\nAyşe:3-8"
         )
@@ -809,12 +874,13 @@ def _save_outgoing_period(period, schedule, preferences, rows):
     if st.session_state.get("autosave_blocked_period") == tuple(period):
         return
     _locks = active_locks(st.session_state.get("locked_cells"), schedule)
-    if persistence_fingerprint(schedule, preferences, rows, _locks) == st.session_state.get("last_saved_fingerprint"):
+    _hidden = st.session_state.get("hidden_people") or {}
+    if persistence_fingerprint(schedule, preferences, rows, _locks, _hidden) == st.session_state.get("last_saved_fingerprint"):
         return
     save_schedule(
         f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
         schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
-        settings_dict={"locked": locks_to_json(_locks)},
+        settings_dict={"locked": locks_to_json(_locks), "hidden": _hidden},
     )
 
 # Ay/yıl değişince eski ayın çizelgesini yeni aya taşımak yerine kaydet ve
@@ -852,6 +918,7 @@ if 'schedule_bool' not in st.session_state:
         gun_detaylari,
         role_names,
         on_error=_on_auto_load_error,
+        aliases=st.session_state.get("name_aliases"),
     ):
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
     # Yüklenen durum zaten veritabanındakiyle aynı; ilk kayıt ilk değişiklikte yapılır.
@@ -869,6 +936,18 @@ else:
         needs_update = True
     
     if needs_update:
+        # Ekipten çıkan kişilerin nöbet/tercihleri silinmesin; isim geri
+        # yazılınca geri gelir (eskiden hemen kaydedilip kalıcı kayboluyordu).
+        st.session_state.hidden_people, _stashed = stash_removed_people(
+            st.session_state.get("hidden_people"), current_schedule,
+            st.session_state.get("pref_df"), isimler,
+        )
+        if _stashed:
+            st.toast(
+                f"{', '.join(_stashed)} ekipten çıkarıldı. Bu aydaki nöbet ve tercihleri "
+                "saklandı; ismi ekibe geri yazarsanız geri gelir.",
+                icon="🗂️",
+            )
         # Mevcut veriyi mümkün olduğunca koru — gün numarasıyla eşleştir
         # (kolon adı yıl değiştiğinde farklı olabilir: "1 Pzt" vs "1 Çar")
         new_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -886,7 +965,22 @@ else:
                     if oc:
                         new_schedule.at[person, col] = current_schedule.at[person, col] if oc == col else current_schedule.at[person, oc]
         st.session_state.schedule_bool = new_schedule
-        st.session_state.cached_rows_liste = None  # Reset cache
+        _cached_key = st.session_state.get("cached_key")
+        if (
+            list(current_schedule.columns) == sutunlar
+            and st.session_state.get("cached_rows_liste")
+            and isinstance(_cached_key, tuple) and len(_cached_key) == 5
+        ):
+            # Yalnızca ekip değişti: elle düzenlenen görev yerleri korunur,
+            # çıkanlar listeden düşer, gelenler boş görevlere yerleşir
+            # (eskiden bütün ayın görev yerleri yeniden karılıyordu).
+            st.session_state.cached_rows_liste = drop_unknown_people_from_rows(
+                st.session_state.cached_rows_liste, isimler
+            )
+            st.session_state.cached_role_schedule = None
+            st.session_state.cached_key = _cached_key[:2] + (tuple(isimler),) + _cached_key[3:]
+        else:
+            st.session_state.cached_rows_liste = None  # Reset cache
 
 st.session_state.loaded_period = (yil, ay)
 
@@ -958,7 +1052,7 @@ PASTEL_COLORS = [
     "#7DCEA0", "#85C1E9", "#F7DC6F", "#BB8FCE", "#F0B27A",
 ]
 person_colors = {isim: PASTEL_COLORS[i % len(PASTEL_COLORS)] for i, isim in enumerate(isimler)}
-today_date = date.today()
+today_date = now_tr().date()
 
 # --- BİRLEŞİK TABLO ---
 
@@ -975,6 +1069,15 @@ else:
                     if col in current_pref.columns:
                         new_pref.at[person, col] = current_pref.at[person, col]
         st.session_state.pref_df = new_pref
+
+# Ekibe geri yazılan kişinin saklanan nöbet ve tercihleri geri gelir.
+if any(_p in (st.session_state.get("hidden_people") or {}) for _p in isimler):
+    st.session_state.hidden_people, _returned = take_back_people(
+        st.session_state.hidden_people, st.session_state.schedule_bool,
+        st.session_state.pref_df, isimler,
+    )
+    if _returned:
+        st.toast(f"{', '.join(_returned)} ekibe geri döndü; bu aydaki nöbetleri geri yüklendi.", icon="↩️")
 
 # Initialize edit mode
 if 'edit_mode' not in st.session_state:
@@ -998,11 +1101,18 @@ def _load_previous_context(year, month):
         _prev = _loaded[1] if _loaded else None
         if _prev is None or _prev.empty:
             continue
-        _prev = _prev.fillna(False).astype(bool)
+        _prev = as_bool_frame(_prev)
+        # Eski adla kaydedilmiş aylar güncel ada sayılsın.
+        _aliases = st.session_state.get("name_aliases")
+        _prev = _prev.rename(index={
+            _p: resolve_alias(_p, _aliases, isimler) for _p in _prev.index
+        })
+        if _prev.index.has_duplicates:
+            _prev = _prev.groupby(level=0).any()
         _days_in_prev = calendar.monthrange(_py, _pm)[1]
         if _back == 1:
             _ctx["last_shift"] = last_shift_offsets(_prev, _days_in_prev)
-        _prev_holidays, _ = parse_holiday_days(_holiday_texts.get(period_key(_py, _pm), ""), _days_in_prev)
+        _prev_holidays, _ = parse_holiday_days(holiday_text_for_period(_holiday_texts, _py, _pm), _days_in_prev)
         for _person, _count in special_shift_counts(_prev, _py, _pm, _prev_holidays).items():
             _ctx["history_counts"][_person] = _ctx["history_counts"].get(_person, 0) + _count
         _ctx["months"] += 1
@@ -1111,6 +1221,7 @@ with tab_grid:
                 st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
                 st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
                 st.session_state.locked_cells = set()
+                st.session_state.hidden_people = {}
                 st.session_state.cached_rows_liste = None
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.reset_pending = False
@@ -1572,9 +1683,11 @@ with tab_cal:
             dp in st.session_state.schedule_bool.index and
             bool(st.session_state.schedule_bool.at[dp, col])
         )]
+        # Her nöbet tek yerde sayılır: hafta sonu, (hafta içine denk gelen) tatil
+        # ya da hafta içi; eskiden hafta içi tatiller iki yerde sayılıyordu.
         dp_we = sum(1 for c in dp_shifts if gun_detaylari[c]['weekend'])
-        dp_hol = sum(1 for c in dp_shifts if gun_detaylari[c]['holiday'])
-        dp_weekday = len(dp_shifts) - dp_we
+        dp_hol = sum(1 for c in dp_shifts if gun_detaylari[c]['holiday'] and not gun_detaylari[c]['weekend'])
+        dp_weekday = len(dp_shifts) - dp_we - dp_hol
         dp_total_h = len(dp_shifts) * 24
         dp_fm_h = max(0, dp_total_h - zorunlu_saat)
         dp_pay = dp_fm_h * nobet_ucreti
@@ -2054,15 +2167,19 @@ else:
 
 # Re-distribution logic moved to Analiz section as requested.
 
-df_liste = pd.DataFrame(rows_liste)
+# Görev sayısından fazla atanan kişiler listelerde "Ek 1", "Ek 2" sütununda görünür.
+liste_rows, liste_roles = add_overflow_roles(rows_liste, role_names, edited_df, sutunlar)
+df_liste = pd.DataFrame(liste_rows)
 
 # Auto-save only after role rows have been generated or reconciled with the
 # current schedule, so both database payloads describe the same snapshot.
 # Her değişiklik hemen kaydedilir (eskiden 30 sn bekleniyordu ve son
 # değişiklikler sayfa yenilenince kayboluyordu).
 _active_locks = active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)
+_hidden_people = st.session_state.get("hidden_people") or {}
 _persist_fp = persistence_fingerprint(
-    st.session_state.schedule_bool, st.session_state.get('pref_df'), rows_liste, _active_locks
+    st.session_state.schedule_bool, st.session_state.get('pref_df'), rows_liste, _active_locks,
+    _hidden_people,
 )
 if st.session_state.pop("autosave_baseline_pending", False):
     st.session_state.last_saved_fingerprint = _persist_fp
@@ -2076,7 +2193,8 @@ elif (
         _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
                                   pref_df=st.session_state.get('pref_df'),
                                   rows_liste=rows_liste, owner=current_owner,
-                                  settings_dict={"locked": locks_to_json(_active_locks)})
+                                  settings_dict={"locked": locks_to_json(_active_locks),
+                                                 "hidden": _hidden_people})
     except Exception:
         _saved_ok = False
     if _saved_ok:
@@ -2172,7 +2290,7 @@ with _export_col:
         st.caption("Sağ üstteki simgeyle kopyalayıp yapıştırın. Hafta sonu ve tatiller kalın görünür.")
         st.code(
             build_share_text(
-                rows_liste, role_names, yil, ay,
+                liste_rows, liste_roles, yil, ay,
                 special_days=[d["day_num"] for d in gun_detaylari.values() if d["weekend"] or d["holiday"]],
             ),
             language=None,
@@ -2283,16 +2401,14 @@ with tab_liste:
     if rows_liste:
         _gl_role_names = role_names
         _gl_cols_cfg = {"Tarih": st.column_config.TextColumn("Tarih", disabled=True)}
-        for _glrn in _gl_role_names:
+        for _glrn in liste_roles:
             _gl_cols_cfg[_glrn] = st.column_config.TextColumn(_glrn, disabled=True)
         _gl_cols_cfg["🔄"] = st.column_config.CheckboxColumn("Değiştir", default=False)
         _gl_display_rows = []
-        for _glrow in rows_liste:
-            _gl_persons = [_glrow.get(rn, "-") for rn in _gl_role_names]
-            _gl_persons = [p for p in _gl_persons if p and p != "-" and p in isimler]
+        for _glrow in liste_rows:
             _gl_display_rows.append({
                 "Tarih": _glrow.get("Tarih", ""),
-                **{rn: _glrow.get(rn, "-") for rn in _gl_role_names},
+                **{rn: _glrow.get(rn, "-") for rn in liste_roles},
                 "🔄": False,
             })
         _gl_df = pd.DataFrame(_gl_display_rows)
@@ -2440,7 +2556,7 @@ with tab_analiz:
         kisi_sec = st.selectbox("Kişi:", isimler, label_visibility="collapsed")
         st.download_button(
             f"📅 {kisi_sec} — takvime ekle (.ics)",
-            lambda _p=kisi_sec, _rows=list(rows_liste), _roles=list(role_names), _y=yil, _m=ay:
+            lambda _p=kisi_sec, _rows=list(liste_rows), _roles=list(liste_roles), _y=yil, _m=ay:
                 build_person_ics(_p, _rows, _roles, _y, _m).encode("utf-8"),
             f"nobet_{yil}_{ay:02d}.ics", "text/calendar",
             on_click="ignore", width="stretch",
@@ -2450,10 +2566,10 @@ with tab_analiz:
         for _, row in df_liste.iterrows():
             roller = []
             partners_set = set()
-            for role_idx, role_name in enumerate(role_names):
+            for role_idx, role_name in enumerate(liste_roles):
                 if role_name in row and row.get(role_name) == kisi_sec:
                     roller.append(role_name)
-                    for other_idx, other_role in enumerate(role_names):
+                    for other_idx, other_role in enumerate(liste_roles):
                         if other_idx != role_idx and other_role in row and row.get(other_role) and row[other_role] != '-':
                             partners_set.add(row[other_role])
             if roller:
