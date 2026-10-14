@@ -79,6 +79,9 @@ try:
         run_scheduling_core,
         schedule_fingerprint,
         missing_shift_coverage,
+        explain_missing_day,
+        MISSING_DAY_FREE_LABEL,
+        format_missing_day_reason,
         synchronize_changed_role_rows,
         switch_schedule_period,
         use_compact_schedule_editor,
@@ -156,6 +159,9 @@ except ImportError:
         run_scheduling_core,
         schedule_fingerprint,
         missing_shift_coverage,
+        explain_missing_day,
+        MISSING_DAY_FREE_LABEL,
+        format_missing_day_reason,
         synchronize_changed_role_rows,
         switch_schedule_period,
         use_compact_schedule_editor,
@@ -1901,6 +1907,20 @@ for person in isimler:
         elif status == 2:
             df_preferred.at[person, col] = 2
 
+def _missing_day_reasons(schedule, col):
+    return explain_missing_day(
+        schedule, col, gun_detaylari, df_unwanted, min_bosluk,
+        st.session_state.get("person_limits", {}),
+        st.session_state.get("forbidden_pairs", []),
+        prev_last_shift,
+    )
+
+
+def _missing_day_reason_text(schedule, col):
+    """Eksik nöbetçili gün için kimin neden atanamadığını tek satırda anlatır."""
+    return format_missing_day_reason(_missing_day_reasons(schedule, col))
+
+
 def _simulation_context():
     """Simülasyon girdilerinin özeti: değişirse bekleyen eksik sonuç geçersiz olur."""
     return (
@@ -1991,6 +2011,11 @@ if _incomplete is not None:
             f"({len(_missing)} gün). Sonuç kullanıma hazır değil; mevcut çizelge korunuyor. "
             "Müsaitlik, dinlenme aralığı, yasak çift ve kişi limitlerini gözden geçirip yeniden deneyin."
         )
+        for _col, _assigned in _missing:
+            st.caption(
+                f"**{gun_detaylari[_col]['day_num']}. gün** ({_assigned}/{kişi_sayısı}) — "
+                + _missing_day_reason_text(_incomplete["schedule"], _col)
+            )
         _decision_cols = st.columns(2)
         with _decision_cols[0]:
             if st.button("Mevcut çizelgeyi koru", key="keep_incomplete_simulation"):
@@ -2043,9 +2068,12 @@ for col in sutunlar:
                     forbidden_msg.append(f"🚫 **{gun_no}. Gün**: {nobetciler[i]} ve {nobetciler[j]} birlikte çalışamaz!")
 
 for col, assigned in missing_shift_coverage(edited_df, sutunlar, kişi_sayısı):
-    min_person_msg.append(
-        f"🟠 **{gun_detaylari[col]['day_num']}. Gün**: Eksik nöbetçi! ({assigned}/{kişi_sayısı} kişi)"
-    )
+    _msg = f"🟠 **{gun_detaylari[col]['day_num']}. Gün**: Eksik nöbetçi! ({assigned}/{kişi_sayısı} kişi)"
+    _reasons = _missing_day_reasons(edited_df, col)
+    # Herkes uygunsa (ör. henüz boş çizelge) neden satırı gürültü olur.
+    if not _reasons or any(_label != MISSING_DAY_FREE_LABEL for _label, _ in _reasons):
+        _msg += f"  \nNeden: {format_missing_day_reason(_reasons)}"
+    min_person_msg.append(_msg)
 
 # Kişisel limit ihlali kontrolü
 _pl = st.session_state.get('person_limits', {})
@@ -2488,7 +2516,7 @@ with tab_analiz:
             )
         st.dataframe(
             df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
-                               .background_gradient(cmap="Oranges", subset=["Özel"]),
+                               .background_gradient(cmap="Oranges", subset=["Özel", "Cuma"]),
             width="stretch"
         )
         if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
