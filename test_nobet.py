@@ -25,6 +25,9 @@ from nobet_core import (
     last_shift_offsets,
     special_shift_counts,
     history_special_adjustment,
+    history_adjustment,
+    holiday_shift_counts,
+    schedule_totals,
     build_share_text,
     build_person_ics,
     restore_auto_saved_schedule,
@@ -37,6 +40,7 @@ from nobet_core import (
     normalize_preference_grid,
     run_scheduling_core,
     _balance_fridays,
+    _balance_holidays,
     missing_shift_coverage,
     explain_missing_day,
     format_missing_day_reason,
@@ -1265,6 +1269,149 @@ class TestPreviousMonths(unittest.TestCase):
             assignment_warnings(schedule, "Ali", "1 Per", cols, days, 1, previous_last_shift={"Ali": -3}),
             [],
         )
+
+
+class TestCrossMonthBalance(unittest.TestCase):
+    """Aylar arası toplam denge, bayram takibi ve nöbetleri aya yayma."""
+
+    def test_toplam_ve_bayram_sayilari(self):
+        sched = pd.DataFrame(False, index=["Ali", "Ayşe", "Can"], columns=["20 Cum", "21 Cmt", "23 Pzt"])
+        sched.loc["Ali", ["20 Cum", "21 Cmt"]] = True
+        sched.at["Ayşe", "23 Pzt"] = True
+        self.assertEqual(schedule_totals(sched), {"Ali": 2, "Ayşe": 1, "Can": 0})
+        self.assertEqual(holiday_shift_counts(sched, [20, 21, 22]), {"Ali": 2, "Ayşe": 0, "Can": 0})
+
+    def test_gecmis_farki_o_ay_ekipte_olanlara_gore(self):
+        months = [
+            {"Ali": 9, "Ayşe": 7, "Can": 8},
+            {"Ali": 8, "Ayşe": 7, "Can": 6},
+        ]
+        adjustment = history_adjustment(months, ["Ali", "Ayşe", "Can", "Yeni"])
+        self.assertEqual(adjustment["Ali"], 2)  # +1 ve +1
+        self.assertEqual(adjustment["Ayşe"], -1)
+        self.assertEqual(adjustment["Can"], -1)
+        # Yeni gelen geçmişte yoktu: borçlu sayılmaz.
+        self.assertEqual(adjustment["Yeni"], 0)
+        self.assertEqual(history_adjustment([{"Ali": 30, "Ayşe": 0}], ["Ali", "Ayşe"])["Ali"], 2)
+
+    def test_gecmiste_fazla_toplami_olan_bu_ay_1_fazla_almaz(self):
+        names = [f"K{i}" for i in range(7)]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        random.seed(11)
+        for _ in range(5):
+            schedule, _ = run_scheduling_core(
+                names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=10,
+                history_total={"K0": 2, "K1": 2, "K2": 2},
+            )
+            totals = schedule.sum(axis=1)
+            # 60 nöbet / 7 kişi: dördü 9, üçü 8 alır; fazlası olanlar 8'lerden olur.
+            self.assertLessEqual(totals.max() - totals.min(), 1)
+            self.assertTrue(all(totals[p] == totals.min() for p in ["K0", "K1", "K2"]), totals.to_dict())
+
+    def test_son_12_ayda_cok_bayram_tutan_bu_bayramda_az_alir(self):
+        # Mart 2026: 20-22 Ramazan Bayramı (Cuma, Cumartesi, Pazar)
+        names = [f"K{i}" for i in range(8)]
+        days = build_gun_detaylari(2026, 3, 31, [20, 21, 22])
+        cols = list(days)
+        holiday_cols = [c for c in cols if days[c]["holiday"]]
+        special_cols = [c for c in cols if days[c]["weekend"] or days[c]["holiday"]]
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        random.seed(4)
+        heavy = 0
+        for _ in range(5):
+            schedule, _ = run_scheduling_core(
+                names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=10,
+                history_holiday={"K0": 2, "K1": 2},
+            )
+            heavy += int(schedule.loc[["K0", "K1"], holiday_cols].sum().sum())
+            specials = schedule[special_cols].sum(axis=1)
+            # Hafta sonu/tatil dengesi bozulmaz.
+            self.assertLessEqual(specials.max() - specials.min(), 1)
+        # 6 bayram nöbeti / 8 kişi: geçmişi fazla olan ikisi neredeyse hiç almaz.
+        self.assertLessEqual(heavy, 1)
+
+    def test_bayram_takasi_toplam_ve_ozel_gun_sayisini_degistirmez(self):
+        names = ["Ali", "Ayşe"]
+        days = build_gun_detaylari(2026, 3, 31, [20])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=names, columns=cols)
+        schedule.at["Ali", "20 Cum"] = True
+        schedule.at["Ayşe", "28 Cmt"] = True
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        result = _balance_holidays(
+            schedule.copy(), names, cols, days, unwanted, None, 1, set(), set(), {},
+            {"Ali": 1, "Ayşe": 0},
+        )
+        self.assertTrue(result.at["Ayşe", "20 Cum"])
+        self.assertTrue(result.at["Ali", "28 Cmt"])
+        self.assertEqual(result.sum(axis=1).to_dict(), {"Ali": 1, "Ayşe": 1})
+        # Sabit nöbet yerinden oynamaz.
+        fixed = _balance_holidays(
+            schedule.copy(), names, cols, days, unwanted, None, 1, set(), {("Ali", "20 Cum")}, {},
+            {"Ali": 1, "Ayşe": 0},
+        )
+        self.assertTrue(fixed.at["Ali", "20 Cum"])
+
+    def test_nobetler_aya_yayilir(self):
+        # 8 kişi, günde 2: beklenen aralık 4 gün. Dinlenme 1 gün; yayma
+        # kapalıyken günaşırı (aralık ≤2) nöbetler çok daha sık çıkar.
+        import nobet_core
+        names = [f"K{i}" for i in range(8)]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+
+        def short_gaps():
+            random.seed(2)
+            short = 0
+            for _ in range(5):
+                schedule, _ = run_scheduling_core(
+                    names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=20,
+                )
+                for person in names:
+                    worked = [days[c]["day_num"] for c in cols if schedule.at[person, c]]
+                    short += sum(1 for a, b in zip(worked, worked[1:]) if b - a <= 2)
+                totals = schedule.sum(axis=1)
+                self.assertLessEqual(totals.max() - totals.min(), 1)
+            return short
+
+        spread = short_gaps()
+        with patch.object(nobet_core, "SPREAD_WEIGHT", 0), patch.object(nobet_core, "SPREAD_SCORE_WEIGHT", 0):
+            unspread = short_gaps()
+        self.assertLess(spread * 2, unspread)
+
+    def test_uygulama_onceki_aylari_tek_sorguda_okur(self):
+        cursor = _FakeDbCursor(data_rows=[
+            {"name": "Otomatik_2026_09", "year": 2026, "month": 9,
+             "team_members": json.dumps(["Ali", "Ayşe"]), "person": "Ali", "day_col": "5 Cmt"},
+            {"name": "Otomatik_2026_09", "year": 2026, "month": 9,
+             "team_members": json.dumps(["Ali", "Ayşe"]), "person": None, "day_col": None},
+            {"name": "Otomatik_2026_08", "year": 2026, "month": 8,
+             "team_members": json.dumps(["Ali"]), "person": None, "day_col": None},
+        ])
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)):
+            loaded = db.load_auto_saved_assignments([(2026, 9), (2026, 8), (2026, 7)], owner="ali@gmail.com")
+        sql, params = cursor.executed[0]
+        self.assertIn("s.owner = %s", sql)
+        self.assertEqual(params[0], "ali@gmail.com")
+        self.assertEqual(set(params[1]), {"Otomatik_2026_09", "Otomatik_2026_08", "Otomatik_2026_07"})
+        self.assertEqual(set(loaded), {(2026, 9), (2026, 8)})
+        self.assertEqual(list(loaded[(2026, 9)].index), ["Ali", "Ayşe"])
+        self.assertTrue(loaded[(2026, 9)].at["Ali", "5 Cmt"])
+        self.assertFalse(loaded[(2026, 9)].at["Ayşe", "5 Cmt"])
+        self.assertEqual(schedule_totals(loaded[(2026, 8)]), {"Ali": 0})
+        self.assertEqual(db.load_auto_saved_assignments([]), {})
+
+    def test_analizde_bayram_sutunu(self):
+        days = build_gun_detaylari(2026, 10, 31, [29])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=cols)
+        schedule.at["Ali", "29 Per"] = True
+        load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali", "Ayşe"], days, {}, 0, 0)
+        self.assertEqual(int(load.at["Ali", "Bayram"]), 1)
+        self.assertEqual(int(load.at["Ayşe", "Bayram"]), 0)
 
 
 class TestShareAndCalendar(unittest.TestCase):
