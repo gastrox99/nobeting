@@ -330,6 +330,58 @@ def load_schedule(name, year, month, raise_on_error=False, owner=""):
         if conn is not None:
             conn.close()
 
+
+def load_auto_saved_assignments(periods, owner=""):
+    """Otomatik kayıtlı ayların nöbetlerini tek sorguda okur.
+
+    ``periods``: [(yıl, ay), ...]. Dönen değer {(yıl, ay): DataFrame};
+    satırlar o ayın ekibi, sütunlar nöbet olan günler (True/False).
+    Kaydı olmayan ay yer almaz. Hata olursa yukarı iletilir.
+    """
+    wanted = {f"Otomatik_{year}_{month:02d}": (year, month) for year, month in periods}
+    if not wanted:
+        return {}
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('''
+                SELECT s.name, s.year, s.month, s.team_members, d.person, d.day_col
+                FROM schedules AS s
+                LEFT JOIN schedule_data AS d ON d.schedule_id = s.id AND d.assigned
+                WHERE s.owner = %s AND s.name = ANY(%s)
+            ''', (owner, list(wanted)))
+            rows = cur.fetchall()
+    finally:
+        if conn is not None:
+            conn.close()
+
+    teams, cells = {}, {}
+    for row in rows:
+        period = wanted.get(row['name'])
+        if period is None or period != (row['year'], row['month']):
+            continue
+        if period not in teams:
+            try:
+                team = json.loads(row['team_members'])
+            except (json.JSONDecodeError, TypeError):
+                team = [m.strip() for m in str(row['team_members'] or '').split(',') if m.strip()]
+            teams[period] = [str(member) for member in team] if isinstance(team, list) else []
+            cells[period] = []
+        if row['person'] is not None and row['day_col'] is not None:
+            cells[period].append((row['person'], row['day_col']))
+
+    result = {}
+    for period, team in teams.items():
+        people = list(dict.fromkeys(team + [person for person, _ in cells[period]]))
+        columns = list(dict.fromkeys(day_col for _, day_col in cells[period]))
+        frame = pd.DataFrame(False, index=people, columns=columns, dtype=bool)
+        for person, day_col in cells[period]:
+            frame.at[person, day_col] = True
+        result[period] = frame
+    return result
+
+
 def save_app_settings(settings, owner=""):
     """Save the team list and settings as one JSON document."""
     conn = None

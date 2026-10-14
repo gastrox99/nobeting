@@ -28,14 +28,18 @@ try:
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
         is_database_configured,
         create_share_link, get_share_link, delete_share_link, resolve_share_token,
+        load_auto_saved_assignments,
     )
     from nobet_core import (
         TR_AY_ADLARI,
         TR_GUN_KISA,
         build_person_ics,
         build_share_text,
+        history_adjustment,
         history_special_adjustment,
+        holiday_shift_counts,
         last_shift_offsets,
+        schedule_totals,
         previous_period,
         special_shift_counts,
         build_gun_detaylari,
@@ -109,14 +113,18 @@ except ImportError:
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
         is_database_configured,
         create_share_link, get_share_link, delete_share_link, resolve_share_token,
+        load_auto_saved_assignments,
     )
     from nobet_core import (
         TR_AY_ADLARI,
         TR_GUN_KISA,
         build_person_ics,
         build_share_text,
+        history_adjustment,
         history_special_adjustment,
+        holiday_shift_counts,
         last_shift_offsets,
+        schedule_totals,
         previous_period,
         special_shift_counts,
         build_gun_detaylari,
@@ -653,7 +661,7 @@ def _rotate_roles_for_day(day_number):
 
 
 # --- ANA ALGORİTMA: nobet_core.run_scheduling_core kullanır ---
-def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None, initial_last_shift=None, history_special=None, fixed_assignments=None):
+def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None, initial_last_shift=None, history_special=None, fixed_assignments=None, history_total=None, history_holiday=None):
     progress_bar = st.progress(0)
     def _progress(n):
         if n % 10 == 0:
@@ -665,6 +673,7 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
             simulation_count=100, progress_callback=_progress,
             initial_last_shift=initial_last_shift, history_special=history_special,
             fixed_assignments=fixed_assignments,
+            history_total=history_total, history_holiday=history_holiday,
         )
     except ValueError as exc:
         st.error(f"🚨 Simülasyon başlatılamadı: {exc}")
@@ -700,8 +709,12 @@ def _apply_renames(renames):
         st.session_state.cached_key = _key[:2] + (tuple(renames.get(_p, _p) for _p in _key[2]),) + _key[3:]
     _ctx = st.session_state.get("prev_month_context")
     if _ctx:
-        for _field in ("last_shift", "history_counts"):
+        for _field in ("last_shift", "history_counts", "holiday_counts"):
             _ctx[_field] = {renames.get(_p, _p): _v for _p, _v in _ctx.get(_field, {}).items()}
+        for _field in ("monthly_totals", "monthly_holidays"):
+            _ctx[_field] = [
+                {renames.get(_p, _p): _v for _p, _v in _month.items()} for _month in _ctx.get(_field, [])
+            ]
 
 
 # --- AYARLAR (Ana Sayfada Açılır Panel) ---
@@ -819,10 +832,14 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             st.caption("Görev adları benzersiz olmalı: " + ", ".join(f"{a} → {b}" for a, b in _role_adjusted))
         st.session_state.rol_isimleri = role_names
         st.session_state.balance_history = st.checkbox(
-            "⚖️ Önceki ayların hafta sonu/tatil nöbetlerini dengele",
+            "⚖️ Önceki aylarla dengele",
             value=st.session_state.get("balance_history", True),
             key="w_balance_history",
-            help="Son 3 ayda daha çok hafta sonu/tatil nöbeti tutanlara bu ay biraz daha az verilir.",
+            help=(
+                "Son 3 ayda daha çok hafta sonu/tatil ya da toplamda daha çok nöbet tutanlara "
+                "bu ay biraz daha az verilir. Bayram ve diğer tatil günleri son 12 ayda "
+                "az tutana verilir."
+            ),
         )
     
     with adv_col2:
@@ -1107,47 +1124,78 @@ if 'edit_mode' not in st.session_state:
 if 'selected_cal_day' not in st.session_state:
     st.session_state.selected_cal_day = None
 
-# --- ÖNCEKİ AYLAR (ay geçişi dinlenme kuralı + hafta sonu dengesi) ---
+# --- ÖNCEKİ AYLAR (ay geçişi dinlenme kuralı + aylar arası denge) ---
+# Son 3 ay: hafta sonu/tatil ve toplam nöbet dengesi. Son 12 ay: bayram/tatil
+# nöbetleri (bayramlar arasında 3 aydan uzun süre olur).
 def _load_previous_context(year, month):
-    _ctx = {"period": (year, month), "last_shift": {}, "history_counts": {}, "months": 0}
+    _ctx = {
+        "period": (year, month), "last_shift": {}, "history_counts": {}, "months": 0,
+        "monthly_totals": [], "monthly_holidays": [], "holiday_counts": {}, "holiday_months": 0,
+    }
     if not _db_ready:
         return _ctx
     _holiday_texts = st.session_state.get("holidays_by_period", {})
-    for _back in (1, 2, 3):
-        _py, _pm = previous_period(year, month, _back)
-        try:
-            _loaded = load_schedule(f"Otomatik_{_py}_{_pm:02d}", _py, _pm, owner=current_owner)
-        except Exception:
-            continue
-        _prev = _loaded[1] if _loaded else None
+    _periods = [previous_period(year, month, _back) for _back in range(1, 13)]
+    try:
+        _loaded_all = load_auto_saved_assignments(_periods, owner=current_owner)
+    except Exception:
+        return _ctx
+    _aliases = st.session_state.get("name_aliases")
+    for _back, (_py, _pm) in enumerate(_periods, start=1):
+        _prev = _loaded_all.get((_py, _pm))
         if _prev is None or _prev.empty:
             continue
         _prev = as_bool_frame(_prev)
         # Eski adla kaydedilmiş aylar güncel ada sayılsın.
-        _aliases = st.session_state.get("name_aliases")
         _prev = _prev.rename(index={
             _p: resolve_alias(_p, _aliases, isimler) for _p in _prev.index
         })
         if _prev.index.has_duplicates:
             _prev = _prev.groupby(level=0).any()
         _days_in_prev = calendar.monthrange(_py, _pm)[1]
+        _prev_holidays, _ = parse_holiday_days(holiday_text_for_period(_holiday_texts, _py, _pm), _days_in_prev)
+        _holiday_month = holiday_shift_counts(_prev, _prev_holidays)
+        if _prev_holidays:
+            _ctx["monthly_holidays"].append(_holiday_month)
+            _ctx["holiday_months"] += 1
+            for _person, _count in _holiday_month.items():
+                _ctx["holiday_counts"][_person] = _ctx["holiday_counts"].get(_person, 0) + _count
+        if _back > 3:
+            continue
         if _back == 1:
             _ctx["last_shift"] = last_shift_offsets(_prev, _days_in_prev)
-        _prev_holidays, _ = parse_holiday_days(holiday_text_for_period(_holiday_texts, _py, _pm), _days_in_prev)
         for _person, _count in special_shift_counts(_prev, _py, _pm, _prev_holidays).items():
             _ctx["history_counts"][_person] = _ctx["history_counts"].get(_person, 0) + _count
+        _ctx["monthly_totals"].append(schedule_totals(_prev))
         _ctx["months"] += 1
     return _ctx
 
 
 _prev_ctx = st.session_state.get("prev_month_context")
-if not _prev_ctx or _prev_ctx.get("period") != (yil, ay):
+if not _prev_ctx or _prev_ctx.get("period") != (yil, ay) or "monthly_totals" not in _prev_ctx:
     _prev_ctx = _load_previous_context(yil, ay)
     st.session_state.prev_month_context = _prev_ctx
 prev_last_shift = {p: d for p, d in _prev_ctx["last_shift"].items() if p in isimler}
+_balance_history_on = st.session_state.get("balance_history", True)
 history_special = (
     history_special_adjustment(_prev_ctx["history_counts"], isimler)
-    if st.session_state.get("balance_history", True) and _prev_ctx["months"]
+    if _balance_history_on and _prev_ctx["months"]
+    else {}
+)
+# Kişisel limiti olanların az/çok nöbeti bilinçli; toplam dengesine katılmaz.
+_limited_people = set(st.session_state.get("person_limits", {}))
+history_total = (
+    {
+        _p: _v for _p, _v in history_adjustment(
+            _prev_ctx["monthly_totals"], [_p for _p in isimler if _p not in _limited_people]
+        ).items() if _v
+    }
+    if _balance_history_on and _prev_ctx["months"]
+    else {}
+)
+history_holiday = (
+    {_p: _v for _p, _v in history_adjustment(_prev_ctx["monthly_holidays"], isimler).items() if _v}
+    if _balance_history_on and _prev_ctx["holiday_months"]
     else {}
 )
 
@@ -1953,6 +2001,8 @@ def _simulation_context():
         tuple(sorted(active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool))),
         tuple(sorted(prev_last_shift.items())),
         tuple(sorted(history_special.items())),
+        tuple(sorted(history_total.items())),
+        tuple(sorted(history_holiday.items())),
     )
 
 
@@ -2000,6 +2050,8 @@ if sim_clicked:
             initial_last_shift=prev_last_shift,
             history_special=history_special,
             fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool),
+            history_total=history_total,
+            history_holiday=history_holiday,
         )
         if _new_schedule is not None:
             _missing = missing_shift_coverage(_new_schedule, sutunlar, kişi_sayısı)
@@ -2535,9 +2587,26 @@ with tab_analiz:
                 f"⚖️ Önceki {_prev_ctx['months']} ayın hafta sonu/tatil nöbetleri dengelemede "
                 f"hesaba katılıyor: {_hist_text}"
             )
+        if history_total:
+            _total_text = " · ".join(
+                f"{_p} {'+' if _v > 0 else ''}{_v:g}"
+                for _p, _v in sorted(history_total.items(), key=lambda _item: -_item[1])
+            )
+            st.caption(
+                f"⚖️ Önceki {_prev_ctx['months']} ayın toplam nöbetleri (ortalamaya göre fark): "
+                f"{_total_text}. Fazlası olan bu ay \"1 fazla\" alanlardan olmaz."
+            )
+        if history_holiday:
+            _holiday_text = " · ".join(
+                f"{_p} {_prev_ctx['holiday_counts'].get(_p, 0)}" for _p in isimler
+            )
+            st.caption(
+                f"🎉 Son 12 aydaki bayram/tatil nöbetleri: {_holiday_text}. "
+                "Bu ayın tatil günleri azı olana verilir."
+            )
         st.dataframe(
             df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
-                               .background_gradient(cmap="Oranges", subset=["Özel", "Cuma"]),
+                               .background_gradient(cmap="Oranges", subset=["Özel", "Cuma", "Bayram"]),
             width="stretch"
         )
         if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
