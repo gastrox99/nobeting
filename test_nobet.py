@@ -36,7 +36,10 @@ from nobet_core import (
     get_preference_grid_state,
     normalize_preference_grid,
     run_scheduling_core,
+    _balance_fridays,
     missing_shift_coverage,
+    explain_missing_day,
+    format_missing_day_reason,
     schedule_fingerprint,
     synchronize_changed_role_rows,
     switch_schedule_period,
@@ -1421,6 +1424,102 @@ class TestFairDistribution(unittest.TestCase):
         source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
         self.assertIn("f\"<div style='{num_style}white-space:nowrap;'>{day_num}</div>\"", source)
         self.assertNotIn('badge = "★"', source)
+
+
+class TestFridayBalance(unittest.TestCase):
+    def _fridays(self, schedule, days, cols):
+        return {
+            p: sum(1 for c in cols if schedule.at[p, c] and days[c]["weekday"] == 4 and not days[c]["holiday"])
+            for p in schedule.index
+        }
+
+    def test_herkes_benzer_sayida_cuma_alir_hafta_sonu_dengesi_bozulmaz(self):
+        # Kasım 2026: 4 Cuma × 2 kişi = 8 Cuma nöbeti, 8 kişi → herkes 1.
+        names = [f"K{i}" for i in range(8)]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        special = [c for c in cols if days[c]["weekend"] or days[c]["holiday"]]
+        for seed in range(5):
+            random.seed(seed)
+            schedule, _ = run_scheduling_core(names, cols, unwanted, days, 1, 2, simulation_count=30)
+            fridays = self._fridays(schedule, days, cols)
+            self.assertLessEqual(max(fridays.values()) - min(fridays.values()), 1, fridays)
+            weekend = schedule[special].sum(axis=1)
+            self.assertLessEqual(int(weekend.max() - weekend.min()), 1, weekend.to_dict())
+            totals = schedule.sum(axis=1)
+            self.assertLessEqual(int(totals.max() - totals.min()), 1, totals.to_dict())
+            self.assertEqual(missing_shift_coverage(schedule, cols, 2), [])
+            for person in names:
+                worked = [days[c]["day_num"] for c in cols if schedule.at[person, c]]
+                self.assertTrue(all(b - a > 1 for a, b in zip(worked, worked[1:])), person)
+
+    def test_tatile_denk_gelen_cuma_cuma_sayilmaz(self):
+        days = build_gun_detaylari(2026, 10, 31, [2])  # 2 Ekim 2026 Cuma
+        self.assertTrue(days["2 Cum"]["holiday"])
+        schedule = pd.DataFrame(False, index=["Ali"], columns=list(days))
+        schedule.at["Ali", "2 Cum"] = True
+        schedule.at["Ali", "9 Cum"] = True
+        load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali"], days, {}, 0, 1.0)
+        self.assertEqual(int(load.at["Ali", "Cuma"]), 1)
+        self.assertEqual(int(load.at["Ali", "Özel"]), 1)
+
+    def test_cuma_takasi_sabit_musaitlik_ve_dinlenmeye_uyar(self):
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=["Ali", "Can"], columns=cols)
+        # Ali üç Cuma (6, 13, 20), Can hiç; Can'ın hafta içi nöbetleri 3, 10, 17.
+        for c in ("6 Cum", "13 Cum", "20 Cum"):
+            schedule.at["Ali", c] = True
+        for c in ("3 Sal", "10 Sal", "17 Sal"):
+            schedule.at["Can", c] = True
+        unwanted = pd.DataFrame(False, index=["Ali", "Can"], columns=cols)
+        unwanted.at["Can", "13 Cum"] = True
+        result = _balance_fridays(schedule.copy(), ["Ali", "Can"], cols, days, unwanted, None, 1,
+                                  set(), {("Ali", "6 Cum")}, {})
+        fridays = self._fridays(result, days, cols)
+        self.assertEqual(fridays, {"Ali": 2, "Can": 1})
+        self.assertTrue(result.at["Ali", "6 Cum"])  # sabit nöbet yerinde
+        self.assertFalse(result.at["Can", "13 Cum"])  # müsait olmadığı Cuma verilmedi
+        self.assertEqual(result.sum(axis=1).to_dict(), schedule.sum(axis=1).to_dict())
+
+
+class TestMissingDayExplanation(unittest.TestCase):
+    def test_her_kisinin_nedeni_gruplanir(self):
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        names = ["Ali", "Ayşe", "Can", "Deniz", "Ece", "Fuat"]
+        schedule = pd.DataFrame(False, index=names, columns=cols)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        col = "14 Cmt"
+        schedule.at["Fuat", col] = True              # o gün nöbetçi (1/2)
+        unwanted.at["Ali", col] = True               # müsait değil
+        schedule.at["Ayşe", "13 Cum"] = True         # dinlenmede
+        for c in ("2 Pzt", "5 Per"):
+            schedule.at["Can", c] = True             # limitte (max 2)
+        reasons = dict(explain_missing_day(
+            schedule, col, days, unwanted, 1,
+            person_limits={"Can": {"min": 0, "max": 2}},
+            forbidden_pairs={("Deniz", "Fuat")},
+        ))
+        self.assertEqual(reasons["müsait değil"], ["Ali"])
+        self.assertEqual(reasons["dinlenmede"], ["Ayşe (13. gün nöbetli)"])
+        self.assertEqual(reasons["nöbet limitinde"], ["Can (en fazla 2)"])
+        self.assertEqual(reasons["birlikte çalışamaz"], ["Deniz (Fuat ile)"])
+        self.assertEqual(reasons["uygun, elle atanabilir"], ["Ece"])
+        text = format_missing_day_reason(list(reasons.items()))
+        self.assertIn("müsait değil: Ali", text)
+
+    def test_gecen_ay_sonu_nobeti_dinlenme_sayilir(self):
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=["Ali"], columns=cols)
+        unwanted = pd.DataFrame(False, index=["Ali"], columns=cols)
+        reasons = explain_missing_day(schedule, "1 Paz", days, unwanted, 1, initial_last_shift={"Ali": 0})
+        self.assertEqual(reasons, [("dinlenmede", ["Ali (geçen ayın sonunda nöbetli)"])])
+
+    def test_kimse_kalmadiysa_acik_mesaj(self):
+        self.assertIn("kimse yok", format_missing_day_reason([]))
 
 
 class TestUiCleanup(unittest.TestCase):

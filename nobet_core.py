@@ -390,6 +390,65 @@ def missing_shift_coverage(schedule, columns, required_people):
     return missing
 
 
+MISSING_DAY_FREE_LABEL = "uygun, elle atanabilir"
+
+
+def explain_missing_day(schedule, col, gun_detaylari, df_unwanted_bool, min_bosluk,
+                        person_limits=None, forbidden_pairs=None, initial_last_shift=None):
+    """Eksik nöbetçili bir gün için atanmamış her kişinin neden uygun olmadığını döner.
+
+    Sonuç sıralı (neden, [açıklamalı isimler]) listesidir. "uygun" grubundaki
+    kişiler hiçbir kurala takılmıyor; o güne elle atanabilirler.
+    """
+    limits = person_limits or {}
+    initial = initial_last_shift or {}
+    day = gun_detaylari[col]["day_num"]
+    assigned = [p for p in schedule.index if bool(schedule.at[p, col])]
+    groups = {"unwanted": [], "rest": [], "limit": [], "forbidden": [], "free": []}
+    for person in schedule.index:
+        if person in assigned:
+            continue
+        if person in df_unwanted_bool.index and col in df_unwanted_bool.columns and bool(df_unwanted_bool.at[person, col]):
+            groups["unwanted"].append(person)
+            continue
+        near = [
+            gun_detaylari[other]["day_num"] for other in schedule.columns
+            if other != col and other in gun_detaylari and bool(schedule.at[person, other])
+            and abs(gun_detaylari[other]["day_num"] - day) <= min_bosluk
+        ]
+        previous = initial.get(person)
+        if near:
+            groups["rest"].append(f"{person} ({min(near, key=lambda d: abs(d - day))}. gün nöbetli)")
+            continue
+        if previous is not None and day - previous <= min_bosluk:
+            groups["rest"].append(f"{person} (geçen ayın sonunda nöbetli)")
+            continue
+        max_limit = limits.get(person, {}).get("max", 999)
+        if int(schedule.loc[person].sum()) >= max_limit:
+            groups["limit"].append(f"{person} (en fazla {max_limit})")
+            continue
+        mates = [m for m in assigned if tuple(sorted((person, m))) in (forbidden_pairs or [])]
+        if mates:
+            groups["forbidden"].append(f"{person} ({', '.join(mates)} ile)")
+            continue
+        groups["free"].append(person)
+    labels = [
+        ("unwanted", "müsait değil"),
+        ("rest", "dinlenmede"),
+        ("limit", "nöbet limitinde"),
+        ("forbidden", "birlikte çalışamaz"),
+        ("free", MISSING_DAY_FREE_LABEL),
+    ]
+    return [(label, groups[key]) for key, label in labels if groups[key]]
+
+
+def format_missing_day_reason(reasons):
+    """explain_missing_day sonucunu tek satırlık metne çevirir."""
+    if not reasons:
+        return "Ekipte bu güne atanabilecek başka kimse yok."
+    return " · ".join(f"{label}: {', '.join(names)}" for label, names in reasons)
+
+
 def changed_schedule_columns(previous_schedule, current_schedule):
     """İki çizelge arasındaki değişen gün sütunlarını döner."""
     if (
@@ -1112,6 +1171,8 @@ def build_schedule_analysis(
         if gun_detaylari[column]["weekend"] or gun_detaylari[column]["holiday"]
     ]
     totals = schedule.sum(axis=1)
+    friday_columns = [column for column in schedule.columns if is_friday_column(gun_detaylari[column])]
+    friday_totals = schedule[friday_columns].sum(axis=1) if friday_columns else pd.Series(0, index=isimler)
     special_totals = schedule[special_columns].sum(axis=1) if special_columns else pd.Series(0, index=isimler)
 
     stats_load = []
@@ -1137,6 +1198,7 @@ def build_schedule_analysis(
             "İsim": isim,
             "Toplam": toplam,
             "Özel": int(special_totals.get(isim, 0)),
+            "Cuma": int(friday_totals.get(isim, 0)),
             **{role: all_role_counts[role].get(isim, 0) for role in role_names},
             "Limit": limit_text,
             "✓": "🟢" if min_limit <= toplam <= max_limit else "🔴",
@@ -1308,6 +1370,100 @@ def unknown_names(names, team):
 TR_GUN_KISA = {0: "Pzt", 1: "Sal", 2: "Çar", 3: "Per", 4: "Cum", 5: "Cmt", 6: "Paz"}
 
 
+def _balance_fridays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+                     df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
+                     initial_last_shift, max_moves=200):
+    """Cuma sayılarındaki farkı takasla azaltır; toplamlar değişmez.
+
+    Çok Cuması olan kişinin bir Cuma nöbeti, az Cuması olan kişinin bir hafta
+    içi nöbetiyle yer değiştirir. Hafta sonu/tatil nöbetlerine dokunulmaz.
+    İkisi de yeni gününde müsait olmalı, kaçınma günü olmamalı, dinlenme
+    kuralına ve yasak çiftlere uymalı; sabit nöbetler yerinden oynamaz.
+    """
+    fixed = set(fixed_assignments or ())
+    initial = initial_last_shift or {}
+    day_of = {col: gun_detaylari[col]["day_num"] for col in sutunlar}
+    friday_cols = [c for c in sutunlar if is_friday_column(gun_detaylari[c])]
+    weekday_cols = [
+        c for c in sutunlar
+        if not gun_detaylari[c]["weekend"] and not gun_detaylari[c]["holiday"] and c not in friday_cols
+    ]
+    if not friday_cols or not weekday_cols:
+        return schedule
+
+    def avoided(person, col):
+        if df_preferred is None or person not in df_preferred.index or col not in df_preferred.columns:
+            return False
+        try:
+            return int(df_preferred.at[person, col]) == 2
+        except (TypeError, ValueError):
+            return False
+
+    def can_take(person, col, dropped):
+        if bool(df_unwanted_bool.at[person, col]) or avoided(person, col):
+            return False
+        day = day_of[col]
+        previous = initial.get(person)
+        if previous is not None and day - previous <= min_bosluk:
+            return False
+        for other in sutunlar:
+            if other in (col, dropped) or not bool(schedule.at[person, other]):
+                continue
+            if abs(day_of[other] - day) <= min_bosluk:
+                return False
+        if forbidden_pairs:
+            for mate in schedule.index[schedule[col]]:
+                if tuple(sorted((person, mate))) in forbidden_pairs:
+                    return False
+        return True
+
+    for _ in range(max_moves):
+        counts = {p: sum(1 for c in friday_cols if bool(schedule.at[p, c])) for p in isimler}
+        move = None
+        for giver in sorted(isimler, key=lambda p: -counts[p]):
+            for receiver in sorted(isimler, key=lambda p: counts[p]):
+                if counts[giver] - counts[receiver] <= 1:
+                    break
+                for fcol in friday_cols:
+                    if not bool(schedule.at[giver, fcol]) or bool(schedule.at[receiver, fcol]):
+                        continue
+                    if (giver, fcol) in fixed:
+                        continue
+                    for wcol in weekday_cols:
+                        if not bool(schedule.at[receiver, wcol]) or bool(schedule.at[giver, wcol]):
+                            continue
+                        if (receiver, wcol) in fixed:
+                            continue
+                        # Takası önce uygula, iki tarafı da yeni hâliyle kontrol et.
+                        schedule.at[giver, fcol] = False
+                        schedule.at[receiver, wcol] = False
+                        ok = can_take(receiver, fcol, wcol) and can_take(giver, wcol, fcol)
+                        schedule.at[giver, fcol] = True
+                        schedule.at[receiver, wcol] = True
+                        if ok:
+                            move = (giver, receiver, fcol, wcol)
+                            break
+                    if move:
+                        break
+                if move:
+                    break
+            if move:
+                break
+        if move is None:
+            break
+        giver, receiver, fcol, wcol = move
+        schedule.at[giver, fcol] = False
+        schedule.at[giver, wcol] = True
+        schedule.at[receiver, wcol] = False
+        schedule.at[receiver, fcol] = True
+    return schedule
+
+
+def is_friday_column(info):
+    """Tatil olmayan Cuma mı? (Tatile denk gelen Cuma zaten özel gün sayılır.)"""
+    return info.get("weekday") == 4 and not info.get("weekend") and not info.get("holiday")
+
+
 def build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri):
     """Ayın her günü için uygulamanın kullandığı sütun ve meta veriyi üretir.
 
@@ -1382,6 +1538,7 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
     initial = initial_last_shift or {}
     day_of = {col: gun_detaylari[col]["day_num"] for col in sutunlar}
     special_cols = {col for col in sutunlar if gun_detaylari[col]["weekend"] or gun_detaylari[col]["holiday"]}
+    friday_cols = {col for col in sutunlar if is_friday_column(gun_detaylari[col])}
 
     def pref(person, col):
         if df_preferred is None or person not in df_preferred.index or col not in df_preferred.columns:
@@ -1407,6 +1564,7 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
             p: sum(1 for c in special_cols if bool(schedule.at[p, c])) + history.get(p, 0)
             for p in isimler
         }
+        fridays = {p: sum(1 for c in friday_cols if bool(schedule.at[p, c])) for p in isimler}
         best_move = None
         for giver in sorted(isimler, key=lambda p: -totals[p]):
             if totals[giver] - 1 < limits.get(giver, {}).get("min", 0):
@@ -1425,6 +1583,8 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                         continue
                     if col in special_cols and specials[giver] <= specials[receiver]:
                         continue
+                    if col in friday_cols and fridays[giver] <= fridays[receiver]:
+                        continue
                     others = [p for p in schedule.index[schedule[col]] if p not in (giver, receiver)]
                     if forbidden_pairs and any(tuple(sorted((receiver, o))) in forbidden_pairs for o in others):
                         continue
@@ -1433,6 +1593,7 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                     # Önce hafta içi; verenin tercih ettiği gün en son, alanın tercih ettiği gün önce.
                     score = (
                         (10 if col in special_cols else 0)
+                        + (4 if col in friday_cols else 0)
                         + (5 if pref(giver, col) == 1 else 0)
                         - (3 if pref(receiver, col) == 1 else 0)
                     )
@@ -1493,6 +1654,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
 
         stat_total = {i: 0 for i in isimler}
         stat_special = {i: 0 for i in isimler}
+        stat_friday = {i: 0 for i in isimler}
         stat_consecutive_weekend = {i: 0 for i in isimler}
         last_weekend_shift = {i: -10 for i in isimler}
         last_shift_day = {i: initial_last_shift.get(i, -10) for i in isimler}
@@ -1502,7 +1664,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         )
         future_fixed = {i: len(fixed_days.get(i, ())) for i in isimler}
 
-        def get_decision_score(p, is_sp, col):
+        def get_decision_score(p, is_sp, col, is_friday=False):
             total = stat_total[p] + (random.random() * 0.5)
             sp_count = stat_special[p] + history_special.get(p, 0)
             consecutive_penalty = stat_consecutive_weekend[p] * 200
@@ -1524,8 +1686,9 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                     min_bonus = -250
             if is_sp:
                 return (sp_count * 100) + (total * 10) + consecutive_penalty + pref_bonus + limit_penalty + min_bonus
-            else:
-                return (total * 10) + (sp_count * 1) + pref_bonus + limit_penalty + min_bonus
+            # Cuma da dengelenir; hafta sonu/tatil dengesinden (×100) daha hafif.
+            friday_penalty = stat_friday[p] * 40 if is_friday else 0
+            return (total * 10) + (sp_count * 1) + friday_penalty + pref_bonus + limit_penalty + min_bonus
 
         empty_shifts = 0
         limit_violations = 0
@@ -1535,6 +1698,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             gun_no = info['day_num']
             is_sp = info['weekend'] or info['holiday']
             is_weekend = info['weekend']
+            is_friday = is_friday_column(info)
             weekend_num = info.get('week', (gun_no - 1) // 7)
 
             # Sabit nöbetler önce ve aynen yerleşir.
@@ -1566,7 +1730,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                 adaylar.append(k)
 
             random.shuffle(adaylar)
-            adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col))
+            adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col, is_friday))
 
             # Yeterli aday yoksa günü tamamen boş bırakma: uyan adayları ata,
             # eksik kalan her nöbetçiyi say (eskiden 1 kişi müsaitken gün boştu).
@@ -1580,6 +1744,8 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                 stat_total[k] += 1
                 if is_sp:
                     stat_special[k] += 1
+                if is_friday:
+                    stat_friday[k] += 1
                 last_shift_day[k] = gun_no
                 if is_weekend:
                     if last_weekend_shift[k] >= 0 and weekend_num == last_weekend_shift[k] + 1:
@@ -1599,12 +1765,18 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         std_dev_total = np.std(totals)
         std_dev_special = np.std(specials)
         range_total = max(totals) - min(totals)
+        # Hafta sonu/tatil farkı Cuma farkından daha ağır cezalandırılır.
+        range_special = max(specials) - min(specials)
+        fridays = list(stat_friday.values())
+        range_friday = max(fridays) - min(fridays)
 
         score = (
             (empty_shifts * 10000) +
             (limit_violations * 5000) +
             (consecutive_weekends * 500) +
             (range_total * 100) +
+            (range_special * 60) +
+            (range_friday * 30) +
             (std_dev_total * 10) +
             (std_dev_special * 5)
         )
@@ -1619,6 +1791,12 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             df_preferred, min_bosluk, forbidden_pairs, person_limits,
             {(p, c) for c, people in fixed_by_col.items() for p in people},
             initial_last_shift, history_special,
+        )
+        best_schedule = _balance_fridays(
+            best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+            df_preferred, min_bosluk, forbidden_pairs,
+            {(p, c) for c, people in fixed_by_col.items() for p in people},
+            initial_last_shift,
         )
     return best_schedule, best_score
 
