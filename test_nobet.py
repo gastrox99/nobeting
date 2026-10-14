@@ -26,6 +26,11 @@ from nobet_core import (
     special_shift_counts,
     history_special_adjustment,
     history_adjustment,
+    build_backup,
+    backup_to_bytes,
+    parse_backup,
+    backup_summary,
+    backup_reminder,
     holiday_shift_counts,
     schedule_totals,
     build_share_text,
@@ -1329,8 +1334,9 @@ class TestCrossMonthBalance(unittest.TestCase):
             specials = schedule[special_cols].sum(axis=1)
             # Hafta sonu/tatil dengesi bozulmaz.
             self.assertLessEqual(specials.max() - specials.min(), 1)
-        # 6 bayram nöbeti / 8 kişi: geçmişi fazla olan ikisi neredeyse hiç almaz.
-        self.assertLessEqual(heavy, 1)
+        # 6 bayram nöbeti / 8 kişi: geçmiş olmasa ikisi 5 ayda ~7-8 alırdı.
+        # Art arda hafta sonu kuralı bazı takasları engellediğinden sıfır değil.
+        self.assertLessEqual(heavy, 3)
 
     def test_bayram_takasi_toplam_ve_ozel_gun_sayisini_degistirmez(self):
         names = ["Ali", "Ayşe"]
@@ -1353,6 +1359,37 @@ class TestCrossMonthBalance(unittest.TestCase):
             {"Ali": 1, "Ayşe": 0},
         )
         self.assertTrue(fixed.at["Ali", "20 Cum"])
+
+    def test_bayram_takasi_art_arda_hafta_sonu_olusturmaz(self):
+        # Mart 2026: 20 Cuma bayram; 14-15 ve 28-29 hafta sonları.
+        names = ["Ali", "Ayşe"]
+        days = build_gun_detaylari(2026, 3, 31, [20])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=names, columns=cols)
+        schedule.at["Ali", "20 Cum"] = True
+        schedule.at["Ali", "14 Cmt"] = True
+        schedule.at["Ayşe", "21 Cmt"] = True  # Ali'ye geçerse 14 ve 21 art arda olur
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        result = _balance_holidays(
+            schedule.copy(), names, cols, days, unwanted, None, 1, set(), set(), {},
+            {"Ali": 1, "Ayşe": 0},
+        )
+        self.assertTrue(result.at["Ali", "20 Cum"])
+        self.assertFalse(result.at["Ali", "21 Cmt"])
+
+    def test_gecmis_olmadan_da_bayram_ay_icinde_dengelenir(self):
+        names = [f"K{i}" for i in range(8)]
+        days = build_gun_detaylari(2026, 3, 31, [20, 21, 22])
+        cols = list(days)
+        holiday_cols = [c for c in cols if days[c]["holiday"]]
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        random.seed(8)
+        for _ in range(5):
+            schedule, _ = run_scheduling_core(
+                names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=10,
+            )
+            holidays = schedule[holiday_cols].sum(axis=1)
+            self.assertLessEqual(holidays.max() - holidays.min(), 1)
 
     def test_nobetler_aya_yayilir(self):
         # 8 kişi, günde 2: beklenen aralık 4 gün. Dinlenme 1 gün; yayma
@@ -1412,6 +1449,116 @@ class TestCrossMonthBalance(unittest.TestCase):
         load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali", "Ayşe"], days, {}, 0, 0)
         self.assertEqual(int(load.at["Ali", "Bayram"]), 1)
         self.assertEqual(int(load.at["Ayşe", "Bayram"]), 0)
+
+
+class TestBackup(unittest.TestCase):
+    """Tüm verinin yedeği: indirme dosyası, doğrulama ve geri yükleme."""
+
+    def _rows(self):
+        return [{
+            "name": "Otomatik_2026_09", "year": 2026, "month": 9,
+            "team_members": json.dumps(["Ali", "Ayşe"]),
+            "pref_json": json.dumps({"1 Sal": {"Ali": 1, "Ayşe": 0}}),
+            "settings_json": json.dumps({"locked": [["Ali", "1 Sal"]], "hidden": {}}),
+            "rows_liste_json": json.dumps([{"Tarih": "1 Eyl Sal", "Nöbetçi 1": "Ali"}]),
+            "cells": [("Ali", "1 Sal", True), ("Ayşe", "1 Sal", False),
+                      ("Ali", "2 Çar", False), ("Ayşe", "2 Çar", True)],
+        }]
+
+    def test_yedek_dosyasi_geri_okunur(self):
+        raw = backup_to_bytes(build_backup({"team": "Ali, Ayşe"}, self._rows()))
+        backup, errors = parse_backup(raw)
+        self.assertEqual(errors, [])
+        item = backup["schedules"][0]
+        self.assertEqual(item["team"], ["Ali", "Ayşe"])
+        self.assertEqual(item["days"], ["1 Sal", "2 Çar"])
+        self.assertEqual(set(item["assigned"]), {("Ali", "1 Sal"), ("Ayşe", "2 Çar")})
+        self.assertEqual(item["preferences"], {"1 Sal": {"Ali": 1, "Ayşe": 0}})
+        self.assertEqual(backup["settings"], {"team": "Ali, Ayşe"})
+        self.assertEqual(backup_summary(backup), "1 ay (Eylül 2026), ekip ve ayarlar")
+
+    def test_ekip_disindaki_hucreler_yedege_girmez(self):
+        rows = self._rows()
+        rows[0]["cells"].append(("Eski Kişi", "1 Sal", True))
+        backup, errors = parse_backup(backup_to_bytes(build_backup(None, rows)))
+        self.assertEqual(errors, [])
+        self.assertNotIn(("Eski Kişi", "1 Sal"), backup["schedules"][0]["assigned"])
+
+    def test_bozuk_yedek_reddedilir(self):
+        good = build_backup(None, self._rows())
+        self.assertTrue(parse_backup(b"\xff\xfe")[1])
+        self.assertTrue(parse_backup(b'{"format": "baska"}')[1])
+        self.assertTrue(parse_backup(b"x" * (20 * 1024 * 1024 + 1))[1])
+        for mutate in (
+            lambda d: d["schedules"][0].update(year=1990),
+            lambda d: d["schedules"][0].update(month=13),
+            lambda d: d["schedules"][0].update(name=""),
+            lambda d: d["schedules"][0].update(team="Ali"),
+            lambda d: d["schedules"][0].update(assigned=[["Yabancı", "1 Sal"]]),
+            lambda d: d["schedules"][0].update(days=[str(i) for i in range(40)]),
+            lambda d: d["schedules"][0].update(rows="x"),
+            lambda d: d["schedules"].append(dict(d["schedules"][0])),
+            lambda d: d.update(settings=[1]),
+            lambda d: d.update(version=99),
+            # Küçük dosyadan milyonlarca satır üretilmesin.
+            lambda d: d.update(schedules=[
+                dict(d["schedules"][0], name=f"Ay{i}", team=[f"K{j}" for j in range(300)],
+                     days=[str(k) for k in range(31)], assigned=[])
+                for i in range(60)
+            ]),
+        ):
+            data = json.loads(json.dumps(good))
+            mutate(data)
+            backup, errors = parse_backup(json.dumps(data).encode())
+            self.assertIsNone(backup)
+            self.assertTrue(errors)
+
+    def test_yedek_hatirlatmasi(self):
+        from datetime import date as _date
+        today = _date(2026, 10, 14)
+        self.assertEqual(backup_reminder(None, today), "Henüz yedek indirilmedi.")
+        self.assertIsNone(backup_reminder("2026-10-01 10:00", today))
+        self.assertEqual(backup_reminder("2026-09-01 10:00", today), "Son yedek 43 gün önce indirildi.")
+
+    def test_disa_aktarma_kullaniciya_gore(self):
+        cursor = _FakeDbCursor(data_rows=[])
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)):
+            settings, schedules = db.export_owner_data("ali@gmail.com")
+        self.assertEqual(cursor.executed[0][1], ("user:ali@gmail.com",))
+        self.assertEqual(cursor.executed[1][1], ("ali@gmail.com",))
+        self.assertIn("s.owner = %s", cursor.executed[2][0])
+        self.assertEqual(cursor.executed[2][1], ("ali@gmail.com",))
+        self.assertEqual(schedules, [])
+
+    def test_geri_yukleme_kullanicinin_verisine_tek_islemde_yazar(self):
+        backup, _ = parse_backup(backup_to_bytes(build_backup({"team": "Ali"}, self._rows())))
+        cursor = _FakeDbCursor()
+        inserted = []
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)), \
+                patch.object(db, "execute_values", side_effect=lambda _c, _sql, rows: inserted.extend(rows)):
+            self.assertTrue(db.restore_owner_data(backup, owner="ali@gmail.com"))
+        upsert_sql, upsert_params = cursor.executed[0]
+        self.assertIn("ON CONFLICT (owner, name, year, month)", upsert_sql)
+        self.assertEqual(upsert_params[7], "ali@gmail.com")
+        self.assertEqual(len(inserted), 4)
+        self.assertEqual(sum(1 for row in inserted if row[3]), 2)
+        self.assertEqual(cursor.executed[-1][1][0], "user:ali@gmail.com")
+
+    def test_geri_yukleme_hatasi_yukari_iletilir(self):
+        with patch.object(db.psycopg2, "connect", side_effect=RuntimeError("yok")):
+            with self.assertRaises(RuntimeError):
+                db.restore_owner_data({"schedules": [], "settings": None})
+            with self.assertRaises(RuntimeError):
+                db.export_owner_data()
+
+    def test_uygulama_yedegi_kullaniciya_baglar(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertIn("export_owner_data(owner=current_owner)", source)
+        # Veritabanı hatası kullanıcıya ham mesajla gösterilmez.
+        self.assertIn("Yedek hazırlanamadı", source)
+        self.assertIn("restore_owner_data(_parsed_backup, owner=current_owner)", source)
+        # Geri yüklemeden sonra eski ekran durumu yedeğin üzerine yazılmasın.
+        self.assertIn("st.session_state.clear()", source)
 
 
 class TestShareAndCalendar(unittest.TestCase):

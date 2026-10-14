@@ -28,13 +28,19 @@ try:
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
         is_database_configured,
         create_share_link, get_share_link, delete_share_link, resolve_share_token,
-        load_auto_saved_assignments,
+        load_auto_saved_assignments, export_owner_data, restore_owner_data,
     )
     from nobet_core import (
         TR_AY_ADLARI,
         TR_GUN_KISA,
         build_person_ics,
         build_share_text,
+        BACKUP_MAX_BYTES,
+        backup_reminder,
+        backup_summary,
+        backup_to_bytes,
+        build_backup,
+        parse_backup,
         history_adjustment,
         history_special_adjustment,
         holiday_shift_counts,
@@ -113,13 +119,19 @@ except ImportError:
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
         is_database_configured,
         create_share_link, get_share_link, delete_share_link, resolve_share_token,
-        load_auto_saved_assignments,
+        load_auto_saved_assignments, export_owner_data, restore_owner_data,
     )
     from nobet_core import (
         TR_AY_ADLARI,
         TR_GUN_KISA,
         build_person_ics,
         build_share_text,
+        BACKUP_MAX_BYTES,
+        backup_reminder,
+        backup_summary,
+        backup_to_bytes,
+        build_backup,
+        parse_backup,
         history_adjustment,
         history_special_adjustment,
         holiday_shift_counts,
@@ -894,6 +906,79 @@ if (
     if save_app_settings(_current_settings, owner=current_owner):
         st.session_state.last_saved_settings = _current_settings
 
+# --- YEDEK: tüm aylar ve ayarlar tek dosyada; aynı dosyadan geri yükleme ---
+def _mark_backup_downloaded():
+    st.session_state.last_backup_at = now_tr().strftime("%Y-%m-%d %H:%M")
+    st.session_state.pop("backup_bytes", None)
+
+
+if _db_ready:
+    _restored_notice = st.session_state.pop("backup_restored_notice", None)
+    # Yedekteki "son indirme" tarihi, bu yedeği indirmeden önceki tarihtir.
+    _kept_backup_at = st.session_state.pop("backup_restored_last_at", None)
+    if _kept_backup_at and _kept_backup_at > str(st.session_state.get("last_backup_at") or ""):
+        st.session_state.last_backup_at = _kept_backup_at
+    if _restored_notice:
+        st.success(f"✅ Yedek geri yüklendi: {_restored_notice}.")
+    _backup_hint = backup_reminder(st.session_state.get("last_backup_at"))
+    _backup_label = "💾 Yedek" + (f" — {_backup_hint} İndirmeniz önerilir." if _backup_hint else "")
+    with st.expander(_backup_label, expanded=False):
+        _bk_col1, _bk_col2 = st.columns(2)
+        with _bk_col1:
+            st.markdown("**Tüm verimi indir**")
+            st.caption(
+                "Bütün aylar (nöbetler, tercihler, görev yerleri) ve ekip/ayarlar tek dosyada. "
+                "Ayda bir indirip bilgisayarınızda ya da Drive'da saklayın."
+            )
+            if st.session_state.get("last_backup_at"):
+                st.caption(f"Son indirme: {st.session_state.last_backup_at}")
+            if st.session_state.get("backup_bytes") is None:
+                if st.button("📦 Yedeği hazırla", width="stretch"):
+                    try:
+                        _settings_bk, _schedules_bk = export_owner_data(owner=current_owner)
+                    except Exception:
+                        st.error("❌ Yedek hazırlanamadı (veritabanına ulaşılamadı). Tekrar deneyin.")
+                    else:
+                        st.session_state.backup_bytes = backup_to_bytes(build_backup(_settings_bk, _schedules_bk))
+                        st.rerun()
+            else:
+                st.download_button(
+                    "⬇️ Yedeği indir (.json)", st.session_state.backup_bytes,
+                    f"nobet_yedek_{now_tr():%Y-%m-%d}.json", "application/json",
+                    on_click=_mark_backup_downloaded, width="stretch",
+                )
+        with _bk_col2:
+            st.markdown("**Yedekten geri yükle**")
+            st.caption("Yedekteki aylar mevcut kayıtların yerine geçer; yedekte olmayan aylara dokunulmaz.")
+            _backup_file = st.file_uploader(
+                "Yedek dosyası (.json)", type=["json"], key="backup_uploader", label_visibility="collapsed",
+            )
+            if _backup_file is not None:
+                if _backup_file.size > BACKUP_MAX_BYTES:
+                    _parsed_backup, _backup_errors = None, ["Dosya çok büyük (en fazla 20 MB)."]
+                else:
+                    _parsed_backup, _backup_errors = parse_backup(_backup_file.getvalue())
+                if _backup_errors:
+                    st.error("❌ Yedek yüklenemedi:\n" + "\n".join(f"- {_e}" for _e in _backup_errors))
+                else:
+                    _summary = backup_summary(_parsed_backup)
+                    _created = _parsed_backup.get("created_at")
+                    st.info(f"Yedek: {_summary}" + (f" · oluşturulma {_created}" if _created else ""))
+                    _confirm = st.checkbox("Mevcut kayıtların üzerine yazılsın", key="backup_restore_confirm")
+                    if st.button("♻️ Geri yükle", type="primary", disabled=not _confirm, width="stretch"):
+                        try:
+                            restore_owner_data(_parsed_backup, owner=current_owner)
+                        except Exception:
+                            st.error("❌ Geri yükleme başarısız oldu; hiçbir kayıt değişmedi. Tekrar deneyin.")
+                        else:
+                            # Ekrandaki eski durum yedeğin üzerine otomatik kaydedilmesin:
+                            # her şeyi veritabanından baştan yükle.
+                            _kept_backup_at = st.session_state.get("last_backup_at")
+                            st.session_state.clear()
+                            st.session_state.backup_restored_notice = _summary
+                            st.session_state.backup_restored_last_at = _kept_backup_at
+                            st.rerun()
+
 if not isimler: st.stop()
 
 # --- GÜN VERİLERİ ---
@@ -1139,6 +1224,8 @@ def _load_previous_context(year, month):
     try:
         _loaded_all = load_auto_saved_assignments(_periods, owner=current_owner)
     except Exception:
+        # Bir dakika sonra yeniden denenir; o zamana kadar uyarı gösterilir.
+        _ctx["failed_at"] = time.monotonic()
         return _ctx
     _aliases = st.session_state.get("name_aliases")
     for _back, (_py, _pm) in enumerate(_periods, start=1):
@@ -1172,9 +1259,19 @@ def _load_previous_context(year, month):
 
 
 _prev_ctx = st.session_state.get("prev_month_context")
-if not _prev_ctx or _prev_ctx.get("period") != (yil, ay) or "monthly_totals" not in _prev_ctx:
+if (
+    not _prev_ctx
+    or _prev_ctx.get("period") != (yil, ay)
+    or "monthly_totals" not in _prev_ctx
+    or ("failed_at" in _prev_ctx and time.monotonic() - _prev_ctx["failed_at"] > 60)
+):
     _prev_ctx = _load_previous_context(yil, ay)
     st.session_state.prev_month_context = _prev_ctx
+if "failed_at" in _prev_ctx:
+    st.warning(
+        "⚠️ Önceki aylar okunamadı: ay geçişi dinlenme kuralı ve aylar arası denge "
+        "şu an uygulanmıyor. Bir dakika sonra yeniden denenecek."
+    )
 prev_last_shift = {p: d for p, d in _prev_ctx["last_shift"].items() if p in isimler}
 _balance_history_on = st.session_state.get("balance_history", True)
 history_special = (

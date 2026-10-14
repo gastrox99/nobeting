@@ -543,3 +543,101 @@ def resolve_share_token(token):
     finally:
         if conn is not None:
             conn.close()
+
+
+def export_owner_data(owner=""):
+    """Kullanıcının tüm çizelgelerini ve ayarlarını okur (yedek için).
+
+    Dönen değer (ayarlar, çizelgeler). Paylaşım bağlantıları yedeğe
+    girmez. Hata olursa yukarı iletilir.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('SELECT value FROM app_settings WHERE key = %s', (settings_key(owner),))
+            settings_row = cur.fetchone()
+            cur.execute('''
+                SELECT id, name, year, month, team_members, pref_json, settings_json, rows_liste_json
+                FROM schedules WHERE owner = %s ORDER BY year, month, name
+            ''', (owner,))
+            schedules = [dict(row) for row in cur.fetchall()]
+            cur.execute('''
+                SELECT d.schedule_id, d.person, d.day_col, d.assigned
+                FROM schedule_data AS d JOIN schedules AS s ON s.id = d.schedule_id
+                WHERE s.owner = %s ORDER BY d.schedule_id, d.id
+            ''', (owner,))
+            cell_rows = cur.fetchall()
+    finally:
+        if conn is not None:
+            conn.close()
+
+    settings = None
+    if settings_row:
+        try:
+            settings = json.loads(settings_row['value'])
+        except (TypeError, ValueError):
+            settings = None
+    cells = {}
+    for row in cell_rows:
+        cells.setdefault(row['schedule_id'], []).append((row['person'], row['day_col'], bool(row['assigned'])))
+    for schedule in schedules:
+        schedule['cells'] = cells.get(schedule.pop('id'), [])
+    return (settings if isinstance(settings, dict) else None), schedules
+
+
+def restore_owner_data(backup, owner=""):
+    """Doğrulanmış yedeği (nobet_core.parse_backup) kullanıcının verisine yazar.
+
+    Yedekteki aylar mevcut kayıtların üzerine yazılır, yedekte olmayan aylara
+    dokunulmaz. Hepsi tek işlemde yazılır: bir hata olursa hiçbir şey
+    değişmez. Hata olursa yukarı iletilir.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                for item in backup.get("schedules") or []:
+                    cur.execute('''
+                        INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, owner, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (owner, name, year, month) DO UPDATE
+                            SET updated_at = CURRENT_TIMESTAMP,
+                                team_members = EXCLUDED.team_members,
+                                pref_json = EXCLUDED.pref_json,
+                                settings_json = EXCLUDED.settings_json,
+                                rows_liste_json = EXCLUDED.rows_liste_json
+                        RETURNING id
+                    ''', (
+                        item["name"], item["year"], item["month"],
+                        json.dumps(item["team"], ensure_ascii=False),
+                        json.dumps(item["preferences"], ensure_ascii=False) if item["preferences"] is not None else None,
+                        json.dumps(item["settings"], ensure_ascii=False) if item["settings"] is not None else None,
+                        json.dumps(item["rows"], ensure_ascii=False) if item["rows"] is not None else None,
+                        owner,
+                    ))
+                    schedule_id = cur.fetchone()[0]
+                    cur.execute('DELETE FROM schedule_data WHERE schedule_id = %s', (schedule_id,))
+                    assigned = set(item["assigned"])
+                    rows = [
+                        (schedule_id, person, day, (person, day) in assigned)
+                        for person in item["team"] for day in item["days"]
+                    ]
+                    if rows:
+                        execute_values(cur, '''
+                            INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
+                            VALUES %s
+                        ''', rows)
+                if backup.get("settings") is not None:
+                    cur.execute('''
+                        INSERT INTO app_settings (key, value, updated_at)
+                        VALUES (%s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (key) DO UPDATE
+                            SET value = EXCLUDED.value,
+                                updated_at = CURRENT_TIMESTAMP
+                    ''', (settings_key(owner), json.dumps(backup["settings"], ensure_ascii=False)))
+        return True
+    finally:
+        if conn is not None:
+            conn.close()
