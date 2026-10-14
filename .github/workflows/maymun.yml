@@ -28,6 +28,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       RUN_MONKEY: "1"
+      GIRISSIZ_KULLANIM: "1"
       MONKEY_ROUNDS: ${{ inputs.turlar }}
       MONKEY_STEPS: ${{ inputs.adim }}
     steps:

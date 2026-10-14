@@ -2383,3 +2383,42 @@ class TestInceleme20261014(unittest.TestCase):
         from nobet_core import as_bool_frame
         frame = pd.DataFrame({"1 Sal": [True, np.nan], "2 Çar": [np.nan, False]}, index=["Ali", "Ayşe"])
         self.assertEqual(as_bool_frame(frame).values.tolist(), [[True, False], [False, False]])
+
+
+class TestSecurityHardening(unittest.TestCase):
+    def setUp(self):
+        self.source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+
+    def test_giris_ayari_yoksa_veritabanli_uygulama_kilitlenir(self):
+        from streamlit.testing.v1 import AppTest
+        env = {"DATABASE_URL": "postgresql://x@127.0.0.1:1/x", "GIRISSIZ_KULLANIM": ""}
+        with patch.dict("os.environ", env):
+            at = AppTest.from_file(str(Path(__file__).with_name("nobet.py")), default_timeout=60).run()
+        self.assertTrue(any("kilitlendi" in e.value for e in at.error))
+        # Kilit sayfası veritabanı hata nedenini (sunucu adı) göstermez.
+        self.assertEqual(len(at.warning), 0)
+        self.assertEqual(len(at.button), 0)
+
+    def test_veritabani_hata_nedeni_giristen_sonra_gosterilir(self):
+        reason = self.source.index('_db_reason = f" Sebep:')
+        self.assertLess(self.source.index("_share_token = st.query_params"), reason)
+        self.assertLess(self.source.index("current_owner = _current_user_email()"), reason)
+
+    def test_excel_metni_formul_olarak_yazilmaz(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        self.assertIn('"strings_to_formulas": False', self.source)
+        out = BytesIO()
+        with pd.ExcelWriter(out, engine="xlsxwriter",
+                            engine_kwargs={"options": {"strings_to_formulas": False}}) as writer:
+            pd.DataFrame({"Kişi": ["=1+1"]}).to_excel(writer, index=False)
+        cell = load_workbook(BytesIO(out.getvalue()))["Sheet1"]["A2"]
+        self.assertEqual(cell.data_type, "s")
+        self.assertEqual(cell.value, "=1+1")
+
+    def test_veritabani_ayari_algilanir(self):
+        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://a"}):
+            self.assertTrue(db.is_database_configured())
+        with patch.dict("os.environ", {"DATABASE_URL": ""}), \
+                patch("streamlit.secrets", {}):
+            self.assertFalse(db.is_database_configured())
