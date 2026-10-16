@@ -1014,13 +1014,15 @@ if _db_ready:
     _snapshot_notice = st.session_state.pop("snapshot_notice", None)
     if _snapshot_notice:
         st.success(f"✅ {_snapshot_notice}")
+        # Tuş sayfanın aşağısında; bildirim oradan da görünsün.
+        st.toast(f"✅ {_snapshot_notice}")
     _backup_hint = backup_reminder(st.session_state.get("last_backup_at"))
     _backup_label = "💾 Yedek" + (f" — {_backup_hint} İndirmeniz önerilir." if _backup_hint else "")
     with st.expander(_backup_label, expanded=False):
         st.markdown("**Uygulamadaki yedekler**")
         st.caption(
-            "Çizelge her değişiklikte zaten kaydediliyor. Ayı bitirince Yedekle'ye basın: "
-            "o ayın hâli saklanır. Her ayın tek yedeği olur; tekrar basarsanız eskisinin yerine geçer."
+            "Çizelge her değişiklikte zaten kaydediliyor. Ayı bitirince listenin üstündeki "
+            "💾 Yedekle düğmesine basın: o ayın hâli saklanır. Her ayın tek yedeği olur; tekrar basarsanız eskisinin yerine geçer."
         )
         if "backup_snapshots" not in st.session_state:
             try:
@@ -1033,10 +1035,11 @@ if _db_ready:
         _this_month_snap = next(
             (_i for _i in _month_snaps if (_i.get("year"), _i.get("month")) == (yil, ay)), None,
         )
-        if st.button(f"💾 {TR_AY_ADLARI[ay]} {yil} ayını yedekle", type="primary", key="snapshot_take_btn"):
-            st.session_state.snapshot_requested = True
-            if not isimler:
-                # Ekip boşsa sayfa aşağıda duruyor; yedeği hemen al.
+        if not isimler:
+            # Ekip boşsa sayfa aşağıda duruyor ve listenin üstündeki tuş
+            # görünmüyor; yedek tuşu burada kalır ve yedeği hemen alır.
+            if st.button(f"💾 {TR_AY_ADLARI[ay]} {yil} ayını yedekle", type="primary", key="snapshot_take_btn"):
+                st.session_state.snapshot_requested = True
                 _run_requested_snapshot()
         if _this_month_snap:
             st.caption(f"Bu ayın son yedeği: {snapshot_time_text(_this_month_snap)}")
@@ -2638,7 +2641,7 @@ def _app_base_url():
 
 
 _share_cache = st.session_state.setdefault("share_token_cache", {})
-_export_col, _share_col, _import_col, _ = st.columns([1, 1, 1, 3])
+_export_col, _share_col, _import_col, _snapshot_col, _ = st.columns([1, 1, 1, 1, 2])
 with _export_col:
     with st.popover("📤 Dışa aktar", width="stretch"):
         st.download_button("📊 Excel", _excel_bytes, f"nobet_{yil}_{ay:02d}.xlsx",
@@ -2761,6 +2764,16 @@ with _import_col:
                     _msgs.append(("warning", f"⚠️ {_imp['unreadable_rows']} satırın tarihi okunamadığı için atlandı."))
             st.session_state.excel_import_messages = _msgs
             st.rerun()
+
+with _snapshot_col:
+    if _db_ready:
+        # Tıklama sayfa yeniden çizilmeden önce işlenir; yedek, bu çalışmada
+        # son değişiklik kaydedildikten sonra alınır (_run_requested_snapshot).
+        st.button(
+            "💾 Yedekle", width="stretch", key="snapshot_take_btn",
+            help=f"{TR_AY_ADLARI[ay]} {yil} ayını yedekler. Her ayın tek yedeği olur; tekrar basarsanız eskisinin yerine geçer.",
+            on_click=lambda: st.session_state.update(snapshot_requested=True),
+        )
 
 st.divider()
 
