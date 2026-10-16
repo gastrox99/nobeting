@@ -2845,6 +2845,40 @@ def backup_summary(backup):
     return ", ".join(parts) if parts else "boş yedek"
 
 
+# Uygulamada saklanan yedekler: her ay için Yedekle tuşuyla alınan tek yedek
+# ve son geri yüklemeden önceki hâlin tek kopyası (year=0, tüm veri).
+SNAPSHOT_MANUAL = "Yedekle"
+SNAPSHOT_BEFORE_RESTORE = "Geri yükleme öncesi"
+
+
+def snapshot_time_text(item):
+    """"2026-10-16 12:05" -> "16.10.2026 12:05"."""
+    text = str(item.get("created_tr", ""))
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M").strftime("%d.%m.%Y %H:%M")
+    except ValueError:
+        return text
+
+
+def snapshot_label(item):
+    """Listede görünen satır: "Mart 2026 · 10.03.2026 14:20 yedeklendi"."""
+    try:
+        period = f"{TR_AY_ADLARI[int(item.get('month'))]} {int(item.get('year'))}"
+    except (TypeError, ValueError, IndexError, KeyError):
+        period = "?"
+    return f"{period} · {snapshot_time_text(item)} yedeklendi"
+
+
+def month_backup(backup, year, month):
+    """Tüm veriden yalnızca o ayın otomatik kaydını içeren yedek (ayarlar hariç)."""
+    name = f"Otomatik_{year}_{month:02d}"
+    return {
+        **backup,
+        "settings": None,
+        "schedules": [item for item in backup.get("schedules") or [] if item.get("name") == name],
+    }
+
+
 def backup_reminder(last_backup_text, today=None, days=30):
     """Son yedek eskiyse ya da hiç yoksa hatırlatma metni, değilse None."""
     today = today or now_tr().date()

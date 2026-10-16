@@ -142,6 +142,26 @@ def init_db():
                         UNIQUE (owner, year, month)
                     )
                 ''')
+
+                # Uygulamada saklanan yedekler: her ay için tek yedek (Yedekle
+                # tuşu) ve geri yüklemeden önceki hâlin tek kopyası (year=0).
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS backup_snapshots (
+                        id SERIAL PRIMARY KEY,
+                        owner VARCHAR(320) NOT NULL DEFAULT '',
+                        year INTEGER NOT NULL,
+                        month INTEGER NOT NULL,
+                        created_tr VARCHAR(16) NOT NULL,
+                        reason VARCHAR(40) NOT NULL,
+                        summary VARCHAR(255) NOT NULL,
+                        data TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                cur.execute('''
+                    CREATE INDEX IF NOT EXISTS backup_snapshots_owner_idx
+                    ON backup_snapshots (owner, reason, year, month)
+                ''')
         _last_error = None
         return True
     except Exception as e:
@@ -652,6 +672,64 @@ def restore_owner_data(backup, owner=""):
                                 updated_at = CURRENT_TIMESTAMP
                     ''', (settings_key(owner), json.dumps(backup["settings"], ensure_ascii=False)))
         return True
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def save_backup_snapshot(owner, year, month, created_tr, reason, summary, data):
+    """Yedeği uygulamada saklar; aynı tür ve ay için önceki yedeğin yerine geçer.
+
+    ``created_tr``: Türkiye saatiyle "YYYY-AA-GG SS:DD". Hata olursa
+    yukarı iletilir.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    DELETE FROM backup_snapshots
+                    WHERE owner = %s AND reason = %s AND year = %s AND month = %s
+                ''', (owner, reason[:40], year, month))
+                cur.execute('''
+                    INSERT INTO backup_snapshots (owner, year, month, created_tr, reason, summary, data)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ''', (owner, year, month, created_tr, reason[:40], summary[:255], data))
+        return True
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_backup_snapshots(owner=""):
+    """Kullanıcının uygulamadaki yedekleri, en yeni ay önce (içerik hariç)."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('''
+                SELECT id, year, month, created_tr, reason, summary, LENGTH(data) AS size
+                FROM backup_snapshots WHERE owner = %s ORDER BY year DESC, month DESC, id DESC
+            ''', (owner,))
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def load_backup_snapshot(snapshot_id, owner=""):
+    """Bir yedeğin içeriği (JSON metni); başka kullanıcınınki okunmaz."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT data FROM backup_snapshots WHERE id = %s AND owner = %s',
+                (snapshot_id, owner),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
     finally:
         if conn is not None:
             conn.close()
