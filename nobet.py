@@ -46,6 +46,7 @@ try:
         holiday_shift_counts,
         last_shift_offsets,
         schedule_totals,
+        unavailable_day_counts,
         previous_period,
         special_shift_counts,
         build_gun_detaylari,
@@ -137,6 +138,7 @@ except ImportError:
         holiday_shift_counts,
         last_shift_offsets,
         schedule_totals,
+        unavailable_day_counts,
         previous_period,
         special_shift_counts,
         build_gun_detaylari,
@@ -723,7 +725,7 @@ def _apply_renames(renames):
     if _ctx:
         for _field in ("last_shift", "history_counts", "holiday_counts"):
             _ctx[_field] = {renames.get(_p, _p): _v for _p, _v in _ctx.get(_field, {}).items()}
-        for _field in ("monthly_totals", "monthly_holidays"):
+        for _field in ("monthly_totals", "monthly_available", "monthly_holidays"):
             _ctx[_field] = [
                 {renames.get(_p, _p): _v for _p, _v in _month.items()} for _month in _ctx.get(_field, [])
             ]
@@ -905,6 +907,8 @@ if (
 ):
     if save_app_settings(_current_settings, owner=current_owner):
         st.session_state.last_saved_settings = _current_settings
+        # Hazırlanmış yedek artık eski; yeniden hazırlanması gerekir.
+        st.session_state.pop("backup_bytes", None)
 
 # --- YEDEK: tüm aylar ve ayarlar tek dosyada; aynı dosyadan geri yükleme ---
 def _mark_backup_downloaded():
@@ -940,8 +944,13 @@ if _db_ready:
                         st.error("❌ Yedek hazırlanamadı (veritabanına ulaşılamadı). Tekrar deneyin.")
                     else:
                         st.session_state.backup_bytes = backup_to_bytes(build_backup(_settings_bk, _schedules_bk))
+                        st.session_state.backup_prepared_at = now_tr().strftime("%H:%M")
                         st.rerun()
             else:
+                st.caption(
+                    f"Hazırlandı: {st.session_state.get('backup_prepared_at', '')}. "
+                    "Sonra bir değişiklik yaparsanız yedek yeniden hazırlanır."
+                )
                 st.download_button(
                     "⬇️ Yedeği indir (.json)", st.session_state.backup_bytes,
                     f"nobet_yedek_{now_tr():%Y-%m-%d}.json", "application/json",
@@ -1000,6 +1009,7 @@ def _save_outgoing_period(period, schedule, preferences, rows):
     _hidden = st.session_state.get("hidden_people") or {}
     if persistence_fingerprint(schedule, preferences, rows, _locks, _hidden) == st.session_state.get("last_saved_fingerprint"):
         return
+    st.session_state.pop("backup_bytes", None)
     save_schedule(
         f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
         schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
@@ -1215,14 +1225,17 @@ if 'selected_cal_day' not in st.session_state:
 def _load_previous_context(year, month):
     _ctx = {
         "period": (year, month), "last_shift": {}, "history_counts": {}, "months": 0,
-        "monthly_totals": [], "monthly_holidays": [], "holiday_counts": {}, "holiday_months": 0,
+        "monthly_totals": [], "monthly_available": [], "monthly_holidays": [],
+        "holiday_counts": {}, "holiday_months": 0,
     }
     if not _db_ready:
         return _ctx
     _holiday_texts = st.session_state.get("holidays_by_period", {})
     _periods = [previous_period(year, month, _back) for _back in range(1, 13)]
     try:
-        _loaded_all = load_auto_saved_assignments(_periods, owner=current_owner)
+        _loaded_all, _prefs_all = load_auto_saved_assignments(
+            _periods, owner=current_owner, include_preferences=True,
+        )
     except Exception:
         # Bir dakika sonra yeniden denenir; o zamana kadar uyarı gösterilir.
         _ctx["failed_at"] = time.monotonic()
@@ -1254,6 +1267,13 @@ def _load_previous_context(year, month):
         for _person, _count in special_shift_counts(_prev, _py, _pm, _prev_holidays).items():
             _ctx["history_counts"][_person] = _ctx["history_counts"].get(_person, 0) + _count
         _ctx["monthly_totals"].append(schedule_totals(_prev))
+        # İzinli/müsait olmadığı günler yüzünden az tutan "eksik" sayılmasın.
+        _available = {_p: _days_in_prev for _p in _prev.index}
+        for _p, _n in unavailable_day_counts(_prefs_all.get((_py, _pm))).items():
+            _p = resolve_alias(_p, _aliases, isimler)
+            if _p in _available:
+                _available[_p] = max(0, _available[_p] - _n)
+        _ctx["monthly_available"].append(_available)
         _ctx["months"] += 1
     return _ctx
 
@@ -1262,7 +1282,7 @@ _prev_ctx = st.session_state.get("prev_month_context")
 if (
     not _prev_ctx
     or _prev_ctx.get("period") != (yil, ay)
-    or "monthly_totals" not in _prev_ctx
+    or "monthly_available" not in _prev_ctx
     or ("failed_at" in _prev_ctx and time.monotonic() - _prev_ctx["failed_at"] > 60)
 ):
     _prev_ctx = _load_previous_context(yil, ay)
@@ -1284,7 +1304,8 @@ _limited_people = set(st.session_state.get("person_limits", {}))
 history_total = (
     {
         _p: _v for _p, _v in history_adjustment(
-            _prev_ctx["monthly_totals"], [_p for _p in isimler if _p not in _limited_people]
+            _prev_ctx["monthly_totals"], [_p for _p in isimler if _p not in _limited_people],
+            monthly_available=_prev_ctx.get("monthly_available"),
         ).items() if _v
     }
     if _balance_history_on and _prev_ctx["months"]
@@ -1340,7 +1361,7 @@ with tab_grid:
                 (0, "⬜Nötr"),
                 (1, "🟩Tercih"),
                 (2, "🟨Kaçın"),
-                (3, "🟥Yok")
+                (3, "🟥İzin")
             ]
             if 'paint_color' not in st.session_state:
                 st.session_state.paint_color = 0
@@ -1676,7 +1697,7 @@ with tab_grid:
             "tek tablo kullanılır; bu nedenle düzenlemeler daha akıcı kalır."
         )
         if st.session_state.edit_mode == "tercih":
-            st.caption("Tercih kodları: 0 = boş, 1 = tercih, 2 = kaçınma, 3 = yasak")
+            st.caption("Tercih kodları: 0 = boş, 1 = tercih, 2 = kaçınma, 3 = izin")
             _compact_pref = st.data_editor(
                 st.session_state.pref_df,
                 width="stretch",
@@ -1836,7 +1857,7 @@ with tab_cal:
     with cal_top2:
         st.markdown(
             f"<div style='padding-top:28px;font-size:12px;color:{ui['label_text']};'>"
-            "🟢 Tercih &nbsp; 🟡 Kaçın &nbsp; 🔴 Müsait Değil &nbsp; 🔄 Görev Yeri Değiştir"
+            "🟢 Tercih &nbsp; 🟡 Kaçın &nbsp; 🔴 İzin &nbsp; 🔄 Görev Yeri Değiştir"
             "</div>",
             unsafe_allow_html=True
         )
@@ -1918,7 +1939,7 @@ with tab_cal:
             f"<div style='margin-top:10px;font-size:11px;color:{ui['label_text']};'>"
             f"🟢 {dp_green_ok} tercih tuttu &nbsp;·&nbsp; "
             f"🟡 {dp_yellow_hit} kaçın gününde atandı &nbsp;·&nbsp; "
-            f"🔴 {dp_red_hit} yasak günde atandı</div>"
+            f"🔴 {dp_red_hit} izin gününde atandı</div>"
             f"</div>",
             unsafe_allow_html=True
         )
@@ -2223,7 +2244,7 @@ for col in sutunlar:
         
     for k in nobetciler:
         if df_unwanted.at[k, col]:
-            conflict_msg.append(f"❌ **{k}**: {gun_no}. gün müsait değilim demişti.")
+            conflict_msg.append(f"❌ **{k}**: {gun_no}. gün izinli.")
         
         if (gun_no - last_shift_check[k]) <= min_bosluk:
             violations.append(f"⚠️ **{k}**: {gun_no}. gün dinlenme kuralına uymuyor.")
@@ -2371,6 +2392,9 @@ elif (
         st.session_state.last_saved_fingerprint = _persist_fp
         st.session_state.last_auto_save = time.time()
         update_persistence_feedback(st.session_state, True)
+        # Yedek bölümü bu çalışmada eski dosyayla çizildi; yeniden çiz.
+        if st.session_state.pop("backup_bytes", None) is not None:
+            st.rerun()
     else:
         update_persistence_feedback(
             st.session_state,
@@ -2703,7 +2727,7 @@ with tab_analiz:
             )
         st.dataframe(
             df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
-                               .background_gradient(cmap="Oranges", subset=["Özel", "Cuma", "Bayram"]),
+                               .background_gradient(cmap="Oranges", subset=["Özel", "Cuma", "Tatil"]),
             width="stretch"
         )
         if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
