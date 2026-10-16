@@ -33,8 +33,9 @@ ENV/
 *.swp
 *.swo
 
-# Streamlit
-.streamlit/
+# Streamlit (şifreler depoya girmez; yalnızca config.toml paylaşılır)
+.streamlit/*
+!.streamlit/config.toml
 
 # OS
 .DS_Store

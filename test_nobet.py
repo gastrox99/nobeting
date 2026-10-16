@@ -1576,6 +1576,20 @@ class TestBackup(unittest.TestCase):
                       ("Ali", "2 Çar", False), ("Ayşe", "2 Çar", True)],
         }]
 
+    def test_yedekte_uygulamanin_kullanmadigi_kayitlar_atlanir(self):
+        rows = self._rows()
+        rows.append(dict(rows[0], name="Elle Kayıt"))
+        rows.append(dict(rows[0], name="Otomatik_2026_10"))  # adı ayla uyuşmuyor
+        backup, errors = parse_backup(backup_to_bytes(build_backup(None, rows)))
+        self.assertEqual(errors, [])
+        self.assertEqual([item["name"] for item in backup["schedules"]], ["Otomatik_2026_09"])
+        self.assertEqual(backup["skipped"], 2)
+
+    def test_excel_yukleme_sinirlari(self):
+        import nobet_core
+        self.assertEqual(nobet_core.EXCEL_IMPORT_MAX_BYTES, 2 * 1024 * 1024)
+        self.assertGreaterEqual(nobet_core.EXCEL_IMPORT_MAX_ROWS, 32)  # başlık + 31 gün
+
     def test_yedek_dosyasi_geri_okunur(self):
         raw = backup_to_bytes(build_backup({"team": "Ali, Ayşe"}, self._rows()))
         backup, errors = parse_backup(raw)
@@ -1613,10 +1627,15 @@ class TestBackup(unittest.TestCase):
             lambda d: d.update(version=99),
             # Küçük dosyadan milyonlarca satır üretilmesin.
             lambda d: d.update(schedules=[
-                dict(d["schedules"][0], name=f"Ay{i}", team=[f"K{j}" for j in range(300)],
+                dict(d["schedules"][0], name=f"Otomatik_{2030 + i // 12}_{i % 12 + 1:02d}",
+                     year=2030 + i // 12, month=i % 12 + 1, team=[f"K{j}" for j in range(300)],
                      days=[str(k) for k in range(31)], assigned=[])
                 for i in range(60)
             ]),
+            lambda d: d["schedules"][0].update(preferences={"1 Sal": {"Ali": 7}}),
+            lambda d: d["schedules"][0].update(preferences={"1 Sal": {"Ali": "<b>"}}),
+            lambda d: d["schedules"][0].update(rows=[{"Tarih": ["iç içe"]}]),
+            lambda d: d["schedules"][0].update(rows=[{"Tarih": "x"}] * 40),
         ):
             data = json.loads(json.dumps(good))
             mutate(data)
@@ -1667,9 +1686,57 @@ class TestBackup(unittest.TestCase):
         self.assertIn("export_owner_data(owner=current_owner)", source)
         # Veritabanı hatası kullanıcıya ham mesajla gösterilmez.
         self.assertIn("Yedek hazırlanamadı", source)
-        self.assertIn("restore_owner_data(_parsed_backup, owner=current_owner)", source)
+        self.assertIn("restore_owner_data(parsed, owner=current_owner)", source)
         # Geri yüklemeden sonra eski ekran durumu yedeğin üzerine yazılmasın.
         self.assertIn("st.session_state.clear()", source)
+
+    def test_uygulamadaki_yedek_satiri(self):
+        from nobet_core import snapshot_label
+        item = {"year": 2026, "month": 3, "created_tr": "2026-03-10 14:20", "reason": "Yedekle"}
+        self.assertEqual(snapshot_label(item), "Mart 2026 · 10.03.2026 14:20 yedeklendi")
+        self.assertIn("bozuk", snapshot_label({"year": None, "month": None, "created_tr": "bozuk"}))
+
+    def test_ay_yedegi_yalnizca_o_ayi_icerir(self):
+        from nobet_core import month_backup
+        rows = self._rows() + [dict(self._rows()[0], name="Otomatik_2026_11", month=11)]
+        backup = build_backup({"team": "Ali"}, rows)
+        only = month_backup(backup, 2026, 11)
+        self.assertEqual([item["name"] for item in only["schedules"]], ["Otomatik_2026_11"])
+        # Ay yedeği ekip/ayarları değiştirmez.
+        self.assertIsNone(only["settings"])
+        parsed, errors = parse_backup(backup_to_bytes(only))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(parsed["schedules"]), 1)
+        self.assertEqual(month_backup(backup, 2025, 1)["schedules"], [])
+
+    def test_uygulama_yedegi_sahibe_ve_aya_gore_tek(self):
+        cursor = _FakeDbCursor()
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)):
+            db.save_backup_snapshot("ali@gmail.com", 2026, 3, "2026-03-10 14:20", "Yedekle", "1 ay", "{}")
+            db.load_backup_snapshot(5, owner="ali@gmail.com")
+        delete_sql, delete_params = cursor.executed[0]
+        self.assertIn("DELETE FROM backup_snapshots", delete_sql)
+        self.assertEqual(delete_params, ("ali@gmail.com", "Yedekle", 2026, 3))
+        insert_sql, insert_params = cursor.executed[1]
+        self.assertIn("INSERT INTO backup_snapshots", insert_sql)
+        self.assertEqual(insert_params[:3], ("ali@gmail.com", 2026, 3))
+        load_sql, load_params = cursor.executed[2]
+        self.assertIn("owner = %s", load_sql)
+        self.assertEqual(load_params, (5, "ali@gmail.com"))
+
+    def test_yedekle_tusu_kayittan_sonra_calisir(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        # Yedek, son değişiklik otomatik kaydedildikten sonra alınır.
+        self.assertLess(
+            source.index('st.error(st.session_state.persistence_error)'),
+            source.index("\n_run_requested_snapshot()"),
+        )
+        # Geri yüklemeden önce mevcut hâlin kopyası alınır; alınamazsa geri yüklenmez.
+        restore = source[source.index("def _restore_backup"):]
+        self.assertLess(
+            restore.index("_take_snapshot(SNAPSHOT_BEFORE_RESTORE)"),
+            restore.index("restore_owner_data(parsed"),
+        )
 
 
 class TestShareAndCalendar(unittest.TestCase):
