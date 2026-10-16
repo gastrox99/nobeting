@@ -331,16 +331,18 @@ def load_schedule(name, year, month, raise_on_error=False, owner=""):
             conn.close()
 
 
-def load_auto_saved_assignments(periods, owner=""):
-    """Otomatik kayıtlı ayların nöbetlerini tek sorguda okur.
+def load_auto_saved_assignments(periods, owner="", include_preferences=False):
+    """Otomatik kayıtlı ayların nöbetlerini tek bağlantıda okur.
 
     ``periods``: [(yıl, ay), ...]. Dönen değer {(yıl, ay): DataFrame};
     satırlar o ayın ekibi, sütunlar nöbet olan günler (True/False).
     Kaydı olmayan ay yer almaz. Hata olursa yukarı iletilir.
+    ``include_preferences`` ise (çizelgeler, {(yıl, ay): kayıtlı tercih
+    JSON'u}) döner; müsait değil günleri bundan sayılır.
     """
     wanted = {f"Otomatik_{year}_{month:02d}": (year, month) for year, month in periods}
     if not wanted:
-        return {}
+        return ({}, {}) if include_preferences else {}
     conn = None
     try:
         conn = _connect()
@@ -352,10 +354,22 @@ def load_auto_saved_assignments(periods, owner=""):
                 WHERE s.owner = %s AND s.name = ANY(%s)
             ''', (owner, list(wanted)))
             rows = cur.fetchall()
+            pref_rows = []
+            if include_preferences:
+                # Tercih JSON'u büyük; nöbet satırlarıyla birleştirilmeden ayrıca okunur.
+                cur.execute('''
+                    SELECT name, year, month, pref_json FROM schedules
+                    WHERE owner = %s AND name = ANY(%s)
+                ''', (owner, list(wanted)))
+                pref_rows = cur.fetchall()
     finally:
         if conn is not None:
             conn.close()
 
+    preferences = {
+        wanted[row['name']]: row.get('pref_json') for row in pref_rows
+        if wanted.get(row['name']) == (row['year'], row['month'])
+    }
     teams, cells = {}, {}
     for row in rows:
         period = wanted.get(row['name'])
@@ -379,7 +393,7 @@ def load_auto_saved_assignments(periods, owner=""):
         for person, day_col in cells[period]:
             frame.at[person, day_col] = True
         result[period] = frame
-    return result
+    return (result, preferences) if include_preferences else result
 
 
 def save_app_settings(settings, owner=""):

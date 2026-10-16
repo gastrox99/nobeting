@@ -205,7 +205,7 @@ def run_round(page, rnd, seed):
     def act_pref():
         click_mode("🎨 Tercih Belirle")
         wait_idle(page)
-        color = rnd.choice(["⬜Nötr", "🟩Tercih", "🟨Kaçın", "🟥Yok"])
+        color = rnd.choice(["⬜Nötr", "🟩Tercih", "🟨Kaçın", "🟥İzin"])
         page.get_by_role("button", name=color).click()
         wait_idle(page)
         rows = grid(page)

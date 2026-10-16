@@ -257,7 +257,7 @@ PREFERENCE_GRID_STATES = (
         "symbol": "×",
         "color": "#991b1b",
         "css_class": "preference-state-3",
-        "description": "Atandı + Yasak",
+        "description": "Atandı + İzin",
     },
     {
         "key": "conflict",
@@ -296,7 +296,7 @@ PREFERENCE_GRID_STATES = (
         "symbol": "Y",
         "color": "#991b1b",
         "css_class": "preference-free-3",
-        "description": "Yasak",
+        "description": "İzin",
     },
 )
 
@@ -448,7 +448,7 @@ def explain_missing_day(schedule, col, gun_detaylari, df_unwanted_bool, min_bosl
             continue
         groups["free"].append(person)
     labels = [
-        ("unwanted", "müsait değil"),
+        ("unwanted", "izinli"),
         ("rest", "dinlenmede"),
         ("limit", "nöbet limitinde"),
         ("forbidden", "birlikte çalışamaz"),
@@ -585,7 +585,7 @@ def assignment_warnings(
         except (TypeError, ValueError):
             preference = 0
         if preference == 3:
-            warnings.append(f"{person}: {day}. gün müsait değil olarak işaretli.")
+            warnings.append(f"{person}: {day}. gün izinli olarak işaretli.")
         elif preference == 2:
             warnings.append(f"{person}: {day}. gün kaçınmak istediği gün.")
 
@@ -1404,7 +1404,7 @@ def build_schedule_analysis(
             "Toplam": toplam,
             "Özel": int(special_totals.get(isim, 0)),
             "Cuma": int(friday_totals.get(isim, 0)),
-            "Bayram": int(holiday_totals.get(isim, 0)),
+            "Tatil": int(holiday_totals.get(isim, 0)),
             **{role: all_role_counts[role].get(isim, 0) for role in role_names},
             "Limit": limit_text,
             "✓": "🟢" if min_limit <= toplam <= max_limit else "🔴",
@@ -1609,6 +1609,46 @@ def _balance_holidays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
     weekend_cols = [
         c for c in sutunlar if gun_detaylari[c]["weekend"] and not gun_detaylari[c]["holiday"]
     ]
+    return _balance_by_swaps(
+        schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
+        min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
+        holiday_cols, weekend_cols, extra_counts=history_holiday, max_moves=max_moves,
+        swap_ok=_no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari),
+    )
+
+
+def _balance_specials(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+                      df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
+                      initial_last_shift, history_special, max_moves=200):
+    """Hafta sonu/tatil sayılarındaki farkı (önceki aylar dahil) takasla azaltır.
+
+    Simülasyon seçimi hafta sonu dengesini aya yayma ve bayram takibiyle
+    birlikte tartar; bu yüzden fark bazen 2 kalabiliyordu. Çok hafta
+    sonu/tatil nöbeti olanın bir özel gün nöbeti, az olanın Cuma olmayan bir
+    hafta içi nöbetiyle yer değiştirir. Toplam ve Cuma sayıları değişmez.
+    Önce art arda hafta sonu oluşturmayan takaslar denenir; fark yine 2 ya
+    da daha fazla kalırsa denge önce gelir (art arda hafta sonu olabilir).
+    """
+    special_cols = [c for c in sutunlar if gun_detaylari[c]["weekend"] or gun_detaylari[c]["holiday"]]
+    weekday_cols = [
+        c for c in sutunlar
+        if c not in special_cols and not is_friday_column(gun_detaylari[c])
+    ]
+    schedule = _balance_by_swaps(
+        schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
+        min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
+        special_cols, weekday_cols, extra_counts=history_special, max_moves=max_moves,
+        swap_ok=_no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari),
+    )
+    return _balance_by_swaps(
+        schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
+        min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
+        special_cols, weekday_cols, extra_counts=history_special, max_moves=max_moves,
+    )
+
+
+def _no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari):
+    """Takas art arda hafta sonu nöbeti oluşturmasın (simülasyon bundan kaçınır)."""
     weekend_days = [c for c in sutunlar if gun_detaylari[c]["weekend"]]
 
     def back_to_back(person):
@@ -1619,19 +1659,13 @@ def _balance_holidays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
         return sum(1 for a, b in zip(weeks, weeks[1:]) if b == a + 1)
 
     def swap_ok(giver, receiver, apply_swap, undo_swap):
-        # Takas art arda hafta sonu nöbeti oluşturmasın (simülasyon bundan kaçınır).
         before = back_to_back(giver) + back_to_back(receiver)
         apply_swap()
         after = back_to_back(giver) + back_to_back(receiver)
         undo_swap()
         return after <= before
 
-    return _balance_by_swaps(
-        schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
-        min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
-        holiday_cols, weekend_cols, extra_counts=history_holiday, max_moves=max_moves,
-        swap_ok=swap_ok,
-    )
+    return swap_ok
 
 
 def _balance_by_swaps(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
@@ -2141,6 +2175,12 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             initial_last_shift, history_special,
             history_total=history_total, history_holiday=history_holiday,
         )
+        best_schedule = _balance_specials(
+            best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+            df_preferred, min_bosluk, forbidden_pairs,
+            {(p, c) for c, people in fixed_by_col.items() for p in people},
+            initial_last_shift, history_special,
+        )
         best_schedule = _balance_fridays(
             best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
             df_preferred, min_bosluk, forbidden_pairs,
@@ -2344,24 +2384,59 @@ def holiday_shift_counts(schedule, holidays):
     return counts
 
 
-def history_adjustment(monthly_counts, team, clip=2):
+def history_adjustment(monthly_counts, team, clip=2, monthly_available=None):
     """Aylık sayıları kişi başına "ortalamadan fark"a çevirir ve toplar.
 
     ``monthly_counts``: her ay için {kişi: sayı}; o ay çizelgede olan herkes
     yer alır (0 dahil). Her ay yalnızca o ay ekipte olanların ortalamasıyla
     karşılaştırılır; o ay ekipte olmayanın farkı 0'dır. Böylece yeni gelen,
     geçmişi olmadığı için "borçlu" sayılmaz. Sonuç ±``clip`` ile sınırlanır.
+
+    ``monthly_available``: (isteğe bağlı) her ay için {kişi: müsait gün}.
+    Verilirse kişinin payı müsait olduğu güne göre oranlanır: izinli ya da
+    müsait değil olduğu için az tutan "eksik" sayılmaz.
     """
     team = list(team or [])
     totals = {person: 0.0 for person in team}
-    for counts in monthly_counts or ():
+    monthly_available = list(monthly_available or ())
+    for index, counts in enumerate(monthly_counts or ()):
         present = [person for person in team if person in counts]
         if len(present) < 2:
             continue
-        mean = sum(counts[person] for person in present) / len(present)
+        month_sum = sum(counts[person] for person in present)
+        available = monthly_available[index] if index < len(monthly_available) else None
+        if available:
+            weights = {person: max(0, available.get(person, 0)) for person in present}
+            weight_sum = sum(weights.values())
+            if weight_sum <= 0:
+                continue
+            expected = {person: month_sum * weights[person] / weight_sum for person in present}
+        else:
+            expected = {person: month_sum / len(present) for person in present}
         for person in present:
-            totals[person] += counts[person] - mean
+            totals[person] += counts[person] - expected[person]
     return {person: max(-clip, min(clip, round(value, 2))) for person, value in totals.items()}
+
+
+def unavailable_day_counts(pref_json):
+    """Kayıtlı tercih JSON'undan kişi başına izin (3) gün sayısı."""
+    try:
+        data = json.loads(pref_json) if pref_json else None
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    counts = {}
+    for column in data.values():
+        if not isinstance(column, dict):
+            continue
+        for person, value in column.items():
+            try:
+                if int(value) == 3:
+                    counts[str(person)] = counts.get(str(person), 0) + 1
+            except (TypeError, ValueError):
+                continue
+    return counts
 
 
 def _row_day_and_weekday(row):

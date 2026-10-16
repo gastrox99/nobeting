@@ -46,6 +46,8 @@ from nobet_core import (
     run_scheduling_core,
     _balance_fridays,
     _balance_holidays,
+    _balance_specials,
+    unavailable_day_counts,
     missing_shift_coverage,
     explain_missing_day,
     format_missing_day_reason,
@@ -1299,6 +1301,30 @@ class TestCrossMonthBalance(unittest.TestCase):
         self.assertEqual(adjustment["Yeni"], 0)
         self.assertEqual(history_adjustment([{"Ali": 30, "Ayşe": 0}], ["Ali", "Ayşe"])["Ali"], 2)
 
+    def test_izinli_ay_eksik_sayilmaz(self):
+        # Ayşe ayın yarısında izinliydi: 15 günde 5 nöbet, Ali 30 günde 10 nöbet.
+        months = [{"Ali": 10, "Ayşe": 5}]
+        plain = history_adjustment(months, ["Ali", "Ayşe"])
+        self.assertEqual(plain["Ayşe"], -2)
+        fair = history_adjustment(months, ["Ali", "Ayşe"], monthly_available=[{"Ali": 30, "Ayşe": 15}])
+        self.assertEqual(fair, {"Ali": 0, "Ayşe": 0})
+        # Müsait olduğu halde az tutan yine eksik sayılır.
+        short = history_adjustment([{"Ali": 10, "Ayşe": 4}], ["Ali", "Ayşe"],
+                                   monthly_available=[{"Ali": 30, "Ayşe": 15}])
+        self.assertLess(short["Ayşe"], 0)
+        # Müsaitlik bilgisi olmayan ay eski usulle (ortalama) hesaplanır.
+        mixed = history_adjustment(months, ["Ali", "Ayşe"], monthly_available=[None])
+        self.assertEqual(mixed, plain)
+
+    def test_kayitli_tercihten_musait_degil_gunleri_sayilir(self):
+        pref = pd.DataFrame(0, index=["Ali", "Ayşe"], columns=["1 Pzt", "2 Sal", "3 Çar"])
+        pref.at["Ali", "1 Pzt"] = 3
+        pref.at["Ali", "2 Sal"] = 3
+        pref.at["Ayşe", "3 Çar"] = 2  # kaçınma, müsait değil değil
+        self.assertEqual(unavailable_day_counts(pref.to_json()), {"Ali": 2})
+        self.assertEqual(unavailable_day_counts(None), {})
+        self.assertEqual(unavailable_day_counts("bozuk"), {})
+
     def test_gecmiste_fazla_toplami_olan_bu_ay_1_fazla_almaz(self):
         names = [f"K{i}" for i in range(7)]
         days = build_gun_detaylari(2026, 11, 30, [])
@@ -1377,6 +1403,74 @@ class TestCrossMonthBalance(unittest.TestCase):
         self.assertTrue(result.at["Ali", "20 Cum"])
         self.assertFalse(result.at["Ali", "21 Cmt"])
 
+    def test_hafta_sonu_takasi_farki_kapatir_toplam_ve_cumayi_korur(self):
+        # Kasım 2026: Ali iki hafta sonu, Ayşe hiç; ikisinin de birer hafta içi nöbeti var.
+        names = ["Ali", "Ayşe"]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=names, columns=cols)
+        schedule.at["Ali", "7 Cmt"] = True
+        schedule.at["Ali", "21 Cmt"] = True
+        schedule.at["Ali", "11 Çar"] = True
+        schedule.at["Ayşe", "17 Sal"] = True
+        schedule.at["Ayşe", "27 Cum"] = True
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        result = _balance_specials(
+            schedule.copy(), names, cols, days, unwanted, None, 1, set(), set(), {}, {},
+        )
+        specials = [c for c in cols if days[c]["weekend"]]
+        self.assertEqual(result[specials].sum(axis=1).to_dict(), {"Ali": 1, "Ayşe": 1})
+        self.assertEqual(result.sum(axis=1).to_dict(), {"Ali": 3, "Ayşe": 2})
+        # Cuma yerinden oynamaz.
+        self.assertTrue(result.at["Ayşe", "27 Cum"])
+        # Sabit ve müsait değil günler korunur.
+        fixed = _balance_specials(
+            schedule.copy(), names, cols, days, unwanted, None, 1, set(),
+            {("Ali", "7 Cmt"), ("Ali", "21 Cmt")}, {}, {},
+        )
+        self.assertEqual(fixed[specials].sum(axis=1).to_dict(), {"Ali": 2, "Ayşe": 0})
+        blocked = unwanted.copy()
+        blocked.loc["Ayşe", specials] = True
+        kept = _balance_specials(
+            schedule.copy(), names, cols, days, blocked, None, 1, set(), set(), {}, {},
+        )
+        self.assertEqual(kept[specials].sum(axis=1).to_dict(), {"Ali": 2, "Ayşe": 0})
+
+    def test_hafta_sonu_dengesi_art_arda_hafta_sonundan_once_gelir(self):
+        # Ayşe'ye geçebilecek her hafta sonu 21 Cmt'ye komşu; yine de fark 2 kalmaz.
+        names = ["Ali", "Ayşe"]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=names, columns=cols)
+        for col in ("14 Cmt", "28 Cmt", "29 Paz"):
+            schedule.at["Ali", col] = True
+        schedule.at["Ayşe", "21 Cmt"] = True
+        schedule.at["Ayşe", "10 Sal"] = True
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        result = _balance_specials(
+            schedule.copy(), names, cols, days, unwanted, None, 1, set(), set(), {}, {},
+        )
+        specials = [c for c in cols if days[c]["weekend"]]
+        self.assertEqual(result[specials].sum(axis=1).to_dict(), {"Ali": 2, "Ayşe": 2})
+        self.assertTrue(result.at["Ali", "10 Sal"])
+
+    def test_mayis_2027_hafta_sonu_farki_en_fazla_1(self):
+        # Aya yayma ve bayram ağırlığı bu ayda hafta sonu farkını 2'de bırakıyordu.
+        names = [f"K{i}" for i in range(8)]
+        days = build_gun_detaylari(2027, 5, 31, [1, 16, 17, 18, 19])
+        cols = list(days)
+        special_cols = [c for c in cols if days[c]["weekend"] or days[c]["holiday"]]
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        random.seed(0)
+        for _ in range(3):
+            schedule, _ = run_scheduling_core(
+                names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=30,
+            )
+            specials = schedule[special_cols].sum(axis=1)
+            self.assertLessEqual(specials.max() - specials.min(), 1)
+            totals = schedule.sum(axis=1)
+            self.assertLessEqual(totals.max() - totals.min(), 1)
+
     def test_gecmis_olmadan_da_bayram_ay_icinde_dengelenir(self):
         names = [f"K{i}" for i in range(8)]
         days = build_gun_detaylari(2026, 3, 31, [20, 21, 22])
@@ -1441,14 +1535,31 @@ class TestCrossMonthBalance(unittest.TestCase):
         self.assertEqual(schedule_totals(loaded[(2026, 8)]), {"Ali": 0})
         self.assertEqual(db.load_auto_saved_assignments([]), {})
 
+    def test_onceki_aylarin_tercihleri_ayri_sorguyla_okunur(self):
+        cursor = _FakeDbCursor(data_rows=[
+            {"name": "Otomatik_2026_09", "year": 2026, "month": 9,
+             "team_members": json.dumps(["Ali"]), "person": "Ali", "day_col": "5 Cmt",
+             "pref_json": '{"5 Cmt": {"Ali": 3}}'},
+        ])
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)):
+            loaded, prefs = db.load_auto_saved_assignments(
+                [(2026, 9)], owner="ali@gmail.com", include_preferences=True,
+            )
+        self.assertEqual(len(cursor.executed), 2)
+        self.assertNotIn("pref_json", cursor.executed[0][0])
+        self.assertIn("pref_json", cursor.executed[1][0])
+        self.assertEqual(set(loaded), {(2026, 9)})
+        self.assertEqual(unavailable_day_counts(prefs[(2026, 9)]), {"Ali": 1})
+        self.assertEqual(db.load_auto_saved_assignments([], include_preferences=True), ({}, {}))
+
     def test_analizde_bayram_sutunu(self):
         days = build_gun_detaylari(2026, 10, 31, [29])
         cols = list(days)
         schedule = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=cols)
         schedule.at["Ali", "29 Per"] = True
         load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali", "Ayşe"], days, {}, 0, 0)
-        self.assertEqual(int(load.at["Ali", "Bayram"]), 1)
-        self.assertEqual(int(load.at["Ayşe", "Bayram"]), 0)
+        self.assertEqual(int(load.at["Ali", "Tatil"]), 1)
+        self.assertEqual(int(load.at["Ayşe", "Tatil"]), 0)
 
 
 class TestBackup(unittest.TestCase):
@@ -1797,13 +1908,13 @@ class TestMissingDayExplanation(unittest.TestCase):
             person_limits={"Can": {"min": 0, "max": 2}},
             forbidden_pairs={("Deniz", "Fuat")},
         ))
-        self.assertEqual(reasons["müsait değil"], ["Ali"])
+        self.assertEqual(reasons["izinli"], ["Ali"])
         self.assertEqual(reasons["dinlenmede"], ["Ayşe (13. gün nöbetli)"])
         self.assertEqual(reasons["nöbet limitinde"], ["Can (en fazla 2)"])
         self.assertEqual(reasons["birlikte çalışamaz"], ["Deniz (Fuat ile)"])
         self.assertEqual(reasons["uygun, elle atanabilir"], ["Ece"])
         text = format_missing_day_reason(list(reasons.items()))
-        self.assertIn("müsait değil: Ali", text)
+        self.assertIn("izinli: Ali", text)
 
     def test_gecen_ay_sonu_nobeti_dinlenme_sayilir(self):
         days = build_gun_detaylari(2026, 11, 30, [])
@@ -1968,7 +2079,7 @@ class TestAssignmentWarnings(unittest.TestCase):
             people_per_shift=2,
         )
         joined = " | ".join(warnings)
-        self.assertIn("müsait değil", joined)
+        self.assertIn("izinli olarak işaretli", joined)
         self.assertIn("Ali ve Ayşe birlikte çalışamaz", joined)
         self.assertIn("3 kişi atandı, en fazla 2", joined)
 
