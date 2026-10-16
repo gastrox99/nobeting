@@ -1576,6 +1576,20 @@ class TestBackup(unittest.TestCase):
                       ("Ali", "2 Çar", False), ("Ayşe", "2 Çar", True)],
         }]
 
+    def test_yedekte_uygulamanin_kullanmadigi_kayitlar_atlanir(self):
+        rows = self._rows()
+        rows.append(dict(rows[0], name="Elle Kayıt"))
+        rows.append(dict(rows[0], name="Otomatik_2026_10"))  # adı ayla uyuşmuyor
+        backup, errors = parse_backup(backup_to_bytes(build_backup(None, rows)))
+        self.assertEqual(errors, [])
+        self.assertEqual([item["name"] for item in backup["schedules"]], ["Otomatik_2026_09"])
+        self.assertEqual(backup["skipped"], 2)
+
+    def test_excel_yukleme_sinirlari(self):
+        import nobet_core
+        self.assertEqual(nobet_core.EXCEL_IMPORT_MAX_BYTES, 2 * 1024 * 1024)
+        self.assertGreaterEqual(nobet_core.EXCEL_IMPORT_MAX_ROWS, 32)  # başlık + 31 gün
+
     def test_yedek_dosyasi_geri_okunur(self):
         raw = backup_to_bytes(build_backup({"team": "Ali, Ayşe"}, self._rows()))
         backup, errors = parse_backup(raw)
@@ -1613,10 +1627,15 @@ class TestBackup(unittest.TestCase):
             lambda d: d.update(version=99),
             # Küçük dosyadan milyonlarca satır üretilmesin.
             lambda d: d.update(schedules=[
-                dict(d["schedules"][0], name=f"Ay{i}", team=[f"K{j}" for j in range(300)],
+                dict(d["schedules"][0], name=f"Otomatik_{2030 + i // 12}_{i % 12 + 1:02d}",
+                     year=2030 + i // 12, month=i % 12 + 1, team=[f"K{j}" for j in range(300)],
                      days=[str(k) for k in range(31)], assigned=[])
                 for i in range(60)
             ]),
+            lambda d: d["schedules"][0].update(preferences={"1 Sal": {"Ali": 7}}),
+            lambda d: d["schedules"][0].update(preferences={"1 Sal": {"Ali": "<b>"}}),
+            lambda d: d["schedules"][0].update(rows=[{"Tarih": ["iç içe"]}]),
+            lambda d: d["schedules"][0].update(rows=[{"Tarih": "x"}] * 40),
         ):
             data = json.loads(json.dumps(good))
             mutate(data)

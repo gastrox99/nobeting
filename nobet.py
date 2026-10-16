@@ -36,6 +36,8 @@ try:
         build_person_ics,
         build_share_text,
         BACKUP_MAX_BYTES,
+        EXCEL_IMPORT_MAX_BYTES,
+        EXCEL_IMPORT_MAX_ROWS,
         backup_reminder,
         backup_summary,
         backup_to_bytes,
@@ -128,6 +130,8 @@ except ImportError:
         build_person_ics,
         build_share_text,
         BACKUP_MAX_BYTES,
+        EXCEL_IMPORT_MAX_BYTES,
+        EXCEL_IMPORT_MAX_ROWS,
         backup_reminder,
         backup_summary,
         backup_to_bytes,
@@ -973,6 +977,11 @@ if _db_ready:
                     _summary = backup_summary(_parsed_backup)
                     _created = _parsed_backup.get("created_at")
                     st.info(f"Yedek: {_summary}" + (f" · oluşturulma {_created}" if _created else ""))
+                    if _parsed_backup.get("skipped"):
+                        st.caption(
+                            f"Uygulamanın kullanmadığı {_parsed_backup['skipped']} eski kayıt "
+                            "geri yüklenmeyecek."
+                        )
                     _confirm = st.checkbox("Mevcut kayıtların üzerine yazılsın", key="backup_restore_confirm")
                     if st.button("♻️ Geri yükle", type="primary", disabled=not _confirm, width="stretch"):
                         try:
@@ -2533,18 +2542,23 @@ with _import_col:
         if _uploaded is not None and _upload_id != st.session_state.get("excel_import_done"):
             st.session_state.excel_import_done = _upload_id
             _msgs = []
-            try:
-                _xl = pd.ExcelFile(_uploaded)
-                _sheet = "Günlük Liste" if "Günlük Liste" in _xl.sheet_names else _xl.sheet_names[0]
-                _imp = import_schedule_table(
-                    pd.read_excel(_xl, sheet_name=_sheet),
-                    isimler, sutunlar, gun_detaylari, role_names, yil, ay,
-                )
-            except Exception as _e:
-                _imp = None
-                _msgs.append(("error",
-                    "Dosya okunamadı. Lütfen uygulamadan indirilen Excel formatını "
-                    f"('Tarih' + görev sütunları) kullandığınızdan emin olun.\n\nDetay: {_e}"))
+            _imp = None
+            if _uploaded.size > EXCEL_IMPORT_MAX_BYTES:
+                # Uygulamanın kendi Excel'i birkaç KB; büyük dosya sunucuyu yorar.
+                _msgs.append(("error", "Dosya çok büyük (en fazla 2 MB). Uygulamadan indirilen Excel'i yükleyin."))
+            else:
+                try:
+                    _xl = pd.ExcelFile(_uploaded)
+                    _sheet = "Günlük Liste" if "Günlük Liste" in _xl.sheet_names else _xl.sheet_names[0]
+                    _imp = import_schedule_table(
+                        # Bir ay en fazla 31 gün; fazlası okunmaz.
+                        pd.read_excel(_xl, sheet_name=_sheet, nrows=EXCEL_IMPORT_MAX_ROWS),
+                        isimler, sutunlar, gun_detaylari, role_names, yil, ay,
+                    )
+                except Exception:
+                    _msgs.append(("error",
+                        "Dosya okunamadı. Lütfen uygulamadan indirilen Excel formatını "
+                        "('Tarih' + görev sütunları) kullandığınızdan emin olun."))
             if _imp is None:
                 pass
             elif not _imp["format_ok"]:

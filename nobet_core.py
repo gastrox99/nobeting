@@ -164,6 +164,12 @@ def parse_schedule_import_date(value):
     return None
 
 
+# Excel yükleme sınırları: uygulamanın kendi Excel'i birkaç KB ve en fazla
+# 31 gün satırı içerir. Büyük dosyalar sunucunun belleğini doldurabiliyordu.
+EXCEL_IMPORT_MAX_BYTES = 2 * 1024 * 1024
+EXCEL_IMPORT_MAX_ROWS = 40
+
+
 def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, yil, ay):
     """Excel'den okunan "Tarih + görev sütunları" tablosunu çizelgeye çevirir.
 
@@ -2726,6 +2732,7 @@ def parse_backup(raw):
     errors = []
     clean = []
     seen = set()
+    skipped = 0
     for index, item in enumerate(schedules, start=1):
         label = f"{index}. kayıt"
         if not isinstance(item, dict):
@@ -2738,6 +2745,11 @@ def parse_backup(raw):
         if (isinstance(year, bool) or not isinstance(year, int) or not YEAR_MIN <= year <= YEAR_MAX
                 or isinstance(month, bool) or not isinstance(month, int) or not 1 <= month <= 12):
             errors.append(f"{label} ({name}): yıl/ay geçersiz.")
+            continue
+        # Uygulama yalnızca "Otomatik_YYYY_AA" kayıtlarını kullanır; diğerleri
+        # (eski elle kayıtlar) görünmeden yer kaplardı, geri yüklenmez.
+        if name != f"Otomatik_{year}_{month:02d}":
+            skipped += 1
             continue
         key = (name, year, month)
         if key in seen:
@@ -2758,13 +2770,13 @@ def parse_backup(raw):
             errors.append(f"{label} ({name} {month}/{year}): nöbetler geçersiz.")
             continue
         preferences, sched_settings, rows = item.get("preferences"), item.get("settings"), item.get("rows")
-        if preferences is not None and not isinstance(preferences, dict):
+        if preferences is not None and not _valid_backup_preferences(preferences):
             errors.append(f"{label} ({name} {month}/{year}): tercihler geçersiz.")
             continue
         if sched_settings is not None and not isinstance(sched_settings, dict):
             errors.append(f"{label} ({name} {month}/{year}): ay ayarları geçersiz.")
             continue
-        if rows is not None and (not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows)):
+        if rows is not None and not _valid_backup_rows(rows):
             errors.append(f"{label} ({name} {month}/{year}): görev listesi geçersiz.")
             continue
         clean.append({
@@ -2781,7 +2793,40 @@ def parse_backup(raw):
         "created_at": str(data.get("created_at") or "")[:40],
         "settings": settings,
         "schedules": clean,
+        "skipped": skipped,
     }, []
+
+
+def _valid_backup_preferences(preferences):
+    """Tercihler {gün: {kişi: 0-3}} biçiminde olmalı (pandas to_json çıktısı)."""
+    if not isinstance(preferences, dict) or len(preferences) > 31:
+        return False
+    for day, column in preferences.items():
+        if not _short_text(day, 50) or not isinstance(column, dict) or len(column) > _BACKUP_MAX_PEOPLE:
+            return False
+        for person, value in column.items():
+            if not _short_text(person) or isinstance(value, bool):
+                return False
+            if value is not None and (not isinstance(value, (int, float)) or not 0 <= value <= 3):
+                return False
+    return True
+
+
+def _valid_backup_rows(rows):
+    """Görev listesi: en fazla 31 satır, her satır kısa metin değerli sözlük."""
+    if not isinstance(rows, list) or len(rows) > 31:
+        return False
+    for row in rows:
+        if not isinstance(row, dict) or len(row) > 60:
+            return False
+        for key, value in row.items():
+            if not _short_text(key):
+                return False
+            if value is not None and not isinstance(value, (str, int, float)):
+                return False
+            if isinstance(value, str) and len(value) > _BACKUP_MAX_TEXT:
+                return False
+    return True
 
 
 def backup_summary(backup):
