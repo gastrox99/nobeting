@@ -1780,6 +1780,67 @@ def _balance_by_swaps(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
     return schedule
 
 
+def _fill_open_days(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+                    df_preferred, min_bosluk, forbidden_pairs, person_limits,
+                    initial_last_shift, kisi_sayisi):
+    """Dengeleme takaslarından sonra doldurulabilir hâle gelen boş yerleri doldurur.
+
+    Takas birini bir günden çekince o kişi, daha önce kimsenin alamadığı
+    bir güne uygun hâle gelebilir. Aday izinli olmamalı, dinlenme kuralına,
+    yasak çiftlere ve max limitine uymalı. Kaçınma günü olmayan ve en az
+    nöbeti olan önce gelir; kaçınma günü yalnızca başka aday yoksa verilir.
+    """
+    initial = initial_last_shift or {}
+    limits = person_limits or {}
+    day_of = {col: gun_detaylari[col]["day_num"] for col in sutunlar}
+
+    def avoided(person, col):
+        if df_preferred is None or person not in df_preferred.index or col not in df_preferred.columns:
+            return False
+        try:
+            return int(df_preferred.at[person, col]) == 2
+        except (TypeError, ValueError):
+            return False
+
+    def special(col):
+        info = gun_detaylari[col]
+        return bool(info.get("weekend") or info.get("holiday"))
+
+    def eligible(person, col):
+        if bool(schedule.at[person, col]) or bool(df_unwanted_bool.at[person, col]):
+            return False
+        day = day_of[col]
+        previous = initial.get(person)
+        if previous is not None and day - previous <= min_bosluk:
+            return False
+        for other in sutunlar:
+            if other != col and bool(schedule.at[person, other]) and abs(day_of[other] - day) <= min_bosluk:
+                return False
+        if forbidden_pairs:
+            for mate in schedule.index[schedule[col]]:
+                if tuple(sorted((person, mate))) in forbidden_pairs:
+                    return False
+        max_limit = limits.get(person, {}).get("max")
+        if max_limit is not None and int(schedule.loc[person].sum()) >= max_limit:
+            return False
+        return True
+
+    for col in sutunlar:
+        while int(schedule[col].sum()) < kisi_sayisi:
+            candidates = [p for p in isimler if eligible(p, col)]
+            if not candidates:
+                break
+            sp = special(col)
+            best = min(candidates, key=lambda p: (
+                avoided(p, col),
+                int(schedule.loc[p].sum()),
+                sum(1 for c in sutunlar if special(c) and bool(schedule.at[p, c])) if sp else 0,
+                isimler.index(p),
+            ))
+            schedule.at[best, col] = True
+    return schedule
+
+
 def is_friday_column(info):
     """Tatil olmayan Cuma mı? (Tatile denk gelen Cuma zaten özel gün sayılır.)"""
     return info.get("weekday") == 4 and not info.get("weekend") and not info.get("holiday")
@@ -2200,6 +2261,11 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                 {(p, c) for c, people in fixed_by_col.items() for p in people},
                 initial_last_shift, history_holiday,
             )
+        best_schedule = _fill_open_days(
+            best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+            df_preferred, min_bosluk, forbidden_pairs, person_limits,
+            initial_last_shift, kisi_sayisi,
+        )
     return best_schedule, best_score
 
 

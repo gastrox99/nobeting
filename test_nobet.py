@@ -2583,6 +2583,62 @@ class _FakeDbConnection:
 # ------------------------------------------------------------------------------
 # İnceleme raporundaki düzeltmeler (Ekim 2026)
 # ------------------------------------------------------------------------------
+class TestFillOpenDays(unittest.TestCase):
+    """Dengeleme takasından sonra doldurulabilir boş yer kalmamalı."""
+
+    def _setup(self):
+        from nobet_core import build_gun_detaylari
+        gd = build_gun_detaylari(2027, 4, 30, [])
+        cols = list(gd)
+        names = ["A", "B", "C"]
+        schedule = pd.DataFrame(False, index=names, columns=cols)
+        unw = pd.DataFrame(False, index=names, columns=cols)
+        return gd, cols, names, schedule, unw
+
+    def test_bos_gun_kurala_uyan_en_az_nobetliye_verilir(self):
+        from nobet_core import _fill_open_days
+        gd, cols, names, schedule, unw = self._setup()
+        # 10. gün boş; A 9'da nöbetçi (dinlenme 1 gün), B izinli, C uygun.
+        for col in cols:
+            if gd[col]["day_num"] != 10:
+                schedule.at[names[gd[col]["day_num"] % 3], col] = True
+        target = cols[9]
+        schedule.loc[:, target] = False
+        schedule.at["A", cols[8]] = True
+        schedule.loc[["B", "C"], cols[8]] = False
+        unw.at["B", target] = True
+        schedule.loc[:, cols[10]] = False
+        schedule.at["A", cols[10]] = True
+        result = _fill_open_days(schedule, names, cols, gd, unw, None, 1, set(), {}, {}, 1)
+        self.assertEqual(result.index[result[target]].tolist(), ["C"])
+
+    def test_kural_disi_aday_yoksa_bos_kalir(self):
+        from nobet_core import _fill_open_days
+        gd, cols, names, schedule, unw = self._setup()
+        target = cols[14]
+        unw.at["A", target] = True                      # izinli
+        schedule.at["B", cols[13]] = True                # dinlenme
+        schedule.at["C", cols[0]] = True                 # max 1 dolu
+        result = _fill_open_days(
+            schedule.copy(), names, [target, cols[13], cols[0]], gd, unw, None, 1, set(),
+            {"C": {"min": 0, "max": 1}}, {}, 1,
+        )
+        self.assertFalse(result[target].any())
+
+    def test_yasak_cift_ve_kacinma_gunu(self):
+        from nobet_core import _fill_open_days
+        gd, cols, names, schedule, unw = self._setup()
+        target = cols[4]
+        schedule.at["A", target] = True
+        pref = pd.DataFrame(0, index=names, columns=cols)
+        pref.at["C", target] = 2
+        # B, A ile çalışamaz; C kaçınıyor ama başka aday yok.
+        result = _fill_open_days(
+            schedule.copy(), names, cols, gd, unw, pref, 1, {("A", "B")}, {}, {}, 2,
+        )
+        self.assertEqual(sorted(result.index[result[target]]), ["A", "C"])
+
+
 class TestReviewFixes(unittest.TestCase):
 
     def test_buyuk_harfli_turkce_ay_adlari_okunur(self):
