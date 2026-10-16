@@ -24,7 +24,7 @@ if not TEST_DB:
 
 from playwright.sync_api import expect, sync_playwright  # noqa: E402
 
-from test_browser_nobet import APP_DIR, _day_button, _no_exception, _open_app, _wait_idle  # noqa: E402
+from test_browser_nobet import APP_DIR, _day_button, _no_exception, _wait_idle  # noqa: E402
 
 ALI, AYSE = "Yedek Ali", "Yedek Ayşe"
 
@@ -88,6 +88,33 @@ def app_url():
             server.wait(timeout=5)
         server.stderr.close()
         _clear_anonymous_data()
+
+
+def _launch(playwright):
+    return playwright.chromium.launch(
+        headless=True, executable_path=os.environ.get("CHROMIUM_EXECUTABLE") or shutil.which("chromium"),
+        args=["--no-sandbox"],
+    )
+
+
+def _open_app(playwright, app_url, team):
+    """Sayfa tamamen yüklendikten sonra ekibi girer.
+
+    Ayarlar paneli sayfa yüklenirken henüz görünmeyebilir; o anda başlığa
+    tıklamak, açık gelecek paneli kapatırdı.
+    """
+    browser = _launch(playwright)
+    page = browser.new_page(viewport={"width": 1600, "height": 1000})
+    page.goto(app_url)
+    page.get_by_text("⚙️ Ayarlar").wait_for()
+    _wait_idle(page)
+    box = page.get_by_role("textbox", name="👥 Ekip (virgülle ayırın):")
+    if not box.is_visible():
+        page.get_by_text("⚙️ Ayarlar").click()
+    box.fill(team)
+    box.press("Tab")
+    page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
+    return browser, page
 
 
 def _cell(page, person, day_index):
@@ -220,10 +247,7 @@ def test_bozuk_yedek_dosyasi_reddedilir(app_url, tmp_path):
     bad = tmp_path / "bozuk.json"
     bad.write_text('{"format": "baska"}', encoding="utf-8")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            headless=True, executable_path=os.environ.get("CHROMIUM_EXECUTABLE") or shutil.which("chromium"),
-            args=["--no-sandbox"],
-        )
+        browser = _launch(playwright)
         try:
             page = browser.new_page(viewport={"width": 1600, "height": 1000})
             page.goto(app_url)
