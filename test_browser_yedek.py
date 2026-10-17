@@ -144,8 +144,9 @@ def _restore_selected(page, section, option_text):
     select.click()
     page.get_by_role("option").filter(has_text=option_text).first.click()
     _wait_idle(page, 1.0)
-    # Seçim sayfayı yeniden çizer; bölüm kapanmış olabilir.
-    section = _open_backup_section(page)
+    # Yedekle ya da geri yüklemeden sonraki ilk seçim bölümü kapatmamalı
+    # (eskiden bildirim kaybolunca bölüm yer değiştirip kapanıyordu).
+    assert section.locator("details").get_attribute("open") is not None, "Yedek bölümü seçimden sonra kapandı"
     section.get_by_text("Mevcut kayıtların üzerine yazılsın").first.click()
     restore = section.get_by_role("button", name="♻️ Bu yedeğe dön")
     expect(restore).to_be_enabled()
@@ -182,17 +183,18 @@ def test_yedekle_ve_geri_yukle(app_url, tmp_path):
             assert _cell(page, ALI, 0) == "✓"
             assert _cell(page, AYSE, 1) == "·"
 
+            # 3) "Son geri yüklemeden önceki hâl": yanlış geri yükleme geri alınır.
+            # Geri yükleme bildirimi ekrandayken yapılan seçim bölümü kapatmamalı.
+            section = _open_backup_section(page)
+            _restore_selected(page, section, "Son geri yüklemeden önceki hâl")
+            assert _cell(page, ALI, 0) == "·"
+            assert _cell(page, AYSE, 1) == "✓"
+
             # Sayfa yenilenince de aynı kalır (geri yükleme kaydedildi).
             page.reload()
             _wait_idle(page)
             page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
             _wait_idle(page, 1.0)
-            assert _cell(page, ALI, 0) == "✓"
-            assert _cell(page, AYSE, 1) == "·"
-
-            # 3) "Son geri yüklemeden önceki hâl": yanlış geri yükleme geri alınır.
-            section = _open_backup_section(page)
-            _restore_selected(page, section, "Son geri yüklemeden önceki hâl")
             assert _cell(page, ALI, 0) == "·"
             assert _cell(page, AYSE, 1) == "✓"
 
