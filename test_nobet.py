@@ -35,6 +35,21 @@ from nobet_core import (
     schedule_totals,
     build_share_text,
     build_person_ics,
+    shared_default_month,
+    shared_day_states,
+    on_duty_summary,
+    shared_updated_text,
+    preference_summary,
+    pair_label,
+    forbidden_pair_choices,
+    forbidden_pairs_to_text,
+    person_limits_to_text,
+    parse_forbidden_pairs,
+    parse_person_limits_with_issues,
+    official_half_days,
+    required_work_hours,
+    parse_holiday_days,
+    default_holiday_text,
     restore_auto_saved_schedule,
     build_gun_detaylari,
     build_schedule_analysis,
@@ -2039,6 +2054,147 @@ class TestStaleModuleRecovery(unittest.TestCase):
         fresh = importlib.import_module("db")
         importlib.reload(fresh)
         self.assertTrue(hasattr(fresh, "resolve_share_token"))
+
+
+class TestSharedPageHelpers(unittest.TestCase):
+    ROWS = [
+        {"Tarih": "30.10.2026 Cum", "AYB": "Ali", "GYB": "Ayşe"},
+        {"Tarih": "31.10.2026 Cmt", "AYB": "Can", "GYB": "-"},
+        {"Tarih": "29.10.2026 Per", "AYB": "Deniz", "GYB": "Ece"},
+    ]
+
+    def test_ilk_acilan_ay(self):
+        from datetime import date
+        months = [(2026, 9), (2026, 10), (2026, 12)]
+        self.assertEqual(shared_default_month(months, date(2026, 10, 17)), 1)
+        # Bu ay kayıtlı değilse bugünden önceki son ay.
+        self.assertEqual(shared_default_month(months, date(2026, 11, 5)), 1)
+        self.assertEqual(shared_default_month(months, date(2026, 8, 1)), 0)
+        self.assertEqual(shared_default_month(months, date(2027, 3, 1)), 2)
+        self.assertIsNone(shared_default_month([], date(2026, 10, 17)))
+
+    def test_gun_durumlari(self):
+        from datetime import date
+        self.assertEqual(
+            shared_day_states(self.ROWS, 2026, 10, date(2026, 10, 30)),
+            ["today", "future", "past"],
+        )
+        self.assertEqual(shared_day_states([{"Tarih": "?"}], 2026, 10, date(2026, 10, 30)), ["future"])
+
+    def test_bugun_ve_yarin_nobetciler(self):
+        from datetime import date
+        self.assertEqual(
+            on_duty_summary(self.ROWS, ["AYB", "GYB"], 2026, 10, date(2026, 10, 30)),
+            [("Bugün", "Ali (AYB) · Ayşe (GYB)"), ("Yarın", "Can (AYB)")],
+        )
+        # Ayın son günü: yarın bu ayda değil, yalnızca bugün yazılır.
+        self.assertEqual(
+            on_duty_summary(self.ROWS, ["AYB", "GYB"], 2026, 10, date(2026, 10, 31)),
+            [("Bugün", "Can (AYB)")],
+        )
+        # Başka ay açıkken kutu çıkmaz.
+        self.assertEqual(on_duty_summary(self.ROWS, ["AYB", "GYB"], 2026, 10, date(2026, 11, 2)), [])
+        plain = [{"Tarih": "05.11.2026 Per", "Nöbetçiler": "Ali, Can"}]
+        self.assertEqual(on_duty_summary(plain, ["Nöbetçiler"], 2026, 11, date(2026, 11, 5)),
+                         [("Bugün", "Ali, Can")])
+
+    def test_son_guncelleme_metni(self):
+        from datetime import datetime
+        self.assertEqual(shared_updated_text(datetime(2026, 10, 17, 9, 5)), "17 Ekim 2026, 09:05")
+        self.assertEqual(shared_updated_text(None), "")
+
+    def test_paylas_dugmesi_tek_kalici_baglanti_kullanir(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        share = source[source.index('with st.popover("🔗 Paylaş"'):source.index("with _import_col:")]
+        self.assertIn("create_share_link(current_owner, 0, 0)", share)
+        self.assertNotIn("current_owner, yil, ay", share)
+        self.assertEqual(share.count("delete_all_share_links(current_owner)"), 2)
+
+
+class TestArifeMesai(unittest.TestCase):
+    def _details(self, yil, ay, holiday_text=None):
+        import calendar
+        days = calendar.monthrange(yil, ay)[1]
+        text = default_holiday_text(yil, ay) if holiday_text is None else holiday_text
+        return build_gun_detaylari(yil, ay, days, parse_holiday_days(text, days)[0])
+
+    def test_arifeler(self):
+        self.assertEqual(official_half_days(2026, 10), [(28, "Cumhuriyet Bayramı arifesi")])
+        self.assertEqual(official_half_days(2026, 3), [(19, "Ramazan Bayramı arifesi")])
+        self.assertEqual(official_half_days(2026, 5), [(26, "Kurban Bayramı arifesi")])
+        self.assertEqual(official_half_days(2026, 12), [])
+
+    def test_ise_dusen_arife_yarim_gun_sayilir(self):
+        # Ekim 2026: 21 iş günü, 28 Ekim Çarşamba yarım gün.
+        hours, counted = required_work_hours(self._details(2026, 10), official_half_days(2026, 10))
+        self.assertEqual(hours, 20 * 8 + 4)
+        self.assertEqual(counted, [(28, "Cumhuriyet Bayramı arifesi")])
+
+    def test_tatil_yapilan_ya_da_hafta_sonuna_dusen_arife_dusulmez(self):
+        details = self._details(2026, 10, "28, 29")
+        hours, counted = required_work_hours(details, official_half_days(2026, 10))
+        self.assertEqual((hours, counted), (20 * 8, []))
+        # 28 Ekim 2029 Pazar: arife hafta sonunda.
+        hours, counted = required_work_hours(self._details(2029, 10), official_half_days(2029, 10))
+        self.assertEqual(counted, [])
+
+    def test_arifesiz_ay_eski_hesapla_ayni(self):
+        details = self._details(2026, 11)
+        working = sum(1 for d in details.values() if not (d["weekend"] or d["holiday"]))
+        self.assertEqual(required_work_hours(details, official_half_days(2026, 11)), (working * 8, []))
+
+
+class TestSecmeliAyarlar(unittest.TestCase):
+    def test_ikili_secenekleri_ekipten_kurulur(self):
+        choices = forbidden_pair_choices(["Can", "Ali", "Ayşe"], {("Zeki", "Ali")})
+        self.assertEqual(choices["Ali – Can"], ("Ali", "Can"))
+        # Ekipte olmayan isimli kayıtlı ikili de listede (uyarı gösterilir).
+        self.assertIn("Ali – Zeki", choices)
+        self.assertEqual(len(choices), 4)
+        self.assertEqual(pair_label(("Can", "Ali")), "Ali – Can")
+
+    def test_ikili_metni_geri_okunur(self):
+        team = ["Ayşe-Nur", "Ali", "Can"]
+        pairs = {("Ali", "Ayşe-Nur"), ("Can", "Ali")}
+        text = forbidden_pairs_to_text(pairs)
+        self.assertEqual(text, "Ali-Ayşe-Nur, Ali-Can")
+        self.assertEqual(parse_forbidden_pairs(text, team), {("Ali", "Ayşe-Nur"), ("Ali", "Can")})
+        self.assertEqual(forbidden_pairs_to_text([]), "")
+
+    def test_limit_metni_geri_okunur(self):
+        limits = {"Ali": {"min": 2, "max": 5}, "Can": {"min": 1, "max": 999}}
+        text = person_limits_to_text(limits)
+        self.assertEqual(text, "Ali:2-5\nCan:1-999")
+        self.assertEqual(parse_person_limits_with_issues(text), (limits, [], []))
+        self.assertEqual(person_limits_to_text({}), "")
+
+    def test_ayarlar_seçim_kutusuyla_girilir(self):
+        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.assertNotIn('st.text_area(\n            "🚫 Birlikte', source)
+        self.assertNotIn('st.text_area(\n            "📊 Kişisel', source)
+        self.assertIn('"🚫 Birlikte Çalışamayan:",\n            list(_fp_choices)', source)
+
+
+class TestTercihOzeti(unittest.TestCase):
+    def test_kisi_basina_tercih_sonuclari(self):
+        cols = ["1 Pzt", "2 Sal", "3 Çar", "4 Per"]
+        schedule = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=cols)
+        schedule.loc["Ali", ["1 Pzt", "3 Çar"]] = True
+        schedule.loc["Ayşe", ["2 Sal", "4 Per"]] = True
+        prefs = pd.DataFrame(0, index=["Ali", "Ayşe"], columns=cols)
+        prefs.loc["Ali", ["1 Pzt", "2 Sal"]] = 1
+        prefs.at["Ali", "3 Çar"] = 2
+        prefs.at["Ayşe", "4 Per"] = 3
+        summary = preference_summary(schedule, prefs, ["Ali", "Ayşe"])
+        self.assertEqual(summary.loc["Ali"].tolist(), [2, 1, "%50", 1, 1, 0])
+        self.assertEqual(summary.loc["Ayşe"].tolist(), [0, 0, "-", 0, 0, 1])
+
+    def test_isaret_yoksa_ozet_yok(self):
+        schedule = pd.DataFrame(True, index=["Ali"], columns=["1 Pzt"])
+        prefs = pd.DataFrame(0, index=["Ali"], columns=["1 Pzt"])
+        self.assertIsNone(preference_summary(schedule, prefs, ["Ali"]))
+        # Tercih tablosunda olmayan kişi ya da gün sorun çıkarmaz.
+        self.assertIsNone(preference_summary(schedule, prefs.iloc[0:0], ["Ali"]))
 
 
 class TestShareLinksDb(unittest.TestCase):

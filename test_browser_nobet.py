@@ -17,7 +17,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -353,5 +353,40 @@ def test_ayar_kutulari_art_arda_duzenlenebilir(app_url):
                 _wait_idle(page)
                 assert _settings_box(page, "textbox", "🏷️ Görev İsimleri:").input_value() == roles
             _no_exception(page)
+        finally:
+            browser.close()
+
+
+def test_yasak_ikili_ve_kisisel_limit_listeden_secilir(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Ayar Ali, Ayar Ayşe, Ayar Can, Ayar Deniz")
+        try:
+            pairs = _settings_box(page, "combobox", "🚫 Birlikte Çalışamayan:")
+            pairs.click()
+            page.get_by_role("option", name="Ayar Ali – Ayar Ayşe").click()
+            _wait_idle(page)
+            people = _settings_box(page, "combobox", "📊 Kişisel Limitler:")
+            people.click()
+            page.get_by_role("option", name="Ayar Can").click()
+            _wait_idle(page)
+            most = _settings_box(page, "spinbutton", "Ayar Can: en çok")
+            assert most.input_value() == ""
+            most.fill("2")
+            most.press("Tab")
+            _wait_idle(page)
+            least = _settings_box(page, "spinbutton", "Ayar Can: en az")
+            least.fill("1")
+            least.press("Tab")
+            _wait_idle(page)
+            # Seçimler yeniden çizimden sonra yerinde kalır.
+            assert _settings_box(page, "spinbutton", "Ayar Can: en çok").input_value() == "2"
+            assert _settings_box(page, "spinbutton", "Ayar Can: en az").input_value() == "1"
+            expect(page.get_by_text("Ayar Ali – Ayar Ayşe")).to_be_visible()
+            page.get_by_role("button", name="⚡ Simülasyon").click()
+            _wait_idle(page)
+            _no_exception(page)
+            # Yasak ikili ve limit hiçbir uyarı olmadan uygulanır.
+            expect(page.get_by_text("ekip listesinde olmayan")).to_have_count(0)
+            expect(page.get_by_text("Kişisel limit sorunları")).to_have_count(0)
         finally:
             browser.close()

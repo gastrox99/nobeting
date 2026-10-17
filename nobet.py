@@ -9,6 +9,7 @@ from io import BytesIO
 from datetime import date
 import time
 import os
+import zlib
 # Streamlit Cloud yeni kodu çektiğinde db / nobet_core modüllerinin eski
 # hâli hafızada kalabiliyor ve yeni fonksiyonlar "ImportError" veriyor.
 # Böyle olursa modülleri tazeleyip yeniden dene (Reboot gerekmesin).
@@ -27,7 +28,8 @@ try:
         init_db, save_schedule, load_schedule,
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
         is_database_configured,
-        create_share_link, get_share_link, delete_share_link, resolve_share_token,
+        create_share_link, get_share_link, resolve_share_token,
+        delete_all_share_links, list_shared_months,
         load_auto_saved_assignments, export_owner_data, restore_owner_data,
         save_backup_snapshot, list_backup_snapshots, load_backup_snapshot,
     )
@@ -36,6 +38,10 @@ try:
         TR_GUN_KISA,
         build_person_ics,
         build_share_text,
+        shared_default_month,
+        shared_day_states,
+        on_duty_summary,
+        shared_updated_text,
         BACKUP_MAX_BYTES,
         EXCEL_IMPORT_MAX_BYTES,
         EXCEL_IMPORT_MAX_ROWS,
@@ -63,6 +69,10 @@ try:
         parse_forbidden_pairs,
         parse_person_limits_with_issues,
         unknown_names,
+        pair_label,
+        forbidden_pair_choices,
+        forbidden_pairs_to_text,
+        person_limits_to_text,
         validate_inputs,
         normalize_owner_email,
         apply_app_settings,
@@ -77,6 +87,8 @@ try:
         YEAR_MAX,
         official_holidays,
         official_holidays_summary,
+        official_half_days,
+        required_work_hours,
         holidays_to_text,
         religious_holidays_known,
         active_locks,
@@ -87,6 +99,7 @@ try:
         collect_app_settings,
         persistence_fingerprint,
         build_schedule_analysis,
+        preference_summary,
         changed_schedule_columns,
         find_person_role,
         get_preference_grid_legend,
@@ -127,7 +140,8 @@ except ImportError:
         init_db, save_schedule, load_schedule,
         save_app_settings, load_app_settings, claim_legacy_data, get_last_error,
         is_database_configured,
-        create_share_link, get_share_link, delete_share_link, resolve_share_token,
+        create_share_link, get_share_link, resolve_share_token,
+        delete_all_share_links, list_shared_months,
         load_auto_saved_assignments, export_owner_data, restore_owner_data,
         save_backup_snapshot, list_backup_snapshots, load_backup_snapshot,
     )
@@ -136,6 +150,10 @@ except ImportError:
         TR_GUN_KISA,
         build_person_ics,
         build_share_text,
+        shared_default_month,
+        shared_day_states,
+        on_duty_summary,
+        shared_updated_text,
         BACKUP_MAX_BYTES,
         EXCEL_IMPORT_MAX_BYTES,
         EXCEL_IMPORT_MAX_ROWS,
@@ -163,6 +181,10 @@ except ImportError:
         parse_forbidden_pairs,
         parse_person_limits_with_issues,
         unknown_names,
+        pair_label,
+        forbidden_pair_choices,
+        forbidden_pairs_to_text,
+        person_limits_to_text,
         validate_inputs,
         normalize_owner_email,
         apply_app_settings,
@@ -177,6 +199,8 @@ except ImportError:
         YEAR_MAX,
         official_holidays,
         official_holidays_summary,
+        official_half_days,
+        required_work_hours,
         holidays_to_text,
         religious_holidays_known,
         active_locks,
@@ -187,6 +211,7 @@ except ImportError:
         collect_app_settings,
         persistence_fingerprint,
         build_schedule_analysis,
+        preference_summary,
         changed_schedule_columns,
         find_person_role,
         get_preference_grid_legend,
@@ -275,12 +300,27 @@ def _render_shared_view(token):
         st.error("Bu paylaşım bağlantısı geçersiz ya da kapatılmış.")
         return
     _owner, _year, _month = _target
+    _months = list_shared_months(_owner)
+    _updated = {(_y, _m): _t for _y, _m, _t in _months}
+    _today = now_tr().date()
+    if (_year, _month) == (0, 0):
+        # Kalıcı bağlantı: kayıtlı ayların hepsi gösterilir, bu ay önce açılır.
+        _periods = list(_updated)
+        if not _periods:
+            st.info("Henüz paylaşılan bir nöbet listesi yok.")
+            return
+        _year, _month = st.selectbox(
+            "Ay:", _periods,
+            index=shared_default_month(_periods, _today),
+            format_func=lambda _p: f"{TR_AY_ADLARI[_p[1]]} {_p[0]}",
+        )
+    else:
+        st.subheader(f"{TR_AY_ADLARI[_month]} {_year}")
     _loaded = load_schedule(f"Otomatik_{_year}_{_month:02d}", _year, _month, owner=_owner)
     _rows = _loaded[4] if _loaded and len(_loaded) > 4 and _loaded[4] else None
     _schedule = _loaded[1] if _loaded else None
     if _schedule is not None:
         _schedule = as_bool_frame(_schedule)
-    st.subheader(f"{TR_AY_ADLARI[_month]} {_year}")
     if _rows:
         _roles = []
         for _row in _rows:
@@ -306,16 +346,43 @@ def _render_shared_view(token):
     else:
         st.info("Bu ay için henüz çizelge yok.")
         return
+    _updated_text = shared_updated_text(_updated.get((_year, _month)))
+    if _updated_text:
+        st.caption(f"Son güncelleme: {_updated_text}")
+    _on_duty = on_duty_summary(_rows, _roles, _year, _month, _today)
+    if _on_duty:
+        for _col, (_label, _text) in zip(st.columns(len(_on_duty)), _on_duty):
+            with _col:
+                st.markdown(
+                    f"<div style='border:1px solid rgba(128,128,128,.35);border-radius:8px;padding:8px 12px;'>"
+                    f"<div style='font-size:12px;opacity:.7;'>{escape_html(_label)} nöbetçi</div>"
+                    f"<div style='font-weight:600;'>{escape_html(_text)}</div></div>",
+                    unsafe_allow_html=True,
+                )
+        st.write("")
     _people = sorted({
         _row.get(_role) for _row in _rows for _role in _roles
         if _row.get(_role) not in (None, "", "-") and _role != "Nöbetçiler"
     })
     _selected = st.selectbox("Kendi nöbetlerini görmek için adını seç:", ["Tümü"] + _people) if _people else "Tümü"
-    _shown = _rows if _selected == "Tümü" else [
-        _row for _row in _rows if any(_row.get(_role) == _selected for _role in _roles)
+    _states = shared_day_states(_rows, _year, _month, _today)
+    _shown = [
+        (_row, _state) for _row, _state in zip(_rows, _states)
+        if _selected == "Tümü" or any(_row.get(_role) == _selected for _role in _roles)
     ]
+    _table = pd.DataFrame(
+        [{_k: _row.get(_k, "-") for _k in ["Tarih"] + _roles} for _row, _ in _shown],
+        columns=["Tarih"] + _roles,
+    )
+    # Geçmiş günler soluk, bugün vurgulu görünür.
+    _row_styles = {
+        "past": "color: rgba(128,128,128,.55);",
+        "today": "font-weight: 700; background-color: rgba(255,200,0,.18);",
+        "future": "",
+    }
+    _shown_states = [_state for _, _state in _shown]
     st.dataframe(
-        pd.DataFrame([{_k: _row.get(_k, "-") for _k in ["Tarih"] + _roles} for _row in _shown]),
+        _table.style.apply(lambda _r: [_row_styles[_shown_states[_r.name]]] * len(_r), axis=1),
         hide_index=True, width="stretch",
     )
     if _selected != "Tümü":
@@ -872,26 +939,57 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             ),
         )
     
+    # Ayarlar metin olarak saklanır; seçim kutuları o metinden kurulur. Anahtar
+    # metne bağlı olduğundan geri yükleme gibi dış değişiklikler de görünür.
     with adv_col2:
-        forbidden_input = st.text_area(
+        _fp_text = st.session_state.get("forbidden_pairs_text", "")
+        _fp_choices = forbidden_pair_choices(isimler, parse_forbidden_pairs(_fp_text, isimler))
+        _fp_selected = st.multiselect(
             "🚫 Birlikte Çalışamayan:",
-            value=st.session_state.get("forbidden_pairs_text", ""),
-            key="w_forbidden_pairs_text",
-            height=68,
-            placeholder="Ali-Ayşe, Mehmet-Fatma"
+            list(_fp_choices),
+            default=[pair_label(_pair) for _pair in parse_forbidden_pairs(_fp_text, isimler)],
+            key=f"w_forbidden_pairs_{zlib.crc32(_fp_text.encode('utf-8'))}",
+            placeholder="Aynı gün nöbet tutmayacak ikiliyi seçin",
         )
-        st.session_state.forbidden_pairs_text = forbidden_input
-    
+        _fp_new_text = forbidden_pairs_to_text(_fp_choices[_label] for _label in _fp_selected)
+        if _fp_new_text != _fp_text:
+            st.session_state.forbidden_pairs_text = _fp_new_text
+            st.rerun()
+        forbidden_input = _fp_text
+
     with adv_col3:
-        limits_text = st.text_area(
+        limits_text = st.session_state.get("limits_text", "")
+        _lim_key = zlib.crc32(limits_text.encode("utf-8"))
+        _lim_current = parse_person_limits_with_issues(limits_text)[0]
+        _lim_people = st.multiselect(
             "📊 Kişisel Limitler:",
-            value=st.session_state.get("limits_text", ""),
-            key="w_limits_text",
-            height=68,
-            placeholder="Ali:5-10\nAyşe:3-8"
+            isimler + unknown_names(_lim_current, isimler),
+            default=list(_lim_current),
+            key=f"w_limit_people_{_lim_key}",
+            placeholder="Limiti olacak kişiyi seçin",
         )
-        st.session_state.limits_text = limits_text
-    
+        _lim_new = {}
+        for _person in _lim_people:
+            _old = _lim_current.get(_person, {"min": 0, "max": 999})
+            _min_col, _max_col = st.columns(2)
+            with _min_col:
+                _min = st.number_input(
+                    f"{_person}: en az", min_value=0, max_value=31, step=1,
+                    value=min(31, _old["min"]), key=f"w_limit_min_{_person}_{_lim_key}",
+                )
+            with _max_col:
+                # En çok, en azdan küçük olamaz; boş = sınırsız.
+                _max = st.number_input(
+                    f"{_person}: en çok", min_value=int(_min), max_value=31, step=1,
+                    value=None if _old["max"] >= 999 else min(31, max(int(_min), _old["max"])),
+                    key=f"w_limit_max_{_person}_{_lim_key}", placeholder="sınırsız",
+                )
+            _lim_new[_person] = {"min": int(_min), "max": 999 if _max is None else int(_max)}
+        _lim_new_text = person_limits_to_text(_lim_new)
+        if _lim_new_text != limits_text:
+            st.session_state.limits_text = _lim_new_text
+            st.rerun()
+
     # Yasak çiftler ve kişisel limitler (ayrıştırma nobet_core'da, test edilir)
     forbidden_pairs = parse_forbidden_pairs(forbidden_input, isimler)
     _fp_unknown = unknown_names([name for pair in forbidden_pairs for name in pair], isimler)
@@ -1169,10 +1267,8 @@ if not isimler: st.stop()
 tr_gunler = TR_GUN_KISA
 gun_detaylari = build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)
 sutunlar = list(gun_detaylari)
-ozel_gun_sayisi = sum(1 for _d in gun_detaylari.values() if _d["weekend"] or _d["holiday"])
 
-calisma_gunu = gun_sayisi - ozel_gun_sayisi
-zorunlu_saat = calisma_gunu * 8
+zorunlu_saat, arife_gunleri = required_work_hours(gun_detaylari, official_half_days(yil, ay))
 
 # --- SESSION ---
 def _save_outgoing_period(period, schedule, preferences, rows):
@@ -2672,25 +2768,28 @@ with _share_col:
         if not _db_ready:
             st.caption("Paylaşım için veritabanı bağlantısı gerekli.")
         else:
-            if (yil, ay) not in _share_cache:
-                _share_cache[(yil, ay)] = get_share_link(current_owner, yil, ay)
-            _token = _share_cache[(yil, ay)]
+            # Tek kalıcı bağlantı (yıl 0, ay 0): bütün ayları gösterir.
+            if "all" not in _share_cache:
+                _share_cache["all"] = get_share_link(current_owner, 0, 0)
+            _token = _share_cache["all"]
             st.caption(
-                f"{TR_AY_ADLARI[ay]} {yil} listesini ekip arkadaşlarınız giriş yapmadan görebilir. "
-                "Kendi adlarını seçip nöbetlerini takvimlerine ekleyebilirler."
+                "Ekip arkadaşlarınız bu tek bağlantıyla giriş yapmadan bütün ayların listesini görebilir; "
+                "her ay yeni bağlantı göndermeniz gerekmez. Kendi adlarını seçip nöbetlerini takvimlerine ekleyebilirler."
             )
             if _token:
                 st.code(f"{_app_base_url()}?paylas={_token}", language=None)
-                if st.button("🔄 Yeni bağlantı oluştur (eskisi çalışmaz)", width="stretch"):
-                    _share_cache[(yil, ay)] = create_share_link(current_owner, yil, ay)
+                if st.button("🔄 Yeni bağlantı oluştur (eskileri çalışmaz)", width="stretch"):
+                    # Eski aylık bağlantılar da kapanır.
+                    if delete_all_share_links(current_owner):
+                        _share_cache["all"] = create_share_link(current_owner, 0, 0)
                     st.rerun()
                 if st.button("🚫 Paylaşımı kapat", width="stretch"):
-                    if delete_share_link(current_owner, yil, ay):
-                        _share_cache[(yil, ay)] = None
+                    if delete_all_share_links(current_owner):
+                        _share_cache["all"] = None
                     st.rerun()
             elif st.button("🔗 Bağlantı oluştur", type="primary", width="stretch"):
-                _share_cache[(yil, ay)] = create_share_link(current_owner, yil, ay)
-                if not _share_cache[(yil, ay)]:
+                _share_cache["all"] = create_share_link(current_owner, 0, 0)
+                if not _share_cache["all"]:
                     st.error("Bağlantı oluşturulamadı.")
                 else:
                     st.rerun()
@@ -2993,6 +3092,12 @@ with tab_analiz:
 
     with an3:
         st.markdown("**Ücret Özeti**")
+        _mesai_text = f"Zorunlu mesai {zorunlu_saat} saat: hafta içi iş günü 8 saat"
+        if arife_gunleri:
+            _mesai_text += ", " + ", ".join(
+                f"{_day} {TR_AY_ADLARI[ay]} {_name}" for _day, _name in arife_gunleri
+            ) + " yarım gün (4 saat)"
+        st.caption(_mesai_text + ".")
         st.dataframe(
             df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
                                   .format({"Ücret (TL)": "₺ {:,.2f}"}),
@@ -3002,3 +3107,15 @@ with tab_analiz:
     with an4:
         st.markdown("**Eşleşme Matrisi**")
         st.dataframe(pair_display, width="stretch")
+
+    # Satır 3: Ekip tercih özeti (tercih/kaçın/izin işaretlerinin sonucu)
+    st.markdown("**Tercih Özeti**")
+    _pref_summary = preference_summary(edited_df, st.session_state.pref_df, isimler)
+    if _pref_summary is None:
+        st.caption("Tabloda işaretli tercih, kaçınma ya da izin günü yok.")
+    else:
+        st.caption(
+            "Her kişinin yeşil (tercih) günlerinin kaçında nöbet tuttuğu, sarı (kaçın) günlerine "
+            "kaç nöbet düştüğü ve izinli gününe nöbet yazılıp yazılmadığı."
+        )
+        st.dataframe(_pref_summary, width="stretch")
