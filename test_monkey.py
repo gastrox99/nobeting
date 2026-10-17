@@ -319,10 +319,10 @@ def run_round(page, rnd, seed):
             return
         person = rnd.choice(names[:2])
         toggle_choice("📊 Kişisel Limitler:", person, "limit")
-        _wait = page.get_by_role("spinbutton", name=f"{person}: en çok")
+        _wait = page.get_by_role("spinbutton", name=f"{person}: en fazla nöbet")
         if _wait.count() and _wait.first.is_visible():
             value = rnd.choice(["", "2", "4", "8"])
-            history.append(f"limit_en_çok={value!r}")
+            history.append(f"limit_en_fazla={value!r}")
             _wait.first.fill(value)
             _wait.first.press("Tab")
 

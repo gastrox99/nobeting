@@ -970,21 +970,14 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         )
         _lim_new = {}
         for _person in _lim_people:
-            _old = _lim_current.get(_person, {"min": 0, "max": 999})
-            _min_col, _max_col = st.columns(2)
-            with _min_col:
-                _min = st.number_input(
-                    f"{_person}: en az", min_value=0, max_value=31, step=1,
-                    value=min(31, _old["min"]), key=f"w_limit_min_{_person}_{_lim_key}",
-                )
-            with _max_col:
-                # En çok, en azdan küçük olamaz; boş = sınırsız.
-                _max = st.number_input(
-                    f"{_person}: en çok", min_value=int(_min), max_value=31, step=1,
-                    value=None if _old["max"] >= 999 else min(31, max(int(_min), _old["max"])),
-                    key=f"w_limit_max_{_person}_{_lim_key}", placeholder="sınırsız",
-                )
-            _lim_new[_person] = {"min": int(_min), "max": 999 if _max is None else int(_max)}
+            # Yalnızca en fazla nöbet girilir; boş = sınırsız.
+            _old_max = _lim_current.get(_person, {}).get("max", 999)
+            _max = st.number_input(
+                f"{_person}: en fazla nöbet", min_value=0, max_value=31, step=1,
+                value=None if _old_max >= 999 else min(31, _old_max),
+                key=f"w_limit_max_{_person}_{_lim_key}", placeholder="sınırsız",
+            )
+            _lim_new[_person] = {"min": 0, "max": 999 if _max is None else int(_max)}
         _lim_new_text = person_limits_to_text(_lim_new)
         if _lim_new_text != limits_text:
             st.session_state.limits_text = _lim_new_text

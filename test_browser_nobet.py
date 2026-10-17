@@ -369,18 +369,14 @@ def test_yasak_ikili_ve_kisisel_limit_listeden_secilir(app_url):
             people.click()
             page.get_by_role("option", name="Ayar Can").click()
             _wait_idle(page)
-            most = _settings_box(page, "spinbutton", "Ayar Can: en çok")
+            most = _settings_box(page, "spinbutton", "Ayar Can: en fazla nöbet")
             assert most.input_value() == ""
             most.fill("2")
             most.press("Tab")
             _wait_idle(page)
-            least = _settings_box(page, "spinbutton", "Ayar Can: en az")
-            least.fill("1")
-            least.press("Tab")
-            _wait_idle(page)
-            # Seçimler yeniden çizimden sonra yerinde kalır.
-            assert _settings_box(page, "spinbutton", "Ayar Can: en çok").input_value() == "2"
-            assert _settings_box(page, "spinbutton", "Ayar Can: en az").input_value() == "1"
+            # En az alanı yok; seçim yeniden çizimden sonra yerinde kalır.
+            expect(page.get_by_role("spinbutton", name="Ayar Can: en az")).to_have_count(0)
+            assert _settings_box(page, "spinbutton", "Ayar Can: en fazla nöbet").input_value() == "2"
             expect(page.get_by_text("Ayar Ali – Ayar Ayşe")).to_be_visible()
             page.get_by_role("button", name="⚡ Simülasyon").click()
             _wait_idle(page)
