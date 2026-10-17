@@ -1003,19 +1003,22 @@ if _db_ready:
     _kept_backup_at = st.session_state.pop("backup_restored_last_at", None)
     if _kept_backup_at and _kept_backup_at > str(st.session_state.get("last_backup_at") or ""):
         st.session_state.last_backup_at = _kept_backup_at
-    if _restored_notice:
-        # Onay kutuları işaretli kalmasın; ikinci bir geri yükleme kazara yapılmasın.
-        st.session_state.snapshot_restore_confirm = False
-        st.session_state.backup_restore_confirm = False
-        st.success(
-            f"✅ Yedek geri yüklendi: {_restored_notice}. "
-            "Önceki hâl Yedek bölümünde \"Son geri yüklemeden önceki hâl\" olarak saklandı."
-        )
-    _snapshot_notice = st.session_state.pop("snapshot_notice", None)
-    if _snapshot_notice:
-        st.success(f"✅ {_snapshot_notice}")
-        # Tuş sayfanın aşağısında; bildirim oradan da görünsün.
-        st.toast(f"✅ {_snapshot_notice}")
+    # Bildirimler her zaman var olan bir kabın içinde: bildirim bir sonraki
+    # tıklamada kaybolunca Yedek bölümü yer değiştirip kapanmasın.
+    with st.container():
+        if _restored_notice:
+            # Onay kutuları işaretli kalmasın; ikinci bir geri yükleme kazara yapılmasın.
+            st.session_state.snapshot_restore_confirm = False
+            st.session_state.backup_restore_confirm = False
+            st.success(
+                f"✅ Yedek geri yüklendi: {_restored_notice}. "
+                "Önceki hâl Yedek bölümünde \"Son geri yüklemeden önceki hâl\" olarak saklandı."
+            )
+        _snapshot_notice = st.session_state.pop("snapshot_notice", None)
+        if _snapshot_notice:
+            st.success(f"✅ {_snapshot_notice}")
+            # Tuş sayfanın aşağısında; bildirim oradan da görünsün.
+            st.toast(f"✅ {_snapshot_notice}")
     _backup_hint = backup_reminder(st.session_state.get("last_backup_at"))
     _backup_label = "💾 Yedek" + (f" — {_backup_hint} İndirmeniz önerilir." if _backup_hint else "")
     with st.expander(_backup_label, expanded=False):
