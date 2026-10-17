@@ -179,6 +179,21 @@ def snapshot(page):
     return json.dumps(rows, ensure_ascii=False, sort_keys=True)
 
 
+def assigned_cells(page):
+    """Ekrandaki nöbetler {(kişi, gün)}; tercih/kilit işaretleri sayılmaz."""
+    return {(r["name"], i) for r in grid(page) for i, c in enumerate(r["cells"]) if c in ASSIGNED}
+
+
+def open_backup_section(page):
+    section = page.locator("[data-testid='stExpander']").filter(
+        has=page.locator("summary", has_text="💾 Yedek")).first
+    section.scroll_into_view_if_needed()
+    if section.locator("details").get_attribute("open") is None:
+        section.locator("summary").click()
+    section.get_by_text("Uygulamadaki yedekler").wait_for(timeout=10000)
+    return section
+
+
 def run_round(page, rnd, seed):
     history = []
     team = ["Ali", "Ayşe", "Can", "Deniz", "Ece", "Fatih"]
@@ -293,6 +308,7 @@ def run_round(page, rnd, seed):
         box = ensure_settings(page, "combobox", "📆 Ay")
         month = rnd.randint(1, 12)
         history.append(f"ay={month}")
+        state["month"] = None
         box.click()
         page.get_by_role("option", name=str(month), exact=True).click()
 
@@ -319,6 +335,60 @@ def run_round(page, rnd, seed):
         else:
             page.get_by_role("button", name="Vazgeç").click()
 
+    # Yedek bölümü: ay yedeği (💾 Yedekle) ve geri yükleme. Beklenen nöbetler
+    # yalnızca ekip ve ay aynıyken karşılaştırılır (ay yedeği ekibi içermez).
+    backups = {}
+    state = {"month": None, "undo": None}
+
+    def act_backup():
+        history.append("yedekle")
+        page.get_by_role("button", name="💾 Yedekle").click()
+        notice = page.get_by_text(re.compile(r"\S+ \d{4} (yedeklendi;|için henüz)")).first
+        notice.wait_for(timeout=20000)
+        m = re.search(r"(\S+ \d{4}) (yedeklendi;|için henüz)", notice.inner_text())
+        wait_idle(page)
+        state["month"] = m.group(1)
+        if m.group(2) == "yedeklendi;":
+            click_mode("✏️ Nöbet Ata/Kaldır")
+            wait_idle(page)
+            backups[m.group(1)] = (list(team), assigned_cells(page))
+
+    def restore(option_text, expected, tag):
+        before = assigned_cells(page)
+        section = open_backup_section(page)
+        section.get_by_role("combobox", name="Yedek seçin").click()
+        page.get_by_role("option").filter(has_text=option_text).first.click()
+        wait_idle(page)
+        # Seçim sayfayı yeniden çizer; bölüm kapanmış olabilir.
+        section = open_backup_section(page)
+        section.get_by_text("Mevcut kayıtların üzerine yazılsın").first.click()
+        wait_idle(page)
+        history.append(tag)
+        section.get_by_role("button", name="♻️ Bu yedeğe dön").click()
+        page.get_by_text("✅ Yedek geri yüklendi").wait_for(timeout=30000)
+        wait_idle(page)
+        click_mode("✏️ Nöbet Ata/Kaldır")
+        wait_idle(page)
+        after = assigned_cells(page)
+        if expected is not None and after != expected[1]:
+            note("YEDEKTEN DÖNÜŞ FARKLI",
+                 f"{tag}: beklenen {sorted(expected[1])[:12]} ama {sorted(after)[:12]}", history)
+        state["undo"] = (state["month"], (list(team), before))
+
+    def act_restore_backup():
+        month = state["month"]
+        if month not in backups:
+            return
+        saved_team, cells = backups[month]
+        restore(f"{month} ·", (saved_team, cells) if saved_team == team else None, f"ay-yedeğine-dön({month})")
+
+    def act_undo_restore():
+        if not state["undo"] or state["undo"][0] != state["month"]:
+            return
+        _, (saved_team, cells) = state["undo"]
+        restore("Son geri yüklemeden önceki hâl", (saved_team, cells) if saved_team == team else None,
+                "geri-yükleme-öncesine-dön")
+
     def act_reload():
         before = snapshot(page)
         before_share = share_text(page)
@@ -341,6 +411,7 @@ def run_round(page, rnd, seed):
         (act_cell, 30), (act_pref, 10), (act_undo, 10), (act_sim, 6), (act_cal_swap, 6),
         (act_redistribute, 4), (act_team, 5), (act_holidays, 4), (act_roles, 3), (act_limits, 3),
         (act_pairs, 3), (act_month, 3), (act_people_per_shift, 3), (act_reset, 2), (act_reload, 6),
+        (act_backup, 3), (act_restore_backup, 3), (act_undo_restore, 2),
     ]
     funcs = [a for a, _ in actions]
     weights = [w for _, w in actions]
