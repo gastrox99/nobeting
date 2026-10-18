@@ -1,0 +1,289 @@
+# -*- coding: utf-8 -*-
+"""İyileştir: mevcut çizelgeyi OR-Tools (CP-SAT) ile daha adil hâle getirir.
+
+Simülasyonun yerine geçmez; onun bulduğu listeden başlar. Kurallar
+(izin, dinlenme, günlük kişi sayısı, yasak ikili, en fazla nöbet, kilitli
+nöbetler) aynen uygulanır. Öncelikli dengeler (boş nöbet, toplam, hafta
+sonu/tatil, tatil, Cuma) mevcut listeden kötü olamaz; çözücü bunların
+içinde tercihleri, art arda hafta sonlarını ve nöbet aralıklarını da
+iyileştirir. ortools yalnızca düğmeye basılınca yüklenir.
+"""
+import os
+
+import pandas as pd
+
+from nobet_core import is_friday_column
+
+# Önem sırası (kullanıcı: hafta sonu/tatil > Cuma; toplam farkı en fazla 1 kuralı).
+PRIMARY_METRICS = ("unfilled", "min_short", "total", "special", "holiday", "friday", "total_history")
+SECONDARY_METRICS = ("consecutive_weekends", "avoid", "missed_preference", "spread")
+METRIC_LABELS = {
+    "unfilled": "boş nöbet",
+    "total": "toplam nöbet farkı",
+    "special": "hafta sonu/tatil farkı",
+    "holiday": "tatil farkı",
+    "friday": "Cuma farkı",
+    "total_history": "önceki aylarla toplam farkı",
+    "consecutive_weekends": "art arda hafta sonu nöbeti",
+    "avoid": "kaçınılan güne düşen nöbet",
+    "missed_preference": "karşılanmayan tercih",
+}
+WEIGHTS = {
+    "unfilled": 10_000_000,
+    "min_short": 1_000_000,
+    "total": 200_000,
+    "special": 100_000,
+    "holiday": 20_000,
+    "friday": 5_000,
+    "total_history": 1_000,
+    "consecutive_weekends": 60,
+    "avoid": 40,
+    "missed_preference": 20,
+    "spread": 1,
+}
+
+
+def _is_special(info):
+    return bool(info["weekend"] or info["holiday"])
+
+
+def _pref(df_preferred, person, column):
+    if df_preferred is None or person not in df_preferred.index or column not in df_preferred.columns:
+        return 0
+    try:
+        return int(df_preferred.at[person, column])
+    except (TypeError, ValueError):
+        return 0
+
+
+def _spread_pairs(people, columns, gun_detaylari, min_bosluk, kisi_sayisi):
+    """Aya yayma cezası: ideal aralıktan yakın iki nöbet → (kişi, sütun1, sütun2, ceza)."""
+    ideal = len(people) / max(1, kisi_sayisi)
+    days = {c: gun_detaylari[c]["day_num"] for c in columns}
+    pairs = []
+    for i, first in enumerate(columns):
+        for second in columns[i + 1:]:
+            distance = days[second] - days[first]
+            if min_bosluk < distance < ideal:
+                weight = int(round(ideal - distance))
+                if weight > 0:
+                    pairs.append((first, second, weight))
+    return pairs
+
+
+def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
+                     person_limits=None, df_preferred=None, history_special=None,
+                     history_total=None, history_holiday=None):
+    """Çizelgenin adalet ölçüleri (hepsinde az = iyi). İyileştir öncesi/sonrası karşılaştırılır."""
+    person_limits = person_limits or {}
+    history_special = history_special or {}
+    history_total = history_total or {}
+    history_holiday = history_holiday or {}
+
+    def assigned(person, column):
+        return bool(person in schedule.index and column in schedule.columns and schedule.at[person, column])
+
+    def spread(values):
+        return max(values) - min(values) if values else 0
+
+    totals = {p: sum(assigned(p, c) for c in columns) for p in people}
+    free = [p for p in people if p not in person_limits]
+    has_holiday = any(gun_detaylari[c]["holiday"] for c in columns)
+    has_friday = any(is_friday_column(gun_detaylari[c]) for c in columns)
+    weeks = sorted({gun_detaylari[c]["week"] for c in columns if gun_detaylari[c]["weekend"]})
+    consecutive = 0
+    for p in people:
+        worked = {w for w in weeks if any(
+            assigned(p, c) for c in columns if gun_detaylari[c]["weekend"] and gun_detaylari[c]["week"] == w
+        )}
+        consecutive += sum(1 for w in worked if w + 1 in worked)
+    pairs = _spread_pairs(people, columns, gun_detaylari, min_bosluk, kisi_sayisi)
+    return {
+        "unfilled": sum(max(0, kisi_sayisi - sum(assigned(p, c) for p in people)) for c in columns),
+        "min_short": sum(
+            max(0, person_limits[p].get("min", 0) - totals[p]) for p in people if p in person_limits
+        ),
+        "total": spread([totals[p] for p in free]) if len(free) >= 2 else 0,
+        "special": spread([
+            sum(assigned(p, c) for c in columns if _is_special(gun_detaylari[c])) + history_special.get(p, 0)
+            for p in people
+        ]),
+        "holiday": spread([
+            sum(assigned(p, c) for c in columns if gun_detaylari[c]["holiday"]) + history_holiday.get(p, 0)
+            for p in people
+        ]) if has_holiday else 0,
+        "friday": spread([
+            sum(assigned(p, c) for c in columns if is_friday_column(gun_detaylari[c])) for p in people
+        ]) if has_friday else 0,
+        "total_history": spread([totals[p] + history_total.get(p, 0) for p in free])
+        if history_total and len(free) >= 2 else 0,
+        "consecutive_weekends": consecutive,
+        "avoid": sum(1 for p in people for c in columns if assigned(p, c) and _pref(df_preferred, p, c) == 2),
+        "missed_preference": sum(
+            1 for p in people for c in columns if not assigned(p, c) and _pref(df_preferred, p, c) == 1
+        ),
+        "spread": sum(
+            weight for p in people for first, second, weight in pairs
+            if assigned(p, first) and assigned(p, second)
+        ),
+    }
+
+
+def weighted_score(metrics):
+    return sum(WEIGHTS[name] * metrics[name] for name in WEIGHTS)
+
+
+def improvement_lines(before, after):
+    """Kullanıcıya gösterilecek değişiklikler: ["Cuma farkı 2 → 1", ...]."""
+    lines = []
+    for name in PRIMARY_METRICS + SECONDARY_METRICS:
+        if name in METRIC_LABELS and after[name] != before[name]:
+            lines.append(f"{METRIC_LABELS[name]} {before[name]} → {after[name]}")
+    if not lines and after["spread"] < before["spread"]:
+        lines.append("nöbetler aya daha düzenli yayıldı")
+    return lines
+
+
+def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
+                     forbidden_pairs=None, person_limits=None, df_preferred=None,
+                     fixed_assignments=None, initial_last_shift=None, history_special=None,
+                     history_total=None, history_holiday=None, time_limit=5.0):
+    """Mevcut çizelgeden daha iyisini arar.
+
+    Dönen değer (yeni_çizelge, önceki_ölçüler, yeni_ölçüler). Daha iyisi
+    bulunamazsa yeni_çizelge None olur. Öncelikli ölçülerin hiçbiri
+    mevcut listeden kötüleşmez.
+    """
+    from ortools.sat.python import cp_model
+
+    person_limits = person_limits or {}
+    history_special = history_special or {}
+    history_total = history_total or {}
+    history_holiday = history_holiday or {}
+    initial_last_shift = initial_last_shift or {}
+    fixed = {(p, c) for p, c in (fixed_assignments or ()) if p in people and c in columns}
+    metric_args = dict(
+        person_limits=person_limits, df_preferred=df_preferred, history_special=history_special,
+        history_total=history_total, history_holiday=history_holiday,
+    )
+    before = schedule_metrics(current, people, columns, gun_detaylari, kisi_sayisi, min_bosluk, **metric_args)
+    days = {c: gun_detaylari[c]["day_num"] for c in columns}
+
+    model = cp_model.CpModel()
+    x = {(p, c): model.NewBoolVar(f"x_{i}_{j}") for i, p in enumerate(people) for j, c in enumerate(columns)}
+
+    # Kurallar: simülasyonla aynı. Kilitli nöbet her zaman kalır.
+    for p in people:
+        for c in columns:
+            if (p, c) in fixed:
+                model.Add(x[p, c] == 1)
+                continue
+            if p in df_unwanted_bool.index and c in df_unwanted_bool.columns and bool(df_unwanted_bool.at[p, c]):
+                model.Add(x[p, c] == 0)
+            if p in initial_last_shift and days[c] - initial_last_shift[p] <= min_bosluk:
+                model.Add(x[p, c] == 0)
+        for i, first in enumerate(columns):
+            for second in columns[i + 1:]:
+                if days[second] - days[first] <= min_bosluk and not ((p, first) in fixed and (p, second) in fixed):
+                    model.Add(x[p, first] + x[p, second] <= 1)
+        if p in person_limits:
+            locked = sum(1 for c in columns if (p, c) in fixed)
+            model.Add(sum(x[p, c] for c in columns) <= max(person_limits[p].get("max", 999), locked))
+    for c in columns:
+        for a, b in (forbidden_pairs or ()):
+            if a in people and b in people and not ((a, c) in fixed and (b, c) in fixed):
+                model.Add(x[a, c] + x[b, c] <= 1)
+
+    def range_of(exprs, terms_name):
+        high = model.NewIntVar(-1000, 1000, f"hi_{terms_name}")
+        low = model.NewIntVar(-1000, 1000, f"lo_{terms_name}")
+        model.AddMaxEquality(high, exprs)
+        model.AddMinEquality(low, exprs)
+        value = model.NewIntVar(0, 2000, terms_name)
+        model.Add(value == high - low)
+        return value
+
+    expr = {}
+    unfilled = []
+    for c in columns:
+        locked = sum(1 for p in people if (p, c) in fixed)
+        gap = model.NewIntVar(0, kisi_sayisi, f"u_{days[c]}")
+        model.Add(sum(x[p, c] for p in people) <= max(kisi_sayisi, locked))
+        model.Add(sum(x[p, c] for p in people) + gap >= kisi_sayisi)
+        unfilled.append(gap)
+    expr["unfilled"] = sum(unfilled)
+    totals = {p: sum(x[p, c] for c in columns) for p in people}
+    shorts = []
+    for p, limits in person_limits.items():
+        if p in people and limits.get("min", 0) > 0:
+            short = model.NewIntVar(0, limits["min"], f"short_{len(shorts)}")
+            model.Add(short >= limits["min"] - totals[p])
+            shorts.append(short)
+    expr["min_short"] = sum(shorts)
+    free = [p for p in people if p not in person_limits]
+    expr["total"] = range_of([totals[p] for p in free], "total") if len(free) >= 2 else 0
+
+    def count(p, test):
+        return sum(x[p, c] for c in columns if test(gun_detaylari[c]))
+
+    expr["special"] = range_of([count(p, _is_special) + history_special.get(p, 0) for p in people], "special")
+    expr["holiday"] = range_of(
+        [count(p, lambda d: d["holiday"]) + history_holiday.get(p, 0) for p in people], "holiday"
+    ) if any(gun_detaylari[c]["holiday"] for c in columns) else 0
+    expr["friday"] = range_of(
+        [count(p, is_friday_column) for p in people], "friday"
+    ) if any(is_friday_column(gun_detaylari[c]) for c in columns) else 0
+    expr["total_history"] = range_of(
+        [totals[p] + history_total.get(p, 0) for p in free], "total_history"
+    ) if history_total and len(free) >= 2 else 0
+
+    weeks = sorted({gun_detaylari[c]["week"] for c in columns if gun_detaylari[c]["weekend"]})
+    consecutive = []
+    for p in people:
+        worked = {}
+        for w in weeks:
+            worked[w] = model.NewBoolVar("")
+            model.AddMaxEquality(worked[w], [
+                x[p, c] for c in columns if gun_detaylari[c]["weekend"] and gun_detaylari[c]["week"] == w
+            ])
+        for w in weeks:
+            if w + 1 in worked:
+                both = model.NewBoolVar("")
+                model.Add(both >= worked[w] + worked[w + 1] - 1)
+                consecutive.append(both)
+    expr["consecutive_weekends"] = sum(consecutive)
+    expr["avoid"] = sum(x[p, c] for p in people for c in columns if _pref(df_preferred, p, c) == 2)
+    expr["missed_preference"] = sum(1 - x[p, c] for p in people for c in columns if _pref(df_preferred, p, c) == 1)
+    spread_terms = []
+    for p in people:
+        for first, second, weight in _spread_pairs(people, columns, gun_detaylari, min_bosluk, kisi_sayisi):
+            both = model.NewBoolVar("")
+            model.Add(both >= x[p, first] + x[p, second] - 1)
+            spread_terms.append(weight * both)
+    expr["spread"] = sum(spread_terms)
+
+    # Öncelikli dengeler mevcut listeden kötü olamaz.
+    for name in PRIMARY_METRICS:
+        model.Add(expr[name] <= before[name])
+    model.Minimize(sum(WEIGHTS[name] * expr[name] for name in WEIGHTS))
+    for p in people:
+        for c in columns:
+            model.AddHint(x[p, c], bool(p in current.index and c in current.columns and current.at[p, c]))
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = float(time_limit)
+    solver.parameters.num_workers = max(1, min(4, os.cpu_count() or 1))
+    solver.parameters.random_seed = 0
+    status = solver.Solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return None, before, before
+
+    improved = pd.DataFrame(False, index=list(current.index), columns=list(current.columns))
+    for (p, c), var in x.items():
+        if solver.Value(var):
+            improved.at[p, c] = True
+    after = schedule_metrics(improved, people, columns, gun_detaylari, kisi_sayisi, min_bosluk, **metric_args)
+    worse = any(after[name] > before[name] for name in PRIMARY_METRICS)
+    if worse or weighted_score(after) >= weighted_score(before):
+        return None, before, before
+    return improved, before, after

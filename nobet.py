@@ -1642,21 +1642,30 @@ with tab_grid:
             selected_label = ""
 
     # Quick actions row
-    action_cols = st.columns(4)
+    action_cols = st.columns(5)
     with action_cols[0]:
         if st.button("⚡ Simülasyon", type="primary", width="stretch"):
             st.session_state.run_simulation = True
     with action_cols[1]:
+        if st.button(
+            "✨ İyileştir", width="stretch",
+            disabled=not bool(st.session_state.schedule_bool.values.any()),
+            help="Mevcut listeden başlayıp birkaç saniye içinde daha adilini arar. "
+                 "Kurallar ve kilitli nöbetler aynen korunur; hafta sonu/tatil, Cuma ve "
+                 "toplam dengesi kötüleşmez. Beğenmezseniz Geri ile dönebilirsiniz.",
+        ):
+            st.session_state.run_improve = True
+    with action_cols[2]:
         if st.button("🔄 Sıfırla", width="stretch"):
             st.session_state.reset_pending = True
             st.rerun()
-    with action_cols[2]:
+    with action_cols[3]:
         if st.button("↩️ Geri", width="stretch", disabled=len(st.session_state.undo_history)==0):
             _snap = undo_history_state(st.session_state, _current_state_snapshot())
             if _snap is not None:
                 _restore_snapshot(_snap)
                 st.rerun()
-    with action_cols[3]:
+    with action_cols[4]:
         if st.button("↪️ İleri", width="stretch", disabled=len(st.session_state.redo_history)==0):
             _snap = redo_history_state(st.session_state, _current_state_snapshot())
             if _snap is not None:
@@ -2450,6 +2459,53 @@ if sim_clicked:
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.simulation_success_pending = True
                 st.rerun()
+
+# İyileştir: mevcut listeden OR-Tools ile daha adilini arar (nobet_iyilestir).
+if st.session_state.pop("run_improve", False):
+    st.session_state.incomplete_simulation = None
+    try:
+        from nobet_iyilestir import improve_schedule, improvement_lines
+    except ImportError:
+        improve_schedule = None
+    if improve_schedule is None:
+        st.error("İyileştir için gereken çözücü (ortools) yüklü değil.")
+    else:
+        with st.spinner("Daha adil liste aranıyor (birkaç saniye)..."):
+            try:
+                _improved, _before, _after = improve_schedule(
+                    st.session_state.schedule_bool, isimler, sutunlar, df_unwanted, gun_detaylari,
+                    min_bosluk, kişi_sayısı,
+                    forbidden_pairs=st.session_state.forbidden_pairs,
+                    person_limits=st.session_state.get('person_limits', {}),
+                    df_preferred=df_preferred,
+                    fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool),
+                    initial_last_shift=prev_last_shift,
+                    history_special=history_special,
+                    history_total=history_total,
+                    history_holiday=history_holiday,
+                )
+            except Exception as _exc:
+                _improved = None
+                st.error(f"İyileştirme yapılamadı: {_exc}")
+            else:
+                if _improved is None:
+                    st.session_state.improve_notice = ("info", ["Daha iyi bir liste bulunamadı; mevcut liste korundu."])
+                else:
+                    save_undo_state()
+                    st.session_state.schedule_bool = _improved
+                    st.session_state.should_regenerate_assignments = True
+                    st.session_state.improve_notice = ("success", improvement_lines(_before, _after))
+                st.rerun()
+
+_improve_notice = st.session_state.pop("improve_notice", None)
+if _improve_notice:
+    _kind, _lines = _improve_notice
+    if _kind == "success":
+        st.success(
+            "✨ Liste iyileştirildi: " + ", ".join(_lines) + ". Beğenmezseniz ↩️ Geri ile dönebilirsiniz."
+        )
+    else:
+        st.info(_lines[0])
 
 _incomplete = st.session_state.incomplete_simulation
 if _incomplete is not None:
