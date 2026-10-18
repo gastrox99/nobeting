@@ -386,3 +386,27 @@ def test_yasak_ikili_ve_kisisel_limit_listeden_secilir(app_url):
             expect(page.get_by_text("Kişisel limit sorunları")).to_have_count(0)
         finally:
             browser.close()
+
+
+def test_iyilestir_dugmesi_listeyi_iyilestirir_ve_geri_alinir(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "İyi Ali, İyi Ayşe, İyi Can, İyi Deniz, İyi Ece, İyi Fatma")
+        try:
+            improve = page.get_by_role("button", name="✨ İyileştir")
+            # Boş listede iyileştirilecek bir şey yok.
+            expect(improve).to_be_disabled()
+            page.get_by_role("button", name="⚡ Simülasyon").click()
+            _wait_idle(page)
+            expect(improve).to_be_enabled()
+            improve.click()
+            result = page.get_by_text("Liste iyileştirildi").or_(page.get_by_text("Daha iyi bir liste bulunamadı"))
+            expect(result.first).to_be_visible(timeout=30000)
+            _wait_idle(page)
+            _no_exception(page)
+            if page.get_by_text("Liste iyileştirildi").count():
+                expect(page.get_by_role("button", name="↩️ Geri")).to_be_enabled()
+                page.get_by_role("button", name="↩️ Geri").click()
+                _wait_idle(page)
+                _no_exception(page)
+        finally:
+            browser.close()

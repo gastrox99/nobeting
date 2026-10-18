@@ -247,6 +247,14 @@ def run_round(page, rnd, seed):
             history.append(choice)
             page.get_by_role("button", name=choice).click()
 
+    def act_improve():
+        button = page.get_by_role("button", name="✨ İyileştir")
+        if not button.count() or not button.is_enabled():
+            return
+        history.append("iyileştir")
+        button.click()
+        wait_idle(page, limit=90)
+
     def act_cal_swap():
         page.get_by_role("tab", name="📅 Takvim Görünümü").click()
         buttons = page.get_by_role("button", name="🔄", exact=True)
@@ -437,7 +445,7 @@ def run_round(page, rnd, seed):
             note("PAYLAŞIM METNİ OKUNAMADI", repr(exc)[:200], history)
 
     actions = [
-        (act_cell, 30), (act_pref, 10), (act_undo, 10), (act_sim, 6), (act_cal_swap, 6),
+        (act_cell, 30), (act_pref, 10), (act_undo, 10), (act_sim, 6), (act_improve, 3), (act_cal_swap, 6),
         (act_redistribute, 4), (act_team, 5), (act_holidays, 4), (act_roles, 3), (act_limits, 3),
         (act_pairs, 3), (act_month, 3), (act_people_per_shift, 3), (act_reset, 2), (act_reload, 6),
         (act_backup, 3), (act_restore_backup, 3), (act_undo_restore, 2),
