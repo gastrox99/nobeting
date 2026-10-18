@@ -1356,6 +1356,40 @@ def normalize_preference_grid(preferences):
     return None if invalid else normalized.astype(int)
 
 
+def preference_summary(schedule, preferences, people):
+    """Analiz'deki ekip tercih özeti: kişi başına tercih ve kaçınma sonuçları.
+
+    Tercih kodları: 1 = tercih, 2 = kaçın, 3 = izin. Kimsenin işaretli
+    günü yoksa None döner.
+    """
+    rows = []
+    any_marked = False
+    for person in people:
+        counts = {1: [0, 0], 2: [0, 0], 3: [0, 0]}  # [işaretli gün, o güne düşen nöbet]
+        for column in schedule.columns:
+            try:
+                code = int(preferences.at[person, column])
+            except (KeyError, TypeError, ValueError):
+                code = 0
+            if code in counts:
+                counts[code][0] += 1
+                if person in schedule.index and bool(schedule.at[person, column]):
+                    counts[code][1] += 1
+        any_marked = any_marked or any(marked for marked, _ in counts.values())
+        rows.append({
+            "İsim": person,
+            "🟢 Tercih günü": counts[1][0],
+            "Tercihte nöbet": counts[1][1],
+            "Başarı": f"%{round(counts[1][1] / counts[1][0] * 100)}" if counts[1][0] else "-",
+            "🟡 Kaçın günü": counts[2][0],
+            "Kaçına düşen": counts[2][1],
+            "🔴 İzinde nöbet": counts[3][1],
+        })
+    if not any_marked:
+        return None
+    return pd.DataFrame(rows).set_index("İsim")
+
+
 def build_schedule_analysis(
     schedule,
     rows_liste,
@@ -1571,6 +1605,30 @@ def parse_person_limits_with_issues(limits_text):
 def parse_person_limits(limits_text):
     """Kişisel limit metnini sözlüğe çevirir: {'Ali': {'min': 5, 'max': 10}}."""
     return parse_person_limits_with_issues(limits_text)[0]
+
+
+def pair_label(pair):
+    """Seçim listesinde ikilinin adı: "Ali – Ayşe"."""
+    first, second = sorted(pair)
+    return f"{first} – {second}"
+
+
+def forbidden_pair_choices(team, current_pairs):
+    """Ayarlardaki seçim listesi: {etiket: ikili}. Ekipten olası bütün ikililer
+    ve kayıtlı olup ekipte olmayan isimli ikililer (uyarı gösterilsin diye)."""
+    pairs = {tuple(sorted(pair)) for pair in _combinations(sorted(set(team)), 2)}
+    pairs |= {tuple(sorted(pair)) for pair in current_pairs}
+    return {pair_label(pair): pair for pair in sorted(pairs)}
+
+
+def forbidden_pairs_to_text(pairs):
+    """İkilileri ayarlarda saklanan metne çevirir: "Ali-Ayşe, Can-Ece"."""
+    return ", ".join(f"{a}-{b}" for a, b in sorted(tuple(sorted(pair)) for pair in pairs))
+
+
+def person_limits_to_text(limits):
+    """Kişisel limitleri saklanan metne çevirir: "Ali:3-8" satırları (999 = sınırsız)."""
+    return "\n".join(f"{name}:{value['min']}-{value['max']}" for name, value in limits.items())
 
 
 def unknown_names(names, team):
@@ -2314,6 +2372,40 @@ def official_holidays(yil, ay):
     return sorted(found.items())
 
 
+# Arifeler yarım gün (öğleden sonra tatil): zorunlu mesaide 4 saat sayılır.
+TR_FIXED_HALF_DAYS = {(10, 28): "Cumhuriyet Bayramı arifesi"}
+
+
+def official_half_days(yil, ay):
+    """Ayın arife yarım günleri: [(gün, ad), ...] gün sırasıyla."""
+    found = {day: name for (month, day), name in TR_FIXED_HALF_DAYS.items() if month == ay}
+    for start, _, name in TR_RELIGIOUS_HOLIDAYS.get(yil, []) + TR_RELIGIOUS_HOLIDAYS.get(yil + 1, []):
+        eve = date.fromordinal(start.toordinal() - 1)
+        if eve.year == yil and eve.month == ay:
+            found[eve.day] = f"{name} arifesi"
+    return sorted(found.items())
+
+
+def required_work_hours(gun_detaylari, half_days=()):
+    """Zorunlu mesai: hafta içi iş günü 8 saat, iş gününe düşen arife 4 saat.
+
+    ``half_days``: [(gün, ad), ...]. Hafta sonuna ya da tatil olarak
+    işaretlenmiş güne düşen arife zaten sayılmaz. Dönen değer
+    (saat, hesaba katılan arifeler).
+    """
+    half = dict(half_days)
+    hours, counted = 0, []
+    for detail in gun_detaylari.values():
+        if detail["weekend"] or detail["holiday"]:
+            continue
+        if detail["day_num"] in half:
+            hours += 4
+            counted.append((detail["day_num"], half[detail["day_num"]]))
+        else:
+            hours += 8
+    return hours, counted
+
+
 def official_holidays_summary(yil, ay):
     """["20-22 Mart Ramazan Bayramı", "29 Ekim Cumhuriyet Bayramı"] gibi kısa açıklama."""
     groups = []
@@ -2533,6 +2625,71 @@ def build_share_text(rows, role_names, yil, ay, special_days=()):
         ]
         lines.append(f"{label} — {' · '.join(parts) if parts else 'boş'}")
     return "\n".join(lines)
+
+
+def shared_default_month(months, today):
+    """Paylaşım sayfasında ilk açılacak ay: bu ay, yoksa bugünden önceki son ay.
+
+    ``months``: sıralı [(yıl, ay), ...]. Bugünden önce ay yoksa ilki seçilir.
+    Dönen değer listedeki sıra (boş listede None).
+    """
+    if not months:
+        return None
+    current = (today.year, today.month)
+    if current in months:
+        return months.index(current)
+    earlier = [i for i, period in enumerate(months) if period <= current]
+    return earlier[-1] if earlier else 0
+
+
+def shared_day_states(rows, yil, ay, today):
+    """Her satır için "past", "today" ya da "future" (tarihi okunamayan: "future")."""
+    states = []
+    for row in rows:
+        day, _ = _row_day_and_weekday(row)
+        try:
+            row_date = date(yil, ay, day) if day else None
+        except ValueError:
+            row_date = None
+        if row_date is None or row_date > today:
+            states.append("future")
+        elif row_date == today:
+            states.append("today")
+        else:
+            states.append("past")
+    return states
+
+
+def on_duty_summary(rows, role_names, yil, ay, today):
+    """Bugün ve yarın nöbetçi olanlar: [("Bugün", "Ali (AYB) · Ayşe (GYB)"), ...].
+
+    Yalnızca bu ayın satırlarındaki günler yazılır; nöbetçisi olmayan gün "boş".
+    """
+    wanted = {today: "Bugün", today + timedelta(days=1): "Yarın"}
+    found = {}
+    for row in rows:
+        day, _ = _row_day_and_weekday(row)
+        try:
+            row_date = date(yil, ay, day) if day else None
+        except ValueError:
+            continue
+        if row_date not in wanted:
+            continue
+        parts = []
+        for role in role_names:
+            value = row.get(role)
+            if value in (None, "", "-"):
+                continue
+            parts.append(str(value) if role == "Nöbetçiler" else f"{value} ({role})")
+        found[row_date] = " · ".join(parts) or "boş"
+    return [(wanted[d], found[d]) for d in sorted(found)]
+
+
+def shared_updated_text(moment):
+    """Son güncelleme zamanı: "17 Ekim 2026, 14:30" (bilinmiyorsa boş)."""
+    if not isinstance(moment, datetime):
+        return ""
+    return f"{moment.day} {TR_AY_ADLARI[moment.month]} {moment.year}, {moment:%H:%M}"
 
 
 def _ics_escape(text):

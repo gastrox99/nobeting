@@ -131,7 +131,8 @@ def init_db():
                     ON schedules (owner, name, year, month)
                 ''')
 
-                # Read-only share links: one per owner and month.
+                # Read-only share links: one per owner and month. year=0,
+                # month=0 is the permanent link that shows every month.
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS share_links (
                         token VARCHAR(64) PRIMARY KEY,
@@ -560,8 +561,63 @@ def delete_share_link(owner, year, month):
             conn.close()
 
 
+def delete_all_share_links(owner):
+    """Close every share link of the owner (the permanent one and old monthly ones)."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute('DELETE FROM share_links WHERE owner = %s', (owner,))
+        return True
+    except Exception as e:
+        _log_error("Delete share links", e)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_shared_months(owner):
+    """Months the share page can show: [(year, month, updated_tr), ...] in order.
+
+    Only the auto-saved month records that have at least one shift count.
+    ``updated_tr`` is the last save time in Turkey time (datetime), or None.
+    Errors return [].
+    """
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # updated_at is stored in the session's time zone without a zone.
+            cur.execute('''
+                SELECT s.name, s.year, s.month,
+                       (s.updated_at AT TIME ZONE current_setting('TimeZone'))
+                           AT TIME ZONE 'Europe/Istanbul' AS updated_tr
+                FROM schedules AS s
+                WHERE s.owner = %s AND s.name LIKE 'Otomatik\\_%%'
+                  AND EXISTS (
+                      SELECT 1 FROM schedule_data AS d
+                      WHERE d.schedule_id = s.id AND d.assigned
+                  )
+                ORDER BY s.year, s.month
+            ''', (owner,))
+            rows = cur.fetchall()
+        return [
+            (row['year'], row['month'], row['updated_tr'])
+            for row in rows
+            if row['name'] == f"Otomatik_{row['year']}_{row['month']:02d}"
+        ]
+    except Exception as e:
+        _log_error("List shared months", e)
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def resolve_share_token(token):
-    """(owner, year, month) for a valid token, else None."""
+    """(owner, year, month) for a valid token, else None; (owner, 0, 0) is the permanent link."""
     if not token or not isinstance(token, str) or len(token) > 64:
         return None
     conn = None

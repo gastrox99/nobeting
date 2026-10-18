@@ -297,12 +297,41 @@ def run_round(page, rnd, seed):
     def act_roles():
         act_text("🏷️ Görev İsimleri:", ["", "AYB, GYB", "AYB, AYB", "Tarih", "A, B, C"], "görev")
 
+    def toggle_choice(label, wanted, tag):
+        """Seçim kutusunda bir seçeneği ekler; seçiliyse çarpısıyla kaldırır."""
+        box = ensure_settings(page, "combobox", label)
+        history.append(f"{tag}={wanted!r}")
+        container = page.locator("[data-testid='stMultiSelect']").filter(has=box)
+        chip = container.locator("[data-baseweb='tag']").filter(has_text=wanted)
+        if chip.count():
+            chip.first.get_by_role("button").last.click()
+            return
+        box.click()
+        option = page.get_by_role("option", name=wanted, exact=True)
+        if option.count():
+            option.first.click()
+        else:
+            page.keyboard.press("Escape")
+
     def act_limits():
-        names = team[:2]
-        act_text("📊 Kişisel Limitler:", ["", f"{names[0]}:2-4", f"{names[1]}:6-8", "Yok:1-2", "bozuk"], "limit")
+        names = [n for n in team if n]
+        if not names:
+            return
+        person = rnd.choice(names[:2])
+        toggle_choice("📊 Kişisel Limitler:", person, "limit")
+        _wait = page.get_by_role("spinbutton", name=f"{person}: en fazla nöbet")
+        if _wait.count() and _wait.first.is_visible():
+            value = rnd.choice(["", "2", "4", "8"])
+            history.append(f"limit_en_fazla={value!r}")
+            _wait.first.fill(value)
+            _wait.first.press("Tab")
 
     def act_pairs():
-        act_text("🚫 Birlikte Çalışamayan:", ["", f"{team[0]}-{team[1]}", f"{team[2]}-{team[3]}"], "yasak")
+        names = sorted(n for n in team[:4] if n)
+        if len(names) < 2:
+            return
+        first, second = rnd.sample(names, 2)
+        toggle_choice("🚫 Birlikte Çalışamayan:", " – ".join(sorted((first, second))), "yasak")
 
     def act_month():
         box = ensure_settings(page, "combobox", "📆 Ay")
