@@ -77,14 +77,31 @@ def render_shared_view(token, db_ready):
         st.error("Bu paylaşım bağlantısı geçersiz ya da kapatılmış.")
         return
     _owner, _year, _month = _target
+    _team = _team_of(_owner)
+    if not _team:
+        # Ekip girilmemişse eskisi gibi yalnızca liste (talep gönderilemez).
+        _render_list(_owner, _year, _month, None)
+        return
+    # Önce ad sorulur; liste ve talep sekmeleri o kişiye göre açılır.
+    _person = st.selectbox("Adın:", _team, index=None, placeholder="Adını seç", key="paylasim_kisi")
+    if not _person:
+        st.info("Nöbetlerini görmek ve talep göndermek için adını seç.")
+        return
     _tab_list, _tab_request = st.tabs(["📋 Nöbet Listesi", "📝 Talep Gönder"])
     with _tab_list:
-        _render_list(_owner, _year, _month)
+        _render_list(_owner, _year, _month, _person)
     with _tab_request:
-        _render_request_form(_owner)
+        _render_request_form(_owner, _person)
 
 
-def _render_list(_owner, _year, _month):
+def _team_of(_owner):
+    _settings = load_app_settings(owner=_owner) or {}
+    return list(dict.fromkeys(
+        _name.strip() for _name in str(_settings.get("team") or "").split(",") if _name.strip()
+    ))
+
+
+def _render_list(_owner, _year, _month, _person):
     _months = _cached_shared_months(_owner)
     _updated = {(_y, _m): _t for _y, _m, _t in _months}
     _today = now_tr().date()
@@ -134,12 +151,17 @@ def _render_list(_owner, _year, _month):
         _row.get(_role) for _row in _rows for _role in _roles
         if _row.get(_role) not in (None, "", "-") and _role != "Nöbetçiler"
     })
-    _selected = st.selectbox("Kendi nöbetlerini görmek için adını seç:", ["Tümü"] + _people) if _people else "Tümü"
+    if _person:
+        _selected = "Tümü" if st.toggle("Tüm listeyi göster", key="paylasim_tumu") else _person
+    else:
+        _selected = st.selectbox("Kendi nöbetlerini görmek için adını seç:", ["Tümü"] + _people) if _people else "Tümü"
     _states = shared_day_states(_rows, _year, _month, _today)
     _shown = [
         (_row, _state) for _row, _state in zip(_rows, _states)
         if _selected == "Tümü" or any(_row.get(_role) == _selected for _role in _roles)
     ]
+    if not _shown:
+        st.info(f"{TR_AY_ADLARI[_month]} {_year} listesinde nöbetin yok.")
     _table = pd.DataFrame(
         [{_k: _row.get(_k, "-") for _k in ["Tarih"] + _roles} for _row, _ in _shown],
         columns=["Tarih"] + _roles,
@@ -174,28 +196,18 @@ _REQUEST_LABELS = {
 }
 
 
-def _render_request_form(_owner):
-    _settings = load_app_settings(owner=_owner) or {}
-    _team = list(dict.fromkeys(
-        _name.strip() for _name in str(_settings.get("team") or "").split(",") if _name.strip()
-    ))
-    if not _team:
-        st.info("Liste sahibi henüz ekibi girmedi; talep gönderilemiyor.")
-        return
+def _render_request_form(_owner, _person):
     st.caption(
         "Günleri virgülle ayırın, aralık için tire kullanın: 3,5,10-14. "
         "Talebin liste sahibine gider; onaylanınca çizelgeye işlenir."
     )
     _today = now_tr().date()
-    _person = st.selectbox("Adın:", _team, index=None, placeholder="Adını seç", key="talep_kisi")
     _periods = request_open_months(_today)
     # Çoğunlukla gelecek ayın listesi hazırlanır; o ay önce seçili gelir.
     _year, _month = st.selectbox(
         "Hangi ay:", _periods, index=1 if len(_periods) > 1 else 0,
         format_func=lambda _p: f"{TR_AY_ADLARI[_p[1]]} {_p[0]}", key="talep_ay",
     )
-    if not _person:
-        return
     _done = st.session_state.get("talep_gonderildi")
     if _done == (_person, _year, _month):
         st.success("✅ Talebin iletildi. Liste sahibi onaylayınca çizelgeye işlenir.")

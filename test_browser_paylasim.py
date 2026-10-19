@@ -71,7 +71,7 @@ def _seed(db):
     _save_month(db, today.year, today.month, days)
     prev_year, prev_month = previous_period(today.year, today.month)
     _save_month(db, prev_year, prev_month, {3: ("Önceki Gül", "Önceki Hasan")})
-    assert db.save_app_settings({"team": "Talep Ali, Talep Ayşe"}, owner=OWNER)
+    assert db.save_app_settings({"team": "Bugün Ali, Talep Ali"}, owner=OWNER)
     return {
         "today": today, "tomorrow_in_month": tomorrow.month == today.month,
         "previous": (prev_year, prev_month),
@@ -143,12 +143,41 @@ def _open(playwright, url):
     return browser, page
 
 
+def _choose(page, name, all_rows=True):
+    """Açılışta sorulan adı seçer; istenirse tüm listeyi açar."""
+    page.get_by_text("Adını seç", exact=True).click()
+    page.get_by_role("option", name=name, exact=True).click()
+    _wait_idle(page)
+    if all_rows:
+        page.get_by_text("Tüm listeyi göster", exact=True).click()
+        _wait_idle(page)
+
+
+def test_once_ad_sorulur_sonra_kendi_nobetleri(shared):
+    url, data = shared
+    with sync_playwright() as p:
+        browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
+        try:
+            _no_exception(page)
+            expect(page.get_by_text("Nöbetlerini görmek ve talep göndermek için adını seç.")).to_be_visible()
+            expect(page.locator("[data-testid='stDataFrame']")).to_have_count(0)
+            _choose(page, "Bugün Ali", all_rows=False)
+            _no_exception(page)
+            grid = page.locator("[data-testid='stDataFrame']")
+            expect(grid).to_contain_text("Bugün Ali")
+            if data["tomorrow_in_month"]:
+                expect(grid).not_to_contain_text("Yarın Can")
+        finally:
+            browser.close()
+
+
 def test_kalici_baglanti_bu_ayi_acar_ve_ay_degistirilir(shared):
     url, data = shared
     today = data["today"]
     with sync_playwright() as p:
         browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
         try:
+            _choose(page, "Bugün Ali")
             _no_exception(page)
             expect(page.get_by_text("Son güncelleme:")).to_be_visible()
             expect(page.get_by_text("Bugün nöbetçi")).to_be_visible()
@@ -177,6 +206,7 @@ def test_eski_aylik_baglanti_calismaya_devam_eder(shared):
     with sync_playwright() as p:
         browser, page = _open(p, f"{url}/?paylas={data['monthly']}")
         try:
+            _choose(page, "Bugün Ali")
             _no_exception(page)
             expect(page.get_by_text(f"{TR_AY_ADLARI[prev_month]} {prev_year}")).to_be_visible()
             expect(page.locator("[data-testid='stDataFrame']")).to_contain_text("Önceki Gül")
@@ -193,10 +223,8 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
     with sync_playwright() as p:
         browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
         try:
+            _choose(page, "Talep Ali", all_rows=False)
             page.get_by_role("tab", name="📝 Talep Gönder").click()
-            page.get_by_text("Adını seç", exact=True).click()
-            page.get_by_role("option", name="Talep Ali").click()
-            _wait_idle(page)
             # Varsayılan ay sonraki ay.
             expect(page.get_by_text(f"{TR_AY_ADLARI[next_month]} {next_year}", exact=True)).to_be_visible()
             page.get_by_label("👍 Nöbet istediğim günler (Tercih)").fill("3,5")
@@ -218,6 +246,6 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
             ]
             # Liste sekmesi yerinde durur.
             page.get_by_role("tab", name="📋 Nöbet Listesi").click()
-            expect(page.locator("[data-testid='stDataFrame']")).to_contain_text("Bugün Ali")
+            expect(page.get_by_text("listesinde nöbetin yok")).to_be_visible()
         finally:
             browser.close()
