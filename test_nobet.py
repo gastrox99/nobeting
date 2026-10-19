@@ -2246,12 +2246,13 @@ class TestSecmeliAyarlar(unittest.TestCase):
             ["Ali", "Ayşe", "Can"],
             {"Ali": {"min": 2, "max": 8}, "Can": {"min": 0, "max": 999, "max_special": 1}},
         )
-        self.assertEqual(rows[0], {"name": "Ali", "min": 2, "max": 8, "max_special": None})
+        # Arayüzde olmayan eski "en az" değeri taşınmaz.
+        self.assertEqual(rows[0], {"name": "Ali", "min": 0, "max": 8, "max_special": None})
         self.assertEqual(rows[1], {"name": "Ayşe", "min": 0, "max": None, "max_special": None})
         self.assertEqual(rows[2]["max_special"], 1)
         names, limits = team_settings_texts(rows)
         self.assertEqual(names, "Ali, Ayşe, Can")
-        self.assertEqual(limits, "Ali:2-8\nCan:0-999:1")
+        self.assertEqual(limits, "Ali:0-8\nCan:0-999:1")
 
     def test_ekip_tablosu_bos_satir_ve_silme(self):
         rows = [
@@ -2602,7 +2603,7 @@ class TestAppSettingsPersistence(unittest.TestCase):
         self.assertNotIn("elapsed >= 30", source)
         self.assertIn("_persist_fp != st.session_state.get(\"last_saved_fingerprint\")", source)
         self.assertIn("load_app_settings(owner=current_owner, raise_on_error=True)", source)
-        self.assertIn("save_app_settings(_current_settings, owner=current_owner)", source)
+        self.assertIn("save_app_settings(\n            _current_settings, owner=current_owner,", source)
         # Ayarlar widget'lar çizilmeden önce yüklenmeli.
         self.assertLess(
             source.index("apply_app_settings(st.session_state"),
@@ -2648,14 +2649,26 @@ class TestSwitchSchedulePeriod(unittest.TestCase):
         self.assertFalse(switch_schedule_period(first_load, (2026, 11), lambda *a: self.fail()))
         self.assertIn("schedule_bool", first_load)
 
-    def test_kayit_hatasi_donem_degisimini_engellemez(self):
+    def test_kayit_hatasi_donem_degisimini_engeller(self):
         state = self._state()
 
         def failing_save(*_):
             raise RuntimeError("database unavailable")
 
-        self.assertTrue(switch_schedule_period(state, (2027, 1), failing_save))
-        self.assertNotIn("schedule_bool", state)
+        # Çıkılan ayın kaydı yazılamadıysa ay değişmez ve durum silinmez (veri kaybolmasın).
+        self.assertFalse(switch_schedule_period(state, (2027, 1), failing_save))
+        self.assertIn("schedule_bool", state)
+        self.assertEqual(state["period_switch_blocked"], (2026, 10))
+
+    def test_kayit_false_donerse_donem_degisimi_durur(self):
+        state = self._state()
+        self.assertFalse(switch_schedule_period(state, (2027, 1), lambda *a: False))
+        self.assertIn("schedule_bool", state)
+        self.assertEqual(state["period_switch_blocked"], (2026, 10))
+        # Kayıt başarılıysa (True) ya da değer dönmüyorsa (None) ay değişir.
+        ok = self._state()
+        self.assertTrue(switch_schedule_period(ok, (2027, 1), lambda *a: True))
+        self.assertNotIn("period_switch_blocked", ok)
 
     def test_uygulama_donem_degisimini_otomatik_yuklemeden_once_yapar(self):
         source = _app_source()
@@ -3270,6 +3283,7 @@ class TestFullAppRender(unittest.TestCase):
             load_app_settings=lambda **k: None, save_app_settings=lambda *a, **k: True,
             load_schedule=lambda *a, **k: None, save_schedule=lambda *a, **k: True,
             load_auto_saved_assignments=lambda *a, **k: ({}, {}), list_backup_snapshots=lambda **k: [],
+            get_schedule_version=lambda *a, **k: None, get_settings_version=lambda *a, **k: None,
             get_share_link=lambda *a: None,
         )
         with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, **fakes):

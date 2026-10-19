@@ -244,7 +244,11 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
                 1 for c in columns if p in current.index and c in current.columns and bool(current.at[p, c])
             )
             if current_total <= cap:
-                model.Add(sum(x[p, c] for c in columns) == current_total)
+                if current_total >= person_limits[p].get("min", 0):
+                    model.Add(sum(x[p, c] for c in columns) == current_total)
+                else:
+                    # Alt sınırın altındaki kişinin nöbeti azalmaz; çözücü eksiği kapatabilir.
+                    model.Add(sum(x[p, c] for c in columns) >= current_total)
     for c in columns:
         for a, b in (forbidden_pairs or ()):
             if a in people and b in people and not ((a, c) in fixed and (b, c) in fixed):
@@ -354,3 +358,26 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     if worse or weighted_score(after) >= weighted_score(before):
         return None, before, before
     return improved, before, after
+
+
+def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
+                      **kwargs):
+    """Simülasyon sonucunda boş nöbet ya da 1'den büyük toplam farkı varsa bir kez
+    ``improve_schedule`` dener. Dönen değer: (çizelge, düzeldi_mi); çözücü yoksa,
+    hata verirse ya da daha iyisini bulamazsa çizelge aynen döner."""
+    metric_keys = ("person_limits", "df_preferred", "history_special", "history_total", "history_holiday")
+    try:
+        before = schedule_metrics(
+            schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
+            **{key: kwargs[key] for key in metric_keys if key in kwargs},
+        )
+        if before["unfilled"] == 0 and before["total"] <= 1:
+            return schedule, False
+        improved, _, _ = improve_schedule(
+            schedule, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, **kwargs,
+        )
+    except Exception:
+        return schedule, False
+    if improved is None:
+        return schedule, False
+    return improved, True

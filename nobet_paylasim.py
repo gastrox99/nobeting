@@ -45,6 +45,18 @@ def _rows_from_schedule(schedule, year, month):
     return _rows
 
 
+# Paylaşım sayfası girişsizdir; aynı listeyi art arda isteyenler veritabanını yormasın
+# diye ay listesi ve ay satırları kısa süre önbellekte tutulur (jeton her seferinde sorulur).
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_shared_months(owner):
+    return list_shared_months(owner)
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_shared_rows(owner, year, month):
+    return _shared_rows(owner, year, month)
+
+
 def render_shared_view(token, db_ready):
     st.markdown("<h1 style='text-align: center; font-size: 2.2rem;'>Nöbet Listesi</h1>", unsafe_allow_html=True)
     _target = resolve_share_token(token) if db_ready else None
@@ -52,7 +64,7 @@ def render_shared_view(token, db_ready):
         st.error("Bu paylaşım bağlantısı geçersiz ya da kapatılmış.")
         return
     _owner, _year, _month = _target
-    _months = list_shared_months(_owner)
+    _months = _cached_shared_months(_owner)
     _updated = {(_y, _m): _t for _y, _m, _t in _months}
     _today = now_tr().date()
     if (_year, _month) == (0, 0):
@@ -69,7 +81,7 @@ def render_shared_view(token, db_ready):
         )
     else:
         st.subheader(f"{TR_AY_ADLARI[_month]} {_year}")
-    _rows, _roles = _shared_rows(_owner, _year, _month)
+    _rows, _roles = _cached_shared_rows(_owner, _year, _month)
     if not _rows:
         st.info("Bu ay için henüz çizelge yok.")
         return
@@ -84,7 +96,7 @@ def render_shared_view(token, db_ready):
         and (_tomorrow.year, _tomorrow.month) in _updated
     ):
         # Ayın son günü: yarının nöbetçisi sonraki ayın listesinde.
-        _next_rows, _next_roles = _shared_rows(_owner, _tomorrow.year, _tomorrow.month)
+        _next_rows, _next_roles = _cached_shared_rows(_owner, _tomorrow.year, _tomorrow.month)
         if _next_rows:
             _on_duty += on_duty_summary(_next_rows, _next_roles, _tomorrow.year, _tomorrow.month, _today)
     if _on_duty:
@@ -134,7 +146,7 @@ def render_shared_view(token, db_ready):
 
 def _shared_rows(_owner, year, month):
     """Paylaşım sayfası için ayın satırları ve görevleri: (satırlar, görevler); yoksa (None, None)."""
-    _loaded = load_schedule(f"Otomatik_{year}_{month:02d}", year, month, owner=_owner)
+    _loaded = load_schedule(f"Otomatik_{year}_{month:02d}", year, month, owner=_owner, include_preferences=False)
     _rows = _loaded[4] if _loaded and len(_loaded) > 4 and _loaded[4] else None
     _schedule = _loaded[1] if _loaded else None
     if _schedule is not None:
