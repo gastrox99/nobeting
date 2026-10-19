@@ -143,7 +143,8 @@ def test_buyuk_ekipte_yasak_ikili_listesi_kullanilir():
 
 def test_uygulama_surum_denetimini_kullanir():
     source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
-    assert "expected_version=st.session_state.get(\"schedule_version\")" in source
+    assert "expected_version=_schedule_version.get(\"version\")" in source
+    assert "version_out=_schedule_version" in source
     assert "except SaveConflict:" in source
     assert "_auto_improve(_new_schedule)" in source
     assert "period_switch_blocked" in source
