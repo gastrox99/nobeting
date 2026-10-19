@@ -121,6 +121,8 @@ def ui_colors(_dark_theme):
         "soft_amber_text": "#fcd34d" if _dark_theme else "#92400e",
         "soft_red_bg": "rgba(239,68,68,0.18)" if _dark_theme else "#fee2e2",
         "soft_red_text": "#fca5a5" if _dark_theme else "#991b1b",
+        "soft_purple_bg": "rgba(168,85,247,0.18)" if _dark_theme else "#f3e8ff",
+        "soft_purple_text": "#d8b4fe" if _dark_theme else "#6b21a8",
         # Takvim sekmesi ve kişi kartı
         "card_bg": "#1e293b" if _dark_theme else "#f8fafc",
         "stat_bg": "#0f172a" if _dark_theme else "#ffffff",
@@ -233,6 +235,10 @@ def grid_css(ui, name_col_px, col_bg_css):
     background: #991b1b !important;
     border-color: #7f1d1d !important;
 }}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-4) .stButton > button {{
+    background: #6b21a8 !important;
+    border-color: #581c87 !important;
+}}
 :is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-0) .stButton > button {{
     background: {ui['free_bg']} !important;
     border-color: {ui['free_border']} !important;
@@ -254,6 +260,11 @@ def grid_css(ui, name_col_px, col_bg_css):
     background: {ui['soft_red_bg']} !important;
     border-color: transparent !important;
     color: {ui['soft_red_text']} !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-4) .stButton > button {{
+    background: {ui['soft_purple_bg']} !important;
+    border-color: transparent !important;
+    color: {ui['soft_purple_text']} !important;
 }}
 :is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-conflict) .stButton > button {{
     background: #7f1d1d !important;

@@ -236,6 +236,22 @@ def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, y
     return result
 
 
+# Tercih kodları. İzin (3) ve Müsait Değil (4) günlerine nöbet yazılmaz;
+# yalnızca İzin zorunlu mesaiden düşer.
+PREF_LEAVE = 3
+PREF_UNAVAILABLE = 4
+BLOCKED_PREFS = frozenset({PREF_LEAVE, PREF_UNAVAILABLE})
+MAX_PREF_CODE = 4
+
+
+def is_blocked_preference(value):
+    """İzin ya da Müsait Değil: o güne nöbet yazılmaz."""
+    try:
+        return int(value) in BLOCKED_PREFS
+    except (TypeError, ValueError):
+        return False
+
+
 PREFERENCE_GRID_STATES = (
     {
         "key": "assigned_neutral",
@@ -264,6 +280,13 @@ PREFERENCE_GRID_STATES = (
         "color": "#991b1b",
         "css_class": "preference-state-3",
         "description": "Atandı + İzin",
+    },
+    {
+        "key": "assigned_not_available",
+        "symbol": "×",
+        "color": "#6b21a8",
+        "css_class": "preference-state-4",
+        "description": "Atandı + Müsait Değil",
     },
     {
         "key": "conflict",
@@ -304,6 +327,14 @@ PREFERENCE_GRID_STATES = (
         "css_class": "preference-free-3",
         "description": "İzin",
     },
+    {
+        "key": "not_available",
+        "soft": True,
+        "symbol": "M",
+        "color": "#6b21a8",
+        "css_class": "preference-free-4",
+        "description": "Müsait Değil",
+    },
 )
 
 _PREFERENCE_GRID_STATE_BY_KEY = {
@@ -325,12 +356,14 @@ def get_preference_grid_state(is_assigned, preference_value, has_conflict=False)
             1: "assigned_preferred",
             2: "assigned_avoid",
             3: "assigned_unavailable",
+            4: "assigned_not_available",
         }.get(preference_value, "assigned_neutral")
     else:
         state_key = {
             1: "preferred",
             2: "avoid",
             3: "unavailable",
+            4: "not_available",
         }.get(preference_value, "neutral")
 
     return dict(_PREFERENCE_GRID_STATE_BY_KEY[state_key])
@@ -454,7 +487,7 @@ def explain_missing_day(schedule, col, gun_detaylari, df_unwanted_bool, min_bosl
             continue
         groups["free"].append(person)
     labels = [
-        ("unwanted", "izinli"),
+        ("unwanted", "izinli / müsait değil"),
         ("rest", "dinlenmede"),
         ("limit", "nöbet limitinde"),
         ("forbidden", "birlikte çalışamaz"),
@@ -590,8 +623,10 @@ def assignment_warnings(
             preference = int(preferences.at[person, column])
         except (TypeError, ValueError):
             preference = 0
-        if preference == 3:
+        if preference == PREF_LEAVE:
             warnings.append(f"{person}: {day}. gün izinli olarak işaretli.")
+        elif preference == PREF_UNAVAILABLE:
+            warnings.append(f"{person}: {day}. gün müsait değil olarak işaretli.")
         elif preference == 2:
             warnings.append(f"{person}: {day}. gün kaçınmak istediği gün.")
 
@@ -831,7 +866,7 @@ def _clean_hidden(value):
             for day, code in raw_prefs.items():
                 if (
                     str(day).isdecimal() and 1 <= int(day) <= 31
-                    and isinstance(code, int) and not isinstance(code, bool) and 1 <= code <= 3
+                    and isinstance(code, int) and not isinstance(code, bool) and 1 <= code <= MAX_PREF_CODE
                 ):
                     prefs[str(int(day))] = code
         if shifts or prefs:
@@ -867,7 +902,7 @@ def stash_removed_people(hidden, schedule, preferences, team):
                     code = int(preferences.at[person, column])
                 except (TypeError, ValueError):
                     continue
-                if day is not None and 1 <= code <= 3:
+                if day is not None and 1 <= code <= MAX_PREF_CODE:
                     prefs[str(day)] = code
         if shifts or prefs:
             hidden[person] = {"shifts": shifts, "prefs": prefs}
@@ -1346,11 +1381,11 @@ def use_compact_schedule_editor(person_count, day_count, threshold=500):
 
 
 def normalize_preference_grid(preferences):
-    """Tercih tablosunu yalnızca geçerli 0-3 tam sayı kodlarıyla normalleştirir."""
+    """Tercih tablosunu yalnızca geçerli 0-4 tam sayı kodlarıyla normalleştirir."""
     normalized = preferences.apply(pd.to_numeric, errors="coerce")
     invalid = (
         normalized.isna().any().any()
-        or ((normalized < 0) | (normalized > 3)).any().any()
+        or ((normalized < 0) | (normalized > MAX_PREF_CODE)).any().any()
         or (normalized % 1 != 0).any().any()
     )
     return None if invalid else normalized.astype(int)
@@ -1359,13 +1394,13 @@ def normalize_preference_grid(preferences):
 def preference_summary(schedule, preferences, people):
     """Analiz'deki ekip tercih özeti: kişi başına tercih ve kaçınma sonuçları.
 
-    Tercih kodları: 1 = tercih, 2 = kaçın, 3 = izin. Kimsenin işaretli
-    günü yoksa None döner.
+    Tercih kodları: 1 = tercih, 2 = kaçın, 3 = izin, 4 = müsait değil.
+    Kimsenin işaretli günü yoksa None döner.
     """
     rows = []
     any_marked = False
     for person in people:
-        counts = {1: [0, 0], 2: [0, 0], 3: [0, 0]}  # [işaretli gün, o güne düşen nöbet]
+        counts = {1: [0, 0], 2: [0, 0], 3: [0, 0], 4: [0, 0]}  # [işaretli gün, o güne düşen nöbet]
         for column in schedule.columns:
             try:
                 code = int(preferences.at[person, column])
@@ -1383,7 +1418,9 @@ def preference_summary(schedule, preferences, people):
             "Başarı": f"%{round(counts[1][1] / counts[1][0] * 100)}" if counts[1][0] else "-",
             "🟡 Kaçın günü": counts[2][0],
             "Kaçına düşen": counts[2][1],
+            "🔴 İzin günü": counts[3][0],
             "🔴 İzinde nöbet": counts[3][1],
+            "🟣 Müsait değilken nöbet": counts[4][1],
         })
     if not any_marked:
         return None
@@ -1399,8 +1436,14 @@ def build_schedule_analysis(
     person_limits,
     zorunlu_saat,
     nobet_ucreti,
+    mesai_saatleri=None,
 ):
-    """Çizelge görünümünde kullanılan saf analiz tablolarını üretir."""
+    """Çizelge görünümünde kullanılan saf analiz tablolarını üretir.
+
+    ``mesai_saatleri``: (isteğe bağlı) {kişi: zorunlu mesai}; izinli günler
+    düşülmüş kişisel mesai. Verilmezse herkes için ``zorunlu_saat``.
+    """
+    mesai_saatleri = mesai_saatleri or {}
     all_role_counts = {role: {isim: 0 for isim in isimler} for role in role_names}
     for row in rows_liste:
         for role in role_names:
@@ -1425,7 +1468,8 @@ def build_schedule_analysis(
     for isim in isimler:
         toplam = int(totals.get(isim, 0))
         saat = toplam * 24
-        fm_saat = max(0, saat - zorunlu_saat)
+        mesai = mesai_saatleri.get(isim, zorunlu_saat)
+        fm_saat = max(0, saat - mesai)
         ucret = fm_saat * nobet_ucreti
         limits = person_limits.get(isim, {})
         min_limit = limits.get("min", 0)
@@ -1452,7 +1496,7 @@ def build_schedule_analysis(
         stats_finance.append({
             "İsim": isim,
             "Nöbet": int(saat),
-            "Mesai": int(zorunlu_saat),
+            "Mesai": int(mesai),
             "FM": int(fm_saat),
             "Ücret (TL)": round(ucret, 2),
         })
@@ -2406,6 +2450,37 @@ def required_work_hours(gun_detaylari, half_days=()):
     return hours, counted
 
 
+def personal_work_hours(gun_detaylari, half_days, preferences, people):
+    """Kişi başına zorunlu mesai: İzin (3) işaretli iş günü mesaiden düşer.
+
+    İzinli iş günü 8 saat, izinli arife 4 saat düşer; hafta sonu ve tatil
+    zaten mesaide sayılmadığı için düşmez. Müsait Değil (4) mesaiyi
+    değiştirmez. Dönen değer {kişi: saat}.
+    """
+    half = dict(half_days)
+    work_hours = {}
+    for column, detail in gun_detaylari.items():
+        if detail["weekend"] or detail["holiday"]:
+            continue
+        work_hours[column] = 4 if detail["day_num"] in half else 8
+    total = sum(work_hours.values())
+    result = {}
+    for person in people:
+        leave = 0
+        if preferences is not None and person in preferences.index:
+            for column, hours in work_hours.items():
+                if column not in preferences.columns:
+                    continue
+                try:
+                    code = int(preferences.at[person, column])
+                except (TypeError, ValueError):
+                    continue
+                if code == PREF_LEAVE:
+                    leave += hours
+        result[person] = total - leave
+    return result
+
+
 def official_holidays_summary(yil, ay):
     """["20-22 Mart Ramazan Bayramı", "29 Ekim Cumhuriyet Bayramı"] gibi kısa açıklama."""
     groups = []
@@ -2583,7 +2658,10 @@ def history_adjustment(monthly_counts, team, clip=2, monthly_available=None):
 
 
 def unavailable_day_counts(pref_json):
-    """Kayıtlı tercih JSON'undan kişi başına izin (3) gün sayısı."""
+    """Kayıtlı tercih JSON'undan kişi başına nöbet yazılamayan gün sayısı.
+
+    İzin (3) ve Müsait Değil (4) ikisi de sayılır: o ay az tutan "eksik" sayılmaz.
+    """
     try:
         data = json.loads(pref_json) if pref_json else None
     except (TypeError, ValueError):
@@ -2596,7 +2674,7 @@ def unavailable_day_counts(pref_json):
             continue
         for person, value in column.items():
             try:
-                if int(value) == 3:
+                if int(value) in BLOCKED_PREFS:
                     counts[str(person)] = counts.get(str(person), 0) + 1
             except (TypeError, ValueError):
                 continue
@@ -3028,7 +3106,7 @@ def parse_backup(raw):
 
 
 def _valid_backup_preferences(preferences):
-    """Tercihler {gün: {kişi: 0-3}} biçiminde olmalı (pandas to_json çıktısı)."""
+    """Tercihler {gün: {kişi: 0-4}} biçiminde olmalı (pandas to_json çıktısı)."""
     if not isinstance(preferences, dict) or len(preferences) > 31:
         return False
     for day, column in preferences.items():
@@ -3037,7 +3115,7 @@ def _valid_backup_preferences(preferences):
         for person, value in column.items():
             if not _short_text(person) or isinstance(value, bool):
                 return False
-            if value is not None and (not isinstance(value, (int, float)) or not 0 <= value <= 3):
+            if value is not None and (not isinstance(value, (int, float)) or not 0 <= value <= MAX_PREF_CODE):
                 return False
     return True
 

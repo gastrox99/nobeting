@@ -9,7 +9,7 @@ from nobet_durum import rotate_roles_for_day
 
 
 def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, tatil_gunleri,
-                        today_date, ui, person_colors, kişi_sayısı, zorunlu_saat, nobet_ucreti):
+                        today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, nobet_ucreti):
     tr_gunler = TR_GUN_KISA
     # Rol isimleri (Görev1, Görev2 vb.)
     _cal_role_names = st.session_state.get('rol_isimleri', [f"Görev{i+1}" for i in range(kişi_sayısı)])
@@ -32,7 +32,7 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
     with cal_top2:
         st.markdown(
             f"<div style='padding-top:28px;font-size:12px;color:{ui['label_text']};'>"
-            "🟢 Tercih &nbsp; 🟡 Kaçın &nbsp; 🔴 İzin &nbsp; 🔄 Görev Yeri Değiştir"
+            "🟢 Tercih &nbsp; 🟡 Kaçın &nbsp; 🔴 İzin &nbsp; 🟣 Müsait Değil &nbsp; 🔄 Görev Yeri Değiştir"
             "</div>",
             unsafe_allow_html=True
         )
@@ -51,13 +51,13 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
         dp_hol = sum(1 for c in dp_shifts if gun_detaylari[c]['holiday'] and not gun_detaylari[c]['weekend'])
         dp_weekday = len(dp_shifts) - dp_we - dp_hol
         dp_total_h = len(dp_shifts) * 24
-        dp_fm_h = max(0, dp_total_h - zorunlu_saat)
+        dp_fm_h = max(0, dp_total_h - mesai_saatleri.get(dp, 0))
         dp_pay = dp_fm_h * nobet_ucreti
         _dp_rows = st.session_state.get('cached_rows_liste') or []
         _dp_role_names = st.session_state.get('cached_role_names', _cal_role_names)
         # Tercih istatistikleri (sadece nöbet tutulan günler)
-        dp_pref_on_shift = {0: 0, 1: 0, 2: 0, 3: 0}
-        dp_pref_all = {0: 0, 1: 0, 2: 0, 3: 0}
+        dp_pref_on_shift = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+        dp_pref_all = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
         for col in sutunlar:
             pv = int(st.session_state.pref_df.at[dp, col]) if (
                 dp in st.session_state.pref_df.index and col in st.session_state.pref_df.columns
@@ -68,6 +68,7 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
         dp_green_ok = dp_pref_on_shift[1]
         dp_yellow_hit = dp_pref_on_shift[2]
         dp_red_hit = dp_pref_on_shift[3]
+        dp_purple_hit = dp_pref_on_shift[4]
         # Tercih başarısı: yeşil günlerde kaç atama yapıldı
         dp_pref_score = (
             int(dp_green_ok / dp_pref_all[1] * 100) if dp_pref_all[1] > 0 else None
@@ -113,7 +114,8 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
             f"<div style='margin-top:10px;font-size:11px;color:{ui['label_text']};'>"
             f"🟢 {dp_green_ok} tercih tuttu &nbsp;·&nbsp; "
             f"🟡 {dp_yellow_hit} kaçın gününde atandı &nbsp;·&nbsp; "
-            f"🔴 {dp_red_hit} izin gününde atandı</div>"
+            f"🔴 {dp_red_hit} izin gününde atandı &nbsp;·&nbsp; "
+            f"🟣 {dp_purple_hit} müsait olmadığı gün atandı</div>"
             f"</div>",
             unsafe_allow_html=True
         )
@@ -222,7 +224,7 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
                         pv = int(st.session_state.pref_df.at[p, ck]) if (
                             p in st.session_state.pref_df.index and ck in st.session_state.pref_df.columns
                         ) else 0
-                        outline = {1: "2px solid #16a34a", 2: "2px solid #d97706", 3: "2px solid #dc2626"}.get(pv, "none")
+                        outline = {1: "2px solid #16a34a", 2: "2px solid #d97706", 3: "2px solid #dc2626", 4: "2px solid #9333ea"}.get(pv, "none")
                         chips += (
                             f"<div style='display:flex;align-items:center;gap:3px;margin:2px 0;'>"
                             f"<span style='background:{pc};border-radius:8px;padding:2px 8px;"

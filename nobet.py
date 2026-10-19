@@ -52,6 +52,8 @@ for _attempt in range(2):
             last_shift_offsets,
             schedule_totals,
             unavailable_day_counts,
+            is_blocked_preference,
+            personal_work_hours,
             previous_period,
             special_shift_counts,
             build_gun_detaylari,
@@ -842,7 +844,7 @@ for _cf_col in sutunlar:
             if _cf_k in st.session_state.pref_df.index and _cf_col in st.session_state.pref_df.columns
             else 0
         )
-        if _pref_v == 3:
+        if is_blocked_preference(_pref_v):
             conflict_cells.add((_cf_k, _cf_col))
         if (_cf_gun - _last_cf.get(_cf_k, -10)) <= min_bosluk and _last_cf.get(_cf_k, -10) != -10:
             conflict_cells.add((_cf_k, _cf_col))
@@ -855,6 +857,11 @@ try:
 except Exception:
     _dark_theme = False
 ui = ui_colors(_dark_theme)
+
+# Kişisel zorunlu mesai: İzin işaretli iş günleri düşülür (Müsait Değil düşmez).
+mesai_saatleri = personal_work_hours(
+    gun_detaylari, official_half_days(yil, ay), st.session_state.pref_df, isimler
+)
 
 tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"])
 
@@ -870,7 +877,7 @@ with tab_grid:
 # ═══════════════════════════════════════════════════════
 with tab_cal:
     render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, tatil_gunleri,
-                        today_date, ui, person_colors, kişi_sayısı, zorunlu_saat, nobet_ucreti)
+                        today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, nobet_ucreti)
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -879,7 +886,7 @@ df_preferred = pd.DataFrame(0, index=isimler, columns=sutunlar)
 for person in isimler:
     for col in sutunlar:
         status = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index and col in st.session_state.pref_df.columns else 0
-        if status == 3:
+        if is_blocked_preference(status):
             df_unwanted.at[person, col] = True
         if status == 1:
             df_preferred.at[person, col] = 1
@@ -1097,7 +1104,7 @@ for col in sutunlar:
         
     for k in nobetciler:
         if df_unwanted.at[k, col]:
-            conflict_msg.append(f"❌ **{k}**: {gun_no}. gün izinli.")
+            conflict_msg.append(f"❌ **{k}**: {gun_no}. gün izinli ya da müsait değil.")
         
         if (gun_no - last_shift_check[k]) <= min_bosluk:
             violations.append(f"⚠️ **{k}**: {gun_no}. gün dinlenme kuralına uymuyor.")
@@ -1270,6 +1277,7 @@ _analysis_key = (
     tuple(sorted((person, limits.get("min", 0), limits.get("max", 999))
                  for person, limits in st.session_state.get("person_limits", {}).items())),
     zorunlu_saat,
+    tuple(sorted(mesai_saatleri.items())),
     nobet_ucreti,
     tuple((column, gun_detaylari[column]["weekend"], gun_detaylari[column]["holiday"]) for column in sutunlar),
 )
@@ -1286,6 +1294,7 @@ if (
         st.session_state.get("person_limits", {}),
         zorunlu_saat,
         nobet_ucreti,
+        mesai_saatleri,
     )
     st.session_state.cached_analysis_key = _analysis_key
 
