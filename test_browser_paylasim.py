@@ -247,5 +247,25 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
             # Liste sekmesi yerinde durur.
             page.get_by_role("tab", name="📋 Nöbet Listesi").click()
             expect(page.get_by_text("listesinde nöbetin yok")).to_be_visible()
+
+            # Sayfa yeniden açılınca ad telefonda saklı olduğu için hazır gelir;
+            # bekleyen talep kutularda durur ve güncellenince yerine geçer.
+            page.reload()
+            page.get_by_role("tab", name="📝 Talep Gönder").wait_for()
+            _wait_idle(page)
+            _no_exception(page)
+            page.get_by_role("tab", name="📝 Talep Gönder").click()
+            expect(page.get_by_label("👍 Nöbet istediğim günler (Tercih)")).to_have_value("3,5")
+            expect(page.get_by_label("🏖️ İzinli olduğum günler (İzin)")).to_have_value("10-12")
+            expect(page.get_by_role("button", name="📨 Talebi gönder")).to_have_count(0)
+            page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("20")
+            page.get_by_role("button", name="🔄 Talebi güncelle").click()
+            _wait_idle(page)
+            _no_exception(page)
+            expect(page.get_by_text("Talebin iletildi")).to_be_visible()
+            requests = _with_db(lambda db: db.list_team_requests(OWNER))
+            assert [(r["person"], r["days"]) for r in requests] == [
+                ("Talep Ali", {"tercih": [3, 5], "izin": [20]}),
+            ]
         finally:
             browser.close()

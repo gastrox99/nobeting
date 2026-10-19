@@ -8,6 +8,9 @@ yazarlar; talepler çizelgeye doğrudan yazılmaz, liste sahibi onaylar.
 from datetime import date, timedelta
 
 import pandas as pd
+import json
+from urllib.parse import unquote
+
 import streamlit as st
 
 from db import (
@@ -82,7 +85,17 @@ def render_shared_view(token, db_ready):
         # Ekip girilmemişse eskisi gibi yalnızca liste (talep gönderilemez).
         _render_list(_owner, _year, _month, None)
         return
-    # Önce ad sorulur; liste ve talep sekmeleri o kişiye göre açılır.
+    # Önce ad sorulur; liste ve talep sekmeleri o kişiye göre açılır. Seçilen
+    # ad telefonda bu link için çerezde saklanır, sonraki açılışta hazır gelir.
+    # (localStorage bileşeni açılışta sayfayı bir kez daha çalıştırıp formu bozuyordu.)
+    _cookie = "nobet_ad_" + "".join(_c for _c in str(token) if _c.isalnum())[:16]
+    if "paylasim_ad_kayitli" not in st.session_state:
+        try:
+            st.session_state.paylasim_ad_kayitli = unquote(st.context.cookies.get(_cookie) or "")
+        except Exception:
+            st.session_state.paylasim_ad_kayitli = ""
+        if st.session_state.paylasim_ad_kayitli in _team:
+            st.session_state.paylasim_kisi = st.session_state.paylasim_ad_kayitli
     _person = st.selectbox("Adın:", _team, index=None, placeholder="Adını seç", key="paylasim_kisi")
     if not _person:
         st.info("Nöbetlerini görmek ve talep göndermek için adını seç.")
@@ -92,6 +105,15 @@ def render_shared_view(token, db_ready):
         _render_list(_owner, _year, _month, _person)
     with _tab_request:
         _render_request_form(_owner, _person)
+    # Sekmelerden sonra yazılır: üstte geçici bir öğe sekmeleri ilk sekmeye döndürürdü.
+    if _person and _person != st.session_state.paylasim_ad_kayitli:
+        st.session_state.paylasim_ad_kayitli = _person
+        st.html(
+            "<script>document.cookie = " + json.dumps(_cookie + "=")
+            + " + encodeURIComponent(" + json.dumps(_person).replace("<", "\\u003c")
+            + ") + '; path=/; max-age=31536000; SameSite=Lax';</script>",
+            unsafe_allow_javascript=True,
+        )
 
 
 def _team_of(_owner):
@@ -210,13 +232,14 @@ def _render_request_form(_owner, _person):
     )
     _done = st.session_state.get("talep_gonderildi")
     if _done == (_person, _year, _month):
-        st.success("✅ Talebin iletildi. Liste sahibi onaylayınca çizelgeye işlenir.")
+        st.success("✅ Talebin iletildi. Liste sahibi onaylayınca çizelgeye işlenir; "
+                   "o zamana kadar buradan güncelleyebilirsin.")
     _pending = next((
         _r for _r in list_team_requests(_owner)
         if (_r["person"], _r["year"], _r["month"]) == (_person, _year, _month)
     ), None)
     if _pending and _done != (_person, _year, _month):
-        st.info("Bu ay için onay bekleyen bir talebin var; yeniden gönderirsen eskisinin yerine geçer.")
+        st.info("Bu ay için onay bekleyen talebin aşağıda. Değiştirip güncellersen eskisinin yerine geçer.")
     _prefill = (_pending or {}).get("days") or {}
     with st.form(f"talep_{_person}_{_year}_{_month}", border=False):
         _texts = {
@@ -229,7 +252,10 @@ def _render_request_form(_owner, _person):
             )
             for _key, _, _ in TALEP_TURLERI
         }
-        _sent = st.form_submit_button("📨 Talebi gönder", type="primary", width="stretch")
+        # Bekleyen talep varsa yenisi onun yerine geçer (iki talep oluşmaz).
+        _sent = st.form_submit_button(
+            "🔄 Talebi güncelle" if _pending else "📨 Talebi gönder", type="primary", width="stretch",
+        )
     if not _sent:
         return
     _days, _errors = parse_team_request(_texts, _year, _month, now_tr().date())
