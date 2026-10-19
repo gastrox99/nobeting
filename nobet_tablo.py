@@ -40,11 +40,12 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                 (0, "⬜Nötr"),
                 (1, "🟩Tercih"),
                 (2, "🟨Kaçın"),
-                (3, "🟥İzin")
+                (3, "🟥İzin"),
+                (4, "🟪Müsait Değil"),
             ]
             if 'paint_color' not in st.session_state:
                 st.session_state.paint_color = 0
-            color_cols = st.columns(4)
+            color_cols = st.columns(len(color_info))
             for i, (val, label) in enumerate(color_info):
                 with color_cols[i]:
                     btn_type = "primary" if st.session_state.paint_color == val else "secondary"
@@ -182,7 +183,7 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
             "tek tablo kullanılır; bu nedenle düzenlemeler daha akıcı kalır."
         )
         if st.session_state.edit_mode == "tercih":
-            st.caption("Tercih kodları: 0 = boş, 1 = tercih, 2 = kaçınma, 3 = izin")
+            st.caption("Tercih kodları: 0 = boş, 1 = tercih, 2 = kaçınma, 3 = izin (mesaiden düşer), 4 = müsait değil")
             _compact_pref = st.data_editor(
                 st.session_state.pref_df,
                 width="stretch",
@@ -191,7 +192,7 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
             )
             _normalized_pref = normalize_preference_grid(_compact_pref)
             if _normalized_pref is None:
-                st.error("Tercih hücrelerinde yalnızca 0, 1, 2 veya 3 tam sayıları kullanılabilir.")
+                st.error("Tercih hücrelerinde yalnızca 0, 1, 2, 3 veya 4 tam sayıları kullanılabilir.")
             elif not _normalized_pref.equals(st.session_state.pref_df):
                 save_undo_state()
                 st.session_state.pref_df = _normalized_pref
@@ -286,6 +287,7 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
         "preferred": (ui["soft_green_bg"], ui["soft_green_text"], "none"),
         "avoid": (ui["soft_amber_bg"], ui["soft_amber_text"], "none"),
         "unavailable": (ui["soft_red_bg"], ui["soft_red_text"], "none"),
+        "not_available": (ui["soft_purple_bg"], ui["soft_purple_text"], "none"),
     }
 
     def _legend_item(_state, _label):
