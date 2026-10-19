@@ -68,7 +68,10 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
         )
         st.caption("Hafta sonuna tatiller de dahildir. Renkli hücreler sütunun en çoğu (turuncu) "
                    "ve en azıdır (mavi); fark 2'den azsa renk yoktur.")
-        if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
+        # Düğme görev adlarını kullanır (ör. "AYB / GYB sayılarını eşitle").
+        if st.button(f"🤖 {' / '.join(role_names)} sayılarını eşitle", width="stretch",
+                     help="Nöbetçileri değiştirmeden yalnızca kimin hangi görev yerinde olduğunu "
+                          "herkese eşit dağıtır."):
             if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
                 save_undo_state()
                 rows_liste_to_redist = st.session_state.cached_rows_liste
