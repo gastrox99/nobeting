@@ -178,8 +178,63 @@ def settings_key(owner=""):
     return f"user:{owner}" if owner else "default"
 
 
-def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None, owner=""):
-    """Save a schedule to database"""
+class SaveConflict(Exception):
+    """Kayıt başka bir oturumda (ör. telefon) bu oturum okuduktan sonra değişmiş."""
+
+
+def _version_text(moment):
+    return moment.isoformat() if moment is not None else ""
+
+
+def get_schedule_version(name, year, month, owner=""):
+    """Kaydın son değişiklik zamanı (metin); kayıt yoksa "", okunamazsa None.
+
+    Oturum bunu okuma/kayıt anında saklar; sonraki kayıtta aynı değilse başka
+    bir yerde değişiklik yapılmıştır (``save_schedule(expected_version=...)``).
+    """
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT updated_at FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s',
+                (owner, name, year, month),
+            )
+            row = cur.fetchone()
+        return _version_text(row[0]) if row else ""
+    except Exception as e:
+        _log_error("Get schedule version", e)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_settings_version(owner=""):
+    """Ekip ve ayarlar kaydının son değişiklik zamanı; kayıt yoksa "", okunamazsa None."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor() as cur:
+            cur.execute('SELECT updated_at FROM app_settings WHERE key = %s', (settings_key(owner),))
+            row = cur.fetchone()
+        return _version_text(row[0]) if row else ""
+    except Exception as e:
+        _log_error("Get settings version", e)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None, owner="", expected_version=None, version_out=None):
+    """Save a schedule to database.
+
+    ``expected_version`` (``get_schedule_version`` çıktısı) verilirse ve kayıt
+    bu sürümden sonra değişmişse hiçbir şey yazılmaz ve ``SaveConflict``
+    yükseltilir (eski bir sekme yeni değişikliklerin üzerine yazmasın).
+    ``version_out`` bir sözlükse yeni sürüm ``version_out["version"]`` olur.
+    """
     conn = None
     try:
         conn = _connect()
@@ -213,6 +268,15 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
 
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
+                if expected_version is not None:
+                    # Satırı kilitleyip sürümü denetle: aynı anda iki oturum yazmasın.
+                    cur.execute(
+                        'SELECT updated_at FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s FOR UPDATE',
+                        (owner, name, year, month),
+                    )
+                    current = cur.fetchone()
+                    if _version_text(current[0] if current else None) != expected_version:
+                        raise SaveConflict(name)
                 # Insert or update schedule
                 cur.execute('''
                     INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, owner, updated_at)
@@ -242,8 +306,15 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
                         INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
                         VALUES %s
                     ''', rows)
+                if version_out is not None:
+                    cur.execute('SELECT updated_at FROM schedules WHERE id = %s', (schedule_id,))
+                    saved_at = cur.fetchone()[0]
 
+        if version_out is not None:
+            version_out["version"] = _version_text(saved_at)
         return True
+    except SaveConflict:
+        raise
     except Exception as e:
         _log_error("Save schedule", e)
         return False
@@ -251,7 +322,7 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
         if conn is not None:
             conn.close()
 
-def load_schedule(name, year, month, raise_on_error=False, owner=""):
+def load_schedule(name, year, month, raise_on_error=False, owner="", include_preferences=True):
     """Load a schedule from database.
     Returns (team_members, schedule_df, pref_df, settings_dict, rows_liste).
     pref_df, settings_dict, and rows_liste are None when not saved.
@@ -259,6 +330,8 @@ def load_schedule(name, year, month, raise_on_error=False, owner=""):
     ``raise_on_error`` is intended for interactive callers that need to
     distinguish a missing schedule from a database failure. The default keeps
     the legacy tuple-on-error behavior for non-interactive callers.
+    ``include_preferences=False`` tercih (izin/müsait değil) verisini okumaz;
+    yalnızca nöbetlere ihtiyaç duyan paylaşım sayfası için.
     """
     conn = None
     try:
@@ -284,7 +357,7 @@ def load_schedule(name, year, month, raise_on_error=False, owner=""):
 
             # Decode pref_df if available
             pref_df = None
-            raw_pref = schedule_row.get('pref_json')
+            raw_pref = schedule_row.get('pref_json') if include_preferences else None
             if raw_pref:
                 try:
                     # pandas 3 treats a bare string as a file path, so the
@@ -417,21 +490,36 @@ def load_auto_saved_assignments(periods, owner="", include_preferences=False):
     return (result, preferences) if include_preferences else result
 
 
-def save_app_settings(settings, owner=""):
-    """Save the team list and settings as one JSON document."""
+def save_app_settings(settings, owner="", expected_version=None, version_out=None):
+    """Save the team list and settings as one JSON document.
+
+    ``expected_version`` ve ``version_out`` için ``save_schedule`` açıklamasına bakın;
+    sürüm farklıysa ``SaveConflict`` yükseltilir.
+    """
     conn = None
     try:
         conn = _connect()
         with conn:
             with conn.cursor() as cur:
+                if expected_version is not None:
+                    cur.execute('SELECT updated_at FROM app_settings WHERE key = %s FOR UPDATE', (settings_key(owner),))
+                    current = cur.fetchone()
+                    if _version_text(current[0] if current else None) != expected_version:
+                        raise SaveConflict("settings")
                 cur.execute('''
                     INSERT INTO app_settings (key, value, updated_at)
                     VALUES (%s, %s, CURRENT_TIMESTAMP)
                     ON CONFLICT (key) DO UPDATE
                         SET value = EXCLUDED.value,
                             updated_at = CURRENT_TIMESTAMP
+                    RETURNING updated_at
                 ''', (settings_key(owner), json.dumps(settings, ensure_ascii=False)))
+                saved_at = cur.fetchone()[0]
+        if version_out is not None:
+            version_out["version"] = _version_text(saved_at)
         return True
+    except SaveConflict:
+        raise
     except Exception as e:
         _log_error("Save settings", e)
         return False

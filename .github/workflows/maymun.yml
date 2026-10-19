@@ -13,6 +13,10 @@ on:
         description: "Tur başına işlem sayısı"
         default: "120"
 
+# Depoyu yalnızca okur; varsayılan jeton yetkisi gerekmez.
+permissions:
+  contents: read
+
 jobs:
   maymun:
     runs-on: ubuntu-latest

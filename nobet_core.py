@@ -23,6 +23,23 @@ def normalize_owner_email(value):
     return value.strip().lower()
 
 
+_CSV_FORMULA_STARTS = ("=", "+", "@", "\t", "\r")
+
+
+def csv_safe_text(value):
+    """CSV'de Excel'in formül sayacağı metinlerin başına ' koyar ("-" tek başına boş yerdir)."""
+    if isinstance(value, str) and value and (
+        value.startswith(_CSV_FORMULA_STARTS) or (value.startswith("-") and len(value) > 1)
+    ):
+        return "'" + value
+    return value
+
+
+def csv_safe_frame(frame):
+    """CSV'ye yazılacak tablonun metin hücrelerini formül sızmasına karşı temizler."""
+    return frame.map(csv_safe_text)
+
+
 def escape_html(value):
     """Convert any displayed value to safe HTML text."""
     return _escape_html(str(value), quote=True)
@@ -181,11 +198,19 @@ def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, y
     result = {
         "format_ok": False, "schedule": None, "rows": None, "matched": 0,
         "skipped_names": [], "date_mismatch": None, "unreadable_rows": 0,
+        "extra_people": 0,
     }
     role_columns = [column for column in table.columns if column != "Tarih"]
     if "Tarih" not in table.columns or not role_columns:
         return result
     result["format_ok"] = True
+    # Başlıklar görev adlarının hepsini içeriyorsa adla, yoksa sıraya göre eşleştir.
+    # Görev sayısından fazla sütunlar ("Ek 1" gibi) kişileri çizelgeye ekler.
+    if all(role in role_columns for role in role_names):
+        mapped_columns = list(role_names)
+    else:
+        mapped_columns = role_columns[:len(role_names)]
+    extra_columns = [column for column in role_columns if column not in mapped_columns]
     day_count = len(sutunlar)
     column_by_day = {gun_detaylari[column]["day_num"]: column for column in sutunlar}
     schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -210,7 +235,7 @@ def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, y
             continue
         row = {"Tarih": gun_detaylari[column]["full_date"]}
         for index, role in enumerate(role_names):
-            source_column = role_columns[index] if index < len(role_columns) else None
+            source_column = mapped_columns[index] if index < len(mapped_columns) else None
             person = str(source_row.get(source_column, "-")).strip() if source_column else "-"
             if person and person not in ("-", "nan") and person in schedule.index:
                 schedule.at[person, column] = True
@@ -219,6 +244,16 @@ def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, y
                 if person and person not in ("-", "nan"):
                     skipped.add(person)
                 row[role] = "-"
+        for source_column in extra_columns:
+            person = str(source_row.get(source_column, "-")).strip()
+            if not person or person in ("-", "nan"):
+                continue
+            if person in schedule.index:
+                if not schedule.at[person, column]:
+                    schedule.at[person, column] = True
+                    result["extra_people"] += 1
+            else:
+                skipped.add(person)
         rows_by_day[day] = row
     rows = []
     for column in sutunlar:
@@ -1330,6 +1365,7 @@ PERIOD_STATE_KEYS = (
     "prev_month_context",
     "locked_cells",
     "hidden_people",
+    "schedule_version",
 )
 
 
@@ -1341,6 +1377,8 @@ def switch_schedule_period(session_state, new_period, save_fn=None):
     önce giden dönem ``save_fn(period, schedule, preferences, rows)`` ile
     kaydedilir, ardından döneme bağlı tüm state silinir; böylece çağıran taraf
     yeni dönemin kaydını sıfırdan yükleyebilir. Dönem değiştiyse True döner.
+    ``save_fn`` False döndürür ya da hata verirse hiçbir şey silinmez,
+    ``period_switch_blocked`` eski dönemle doldurulur ve False döner.
     """
     old_period = session_state.get("loaded_period")
     if old_period is None or tuple(old_period) == tuple(new_period):
@@ -1349,14 +1387,18 @@ def switch_schedule_period(session_state, new_period, save_fn=None):
     schedule = session_state.get("schedule_bool")
     if save_fn is not None and schedule is not None:
         try:
-            save_fn(
+            saved = save_fn(
                 tuple(old_period),
                 schedule,
                 session_state.get("pref_df"),
                 session_state.get("cached_rows_liste"),
             )
         except Exception:
-            pass
+            saved = False
+        if saved is False:
+            # Çıkılan ayın son hâli yazılamadı: durumu silme, çağıran ayı geri döndürsün.
+            session_state["period_switch_blocked"] = tuple(old_period)
+            return False
 
     for key in PERIOD_STATE_KEYS:
         session_state.pop(key, None)
@@ -1441,7 +1483,6 @@ def build_schedule_analysis(
             if person in all_role_counts[role]:
                 all_role_counts[role][person] += 1
 
-    weekend_columns = [column for column in schedule.columns if gun_detaylari[column]["weekend"]]
     special_columns = [
         column for column in schedule.columns
         if gun_detaylari[column]["weekend"] or gun_detaylari[column]["holiday"]
@@ -1685,15 +1726,15 @@ def special_capped_people(person_limits):
 def team_settings_rows(names, limits):
     """Ayarlardaki ekip tablosunun satırları: [{"name", "max", "max_special", "min"}].
 
-    Sınırsız değerler None olur. ``min`` görünmez; eski kayıtlardaki
-    "en az" değeri kaybolmasın diye taşınır.
+    Sınırsız değerler None olur. "En az nöbet" arayüzde yok ve kullanılmıyor;
+    eski kayıtlardaki görünmez değer burada sıfırlanır (kaydedilince silinir).
     """
     rows = []
     for name in names:
         value = (limits or {}).get(name, {})
         rows.append({
             "name": name,
-            "min": value.get("min", 0),
+            "min": 0,
             "max": None if value.get("max", 999) >= 999 else value["max"],
             "max_special": None if value.get("max_special", 999) >= 999 else value["max_special"],
         })
@@ -1721,13 +1762,14 @@ def compact_team_rows(rows):
 def team_settings_texts(rows):
     """Ekip tablosu satırlarını saklanan metinlere çevirir: (ekip_metni, limit_metni).
 
-    Adı boş satırlar atlanır; virgül adı bölmesin diye boşluğa çevrilir.
+    Adı boş satırlar atlanır; virgül ve iki nokta (limit satırını bozar) boşluğa çevrilir.
     Aynı ad iki kez yazılırsa limiti ilk satırdan alınır.
     """
     names = []
     limits = {}
     for row in rows:
-        name = " ".join(str(row.get("name") or "").replace(",", " ").split())
+        # Virgül adı bölmesin, iki nokta limit satırını bozmasın diye boşluğa çevrilir.
+        name = " ".join(str(row.get("name") or "").replace(",", " ").replace(":", " ").split())
         if not name:
             continue
         names.append(name)

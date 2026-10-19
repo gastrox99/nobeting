@@ -44,6 +44,9 @@ for _attempt in range(2):
             get_last_error,
             is_database_configured,
             load_auto_saved_assignments,
+            get_schedule_version,
+            get_settings_version,
+            SaveConflict,
         )
         from nobet_core import (
             history_adjustment,
@@ -232,6 +235,9 @@ if 'app_settings_loaded' not in st.session_state:
     st.session_state.app_settings_load_failed = not _db_ready
     if _db_ready:
         try:
+            # Sürüm önce okunur: arada başka yerde kayıt olursa sürüm eski kalır ve
+            # ilk kayıtta uyarı verilir (yeni veri sessizce ezilmez).
+            st.session_state.settings_version = get_settings_version(owner=current_owner)
             _stored_settings = load_app_settings(owner=current_owner, raise_on_error=True)
         except Exception:
             st.session_state.app_settings_load_failed = True
@@ -294,6 +300,12 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
     return best_schedule
 
 # --- AYARLAR (Ana Sayfada Açılır Panel) ---
+_period_revert = st.session_state.pop("period_revert", None)
+if _period_revert:
+    # Ay/yıl kutuları çizilmeden önce eski değere döndürülür (kutular çizildikten sonra değiştirilemez).
+    st.session_state.yil_val, st.session_state.ay_val = _period_revert
+    st.session_state.yil_input_direct, st.session_state.ay_input_direct = _period_revert
+    st.session_state.period_revert_notice = True
 prev_isimler = st.session_state.get('isimler_cache', [])
 # Ekip yoksa Ayarlar açık başlar. Değer oturum boyunca sabit kalır; yoksa
 # ilk isim yazılınca panel kapanıyordu (ekip tablosu satır satır doldurulur).
@@ -486,6 +498,12 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     if _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(_lim_unknown)}** — limit uygulanmayacak.")
 
+if st.session_state.pop("period_revert_notice", False):
+    st.error(
+        "❌ Önceki ayın son değişiklikleri kaydedilemediği için ay değiştirilmedi. "
+        "Veritabanı bağlantısını kontrol edin ya da sayfayı yenileyip tekrar deneyin."
+    )
+
 # Ekip ve ayarlar değiştiyse veritabanına yaz (sayfa yenilenince geri gelir).
 _current_settings = collect_app_settings(st.session_state)
 _nothing_saved_yet = st.session_state.get("last_saved_settings") is None
@@ -496,10 +514,28 @@ if (
     # İlk açılışta boş ekip kaydedilmesin (localStorage'dan gelecek ekip ezilmesin).
     and not (_nothing_saved_yet and not st.session_state.get("isimler_text", "").strip())
 ):
-    if save_app_settings(_current_settings, owner=current_owner):
+    _settings_version = {}
+    try:
+        _settings_saved = save_app_settings(
+            _current_settings, owner=current_owner,
+            expected_version=st.session_state.get("settings_version"), version_out=_settings_version,
+        )
+    except SaveConflict:
+        # Başka bir yerde (ör. telefonda) ayarlar değişmiş; onların üzerine yazma.
+        _settings_saved = False
+        st.session_state.app_settings_load_failed = True
+        st.session_state.settings_conflict = True
+    if _settings_saved:
         st.session_state.last_saved_settings = _current_settings
+        if "version" in _settings_version:
+            st.session_state.settings_version = _settings_version["version"]
         # Hazırlanmış yedek artık eski; yeniden hazırlanması gerekir.
         st.session_state.pop("backup_bytes", None)
+if st.session_state.get("settings_conflict"):
+    st.error(
+        "⚠️ Ekip ve ayarlar başka bir yerde (telefon ya da başka sekme) değiştirilmiş. "
+        "Yeni değişikliklerin üzerine yazmamak için ayarlar kaydedilmiyor. Sayfayı yenileyin."
+    )
 
 # --- YEDEK: tüm aylar ve ayarlar tek dosyada; aynı dosyadan geri yükleme (nobet_yedek.py) ---
 if _db_ready:
@@ -518,21 +554,30 @@ def _save_outgoing_period(period, schedule, preferences, rows):
     _old_yil, _old_ay = period
     # Okunamayan bir dönemin kaydının üzerine yazma; değişmediyse tekrar yazma.
     if st.session_state.get("autosave_blocked_period") == tuple(period):
-        return
+        return True
     _locks = active_locks(st.session_state.get("locked_cells"), schedule)
     _hidden = st.session_state.get("hidden_people") or {}
     if persistence_fingerprint(schedule, preferences, rows, _locks, _hidden) == st.session_state.get("last_saved_fingerprint"):
-        return
+        return True
     st.session_state.pop("backup_bytes", None)
-    save_schedule(
-        f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
-        schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
-        settings_dict={"locked": locks_to_json(_locks), "hidden": _hidden},
-    )
+    # False dönerse ay değişimi durdurulur: son değişiklikler kaybolmasın.
+    try:
+        return bool(save_schedule(
+            f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
+            schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
+            settings_dict={"locked": locks_to_json(_locks), "hidden": _hidden},
+            expected_version=st.session_state.get("schedule_version"),
+        ))
+    except SaveConflict:
+        return False
 
 # Ay/yıl değişince eski ayın çizelgesini yeni aya taşımak yerine kaydet ve
 # yeni ayın kendi kaydını yükle (aksi halde otomatik kayıt o ayın üzerine yazar).
 switch_schedule_period(st.session_state, (yil, ay), _save_outgoing_period)
+if st.session_state.get("period_switch_blocked"):
+    # Çıkılan ayın son değişiklikleri kaydedilemedi: ay değişmesin, uyarı gösterilsin.
+    st.session_state.period_revert = st.session_state.pop("period_switch_blocked")
+    st.rerun()
 
 if 'schedule_bool' not in st.session_state:
     # Sayfa yenilenmesinde otomatik geri yükle
@@ -554,6 +599,8 @@ if 'schedule_bool' not in st.session_state:
         )
 
     st.session_state.autosave_blocked_period = None
+    # Sürüm önce okunur; arada başka yerde kayıt olursa ilk kayıtta uyarı verilir.
+    st.session_state.schedule_version = get_schedule_version(_auto_name, yil, ay, owner=current_owner) if _db_ready else None
     if not restore_auto_saved_schedule(
         st.session_state,
         _load_auto_schedule,
@@ -665,6 +712,8 @@ for _stale in [k for k in list(st.session_state.person_preferences.keys()) if k 
 
 if st.session_state.pop("simulation_success_pending", False):
     st.toast("En adil sonuç seçildi.", icon="🧠")
+    if st.session_state.pop("auto_improved_pending", False):
+        st.toast("Eksik ya da toplam farkı vardı; ✨ İyileştir çözücüsü düzeltti.", icon="✨")
 
 
 def _queue_assignment_warnings(cells):
@@ -932,6 +981,23 @@ def _simulation_context():
     )
 
 
+def _auto_improve(schedule):
+    """Simülasyon sonucunda boş nöbet ya da 1'den büyük toplam farkı varsa İyileştir'in
+    çözücüsünü bir kez dener: (çizelge, düzeldi_mi)."""
+    try:
+        from nobet_iyilestir import improve_if_needed
+    except ImportError:
+        return schedule, False
+    return improve_if_needed(
+        schedule, isimler, sutunlar, df_unwanted, gun_detaylari, min_bosluk, kişi_sayısı,
+        forbidden_pairs=st.session_state.forbidden_pairs,
+        person_limits=st.session_state.get('person_limits', {}), df_preferred=df_preferred,
+        fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool),
+        initial_last_shift=prev_last_shift, history_special=history_special,
+        history_total=history_total, history_holiday=history_holiday,
+    )
+
+
 # Handle simulation trigger
 sim_clicked = st.session_state.get('run_simulation', False)
 st.session_state.run_simulation = False
@@ -979,6 +1045,10 @@ if sim_clicked:
             history_total=history_total,
             history_holiday=history_holiday,
         )
+        _auto_improved = False
+        if _new_schedule is not None:
+            with st.spinner("Eksik ya da toplam farkı için çözücü deneniyor..."):
+                _new_schedule, _auto_improved = _auto_improve(_new_schedule)
         if _new_schedule is not None:
             _missing = missing_shift_coverage(_new_schedule, sutunlar, kişi_sayısı)
             if _missing:
@@ -993,6 +1063,7 @@ if sim_clicked:
                 st.session_state.schedule_bool = _new_schedule
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.simulation_success_pending = True
+                st.session_state.auto_improved_pending = _auto_improved
                 st.rerun()
 
 # İyileştir: mevcut listeden OR-Tools ile daha adilini arar (nobet_iyilestir).
@@ -1247,15 +1318,34 @@ elif (
 ):
     auto_name = f"Otomatik_{yil}_{ay:02d}"
     _saved_ok = False
+    _save_conflict = False
+    _schedule_version = {}
     try:
         _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
                                   pref_df=st.session_state.get('pref_df'),
                                   rows_liste=rows_liste, owner=current_owner,
                                   settings_dict={"locked": locks_to_json(_active_locks),
-                                                 "hidden": _hidden_people})
+                                                 "hidden": _hidden_people},
+                                  expected_version=st.session_state.get("schedule_version"),
+                                  version_out=_schedule_version)
+    except SaveConflict:
+        # Bu ay başka bir yerde (ör. telefonda) değişmiş; onların üzerine yazma.
+        _save_conflict = True
+        st.session_state.autosave_blocked_period = (yil, ay)
+        update_persistence_feedback(
+            st.session_state,
+            False,
+            "⚠️ Bu ayın çizelgesi başka bir yerde (telefon ya da başka sekme) değiştirilmiş. "
+            "Yeni değişikliklerin üzerine yazmamak için kayıt durduruldu. Sayfayı yenileyin; "
+            "bu sekmedeki değişiklikleri kaybetmek istemiyorsanız önce Excel olarak indirin.",
+        )
     except Exception:
         _saved_ok = False
-    if _saved_ok:
+    if _save_conflict:
+        pass
+    elif _saved_ok:
+        if "version" in _schedule_version:
+            st.session_state.schedule_version = _schedule_version["version"]
         st.session_state.last_saved_fingerprint = _persist_fp
         st.session_state.last_auto_save = time.time()
         update_persistence_feedback(st.session_state, True)

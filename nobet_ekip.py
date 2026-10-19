@@ -106,10 +106,50 @@ def _pair_key(a, b):
     return f"w_yasak::{a}::{b}"
 
 
+# Çapraz tablo kişi sayısının karesi kadar kutu çizer; büyük ekipte tek bir seçim listesi kullanılır.
+PAIR_MATRIX_MAX_PEOPLE = 25
+_PAIR_LIST = "w_yasak_liste"
+
+
+def _pair_label(pair):
+    return f"{pair[0]} + {pair[1]}"
+
+
+def _render_pair_list(isimler, text):
+    """Büyük ekip için ikililer tek çoklu seçim kutusunda işaretlenir; yeni metni döner."""
+    state = st.session_state
+    options = {
+        _pair_label(tuple(sorted((a, b)))): tuple(sorted((a, b)))
+        for i, a in enumerate(isimler) for b in isimler[i + 1:]
+    }
+    shown = state.get("_yasak_liste_shown")
+    if shown is not None and _PAIR_LIST in state and set(state[_PAIR_LIST]) != set(shown):
+        chosen = {options[label] for label in state[_PAIR_LIST] if label in options}
+        outside = {p for p in parse_forbidden_pairs(text, isimler) if unknown_names(p, isimler)}
+        text = forbidden_pairs_to_text(chosen | outside)
+    pairs = parse_forbidden_pairs(text, isimler)
+    current = [_pair_label(p) for p in sorted(pairs) if p in options.values()]
+    state[_PAIR_LIST] = current
+    state["_yasak_liste_shown"] = list(current)
+    return text, options
+
+
 def render_pair_matrix(isimler):
     """Birlikte çalışamayanlar: kişi × kişi çapraz tablo, bir tıkla işaretlenir."""
     state = st.session_state
     text = state.get("forbidden_pairs_text", "")
+    if len(isimler) > PAIR_MATRIX_MAX_PEOPLE:
+        text, options = _render_pair_list(isimler, text)
+        if text != state.get("forbidden_pairs_text", ""):
+            state.forbidden_pairs_text = text
+        with st.container(key="yasak-tablo"):
+            st.markdown("**🚫 Birlikte Çalışamayan**")
+            st.multiselect(
+                "Aynı gün nöbet tutamayan ikililer", list(options), key=_PAIR_LIST,
+                placeholder="İkili seçin (ör. Ali + Ayşe)",
+            )
+            st.caption(f"Ekip {PAIR_MATRIX_MAX_PEOPLE} kişiden büyük olduğu için tablo yerine liste kullanılıyor.")
+        return
     shown = state.get("_yasak_shown", set())
     # Son çizimden bu yana tıklanan kutuyu bul ve metne uygula.
     for a in isimler:

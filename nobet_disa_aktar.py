@@ -17,6 +17,7 @@ from nobet_core import (
     EXCEL_IMPORT_MAX_ROWS,
     TR_AY_ADLARI,
     build_share_text,
+    csv_safe_frame,
     create_print_html,
     import_schedule_table,
     parse_schedule_import_date,
@@ -138,7 +139,7 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
             st.download_button("🖼️ Resim (PNG)", _png_bytes, f"nobet_{yil}_{ay:02d}.png", "image/png",
                                on_click="ignore", width="stretch")
             # BOM'lu UTF-8: Excel'de Ş, ğ, ı gibi harfler bozulmadan açılır.
-            st.download_button("📄 CSV", df_liste.to_csv(index=False).encode('utf-8-sig'),
+            st.download_button("📄 CSV", csv_safe_frame(df_liste).to_csv(index=False).encode('utf-8-sig'),
                                f"nobet_{yil}_{ay:02d}.csv", "text/csv",
                                on_click="ignore", width="stretch")
             st.markdown("**💬 WhatsApp metni**")
@@ -249,6 +250,10 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                         _msgs.append(("warning",
                             f"⚠️ Excel'de {len(sutunlar)} günden {_imp['matched']} gün eşleşti; "
                             f"{len(sutunlar) - _imp['matched']} gün boş bırakıldı."))
+                    if _imp["extra_people"]:
+                        _msgs.append(("info",
+                            f"{_imp['extra_people']} nöbet görev sayısından fazla sütunlardan (Ek 1 gibi) "
+                            "okundu; listede 'Ek' sütununda görünür."))
                     if _imp["unreadable_rows"]:
                         _msgs.append(("warning", f"⚠️ {_imp['unreadable_rows']} satırın tarihi okunamadığı için atlandı."))
                 st.session_state.excel_import_messages = _msgs
