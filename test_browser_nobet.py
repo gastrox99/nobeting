@@ -233,7 +233,8 @@ def test_excel_yukleme_bir_kez_islenir_ve_dongu_olmaz(app_url, tmp_path):
         browser, page = _open_app(playwright, app_url, f"{PERSON}, Browser Test Ayşe")
         try:
             assert page.locator("[data-testid='stException']").count() == 0
-            page.get_by_text("📂 Excel Yükle").click()
+            # Excel yükleme sayfanın altındaki Yedek bölümünde.
+            page.locator("summary", has_text="💾 Yedek").click()
             page.locator("[data-testid='stFileUploader'] input[type=file]").set_input_files(str(path))
             page.get_by_text("gün yüklendi").wait_for(timeout=20000)
             _wait_idle(page)
@@ -448,11 +449,12 @@ def test_yasak_ikili_capraz_tablodan_ve_limit_ekip_tablosundan_girilir(app_url):
             box, label = _pair_checkbox(page, "Ayar Ali", "Ayar Ayşe")
             label.click()
             _wait_idle(page, 1.5)
-            # Çapraz tablonun öbür yarısı da işaretlenir; tekrar tıklayınca kalkar.
-            expect(_pair_checkbox(page, "Ayar Ayşe", "Ayar Ali")[0]).to_be_checked()
+            # Her ikili bir kez (ekip sırasıyla) gösterilir; tekrar tıklayınca kalkar.
+            expect(box).to_be_checked()
+            assert _pair_checkbox(page, "Ayar Ayşe", "Ayar Ali")[0].count() == 0
             _pair_checkbox(page, "Ayar Can", "Ayar Deniz")[1].click()
             _wait_idle(page, 1.5)
-            _pair_checkbox(page, "Ayar Deniz", "Ayar Can")[1].click()
+            _pair_checkbox(page, "Ayar Can", "Ayar Deniz")[1].click()
             _wait_idle(page, 1.5)
             expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz")[0]).not_to_be_checked()
             expect(_pair_checkbox(page, "Ayar Ali", "Ayar Ayşe")[0]).to_be_checked()

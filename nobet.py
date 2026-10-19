@@ -74,6 +74,7 @@ for _attempt in range(2):
             align_rows_to_roles,
             YEAR_MIN,
             YEAR_MAX,
+            TR_AY_ADLARI,
             official_holidays,
             official_holidays_summary,
             official_half_days,
@@ -132,7 +133,7 @@ for _attempt in range(2):
 from nobet_stil import GLOBAL_CSS, ui_colors
 from nobet_durum import apply_renames, save_undo_state
 from nobet_paylasim import render_shared_view
-from nobet_disa_aktar import render_toolbar
+from nobet_disa_aktar import render_excel_import, render_toolbar
 from nobet_yedek import render_backup_section, run_requested_snapshot
 from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
@@ -290,7 +291,6 @@ if 'localStorage_loaded' not in st.session_state:
 # --- GLOBAL RESPONSIVE CSS (nobet_stil.py) ---
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align: center; font-size: 2.5rem;'>Nöbet Yönetimi</h1>", unsafe_allow_html=True)
 if AUTH_ENABLED:
     _user_cols = st.columns([5, 1])
     with _user_cols[0]:
@@ -333,6 +333,45 @@ if _period_revert:
     st.session_state.yil_input_direct, st.session_state.ay_input_direct = _period_revert
     st.session_state.period_revert_notice = st.session_state.pop("period_revert_reason", "db")
 prev_isimler = st.session_state.get('isimler_cache', [])
+
+# Varsayılan dönem: gelecek ay (nöbet listesi genelde bir ay önceden hazırlanır).
+_now = now_tr()
+if _now.month == 12:
+    current_year = _now.year + 1
+    current_month = 1
+else:
+    current_year = _now.year
+    current_month = _now.month + 1
+
+
+def _shift_period(delta):
+    """Üstteki ‹ › oku: ayı bir öne/geri alır (Ayarlar'daki kutular da güncellenir)."""
+    _y = st.session_state.get("yil_input_direct", st.session_state.get("yil_val", current_year))
+    _m = st.session_state.get("ay_input_direct", st.session_state.get("ay_val", current_month))
+    _index = _y * 12 + (_m - 1) + delta
+    _y, _m = divmod(_index, 12)
+    _m += 1
+    if YEAR_MIN <= _y <= YEAR_MAX:
+        st.session_state.yil_val, st.session_state.ay_val = _y, _m
+        st.session_state.yil_input_direct, st.session_state.ay_input_direct = _y, _m
+
+
+# Ay ve yıl her zaman en üstte görünür (Ayarlar kapalıyken de).
+_bar_year = st.session_state.get("yil_input_direct", st.session_state.get("yil_val", current_year))
+_bar_month = st.session_state.get("ay_input_direct", st.session_state.get("ay_val", current_month))
+_bar_cols = st.container(key="month-bar").columns([1, 4, 1], vertical_alignment="center")
+_bar_cols[0].button(
+    "‹", key="month_prev", help="Önceki ay", width="stretch",
+    on_click=_shift_period, args=(-1,), disabled=(_bar_year, _bar_month) <= (YEAR_MIN, 1),
+)
+_bar_cols[1].markdown(
+    f"<div class='month-bar-title'>{TR_AY_ADLARI[_bar_month]} {_bar_year}</div>",
+    unsafe_allow_html=True,
+)
+_bar_cols[2].button(
+    "›", key="month_next", help="Sonraki ay", width="stretch",
+    on_click=_shift_period, args=(1,), disabled=(_bar_year, _bar_month) >= (YEAR_MAX, 12),
+)
 # Ekip yoksa Ayarlar açık başlar. Değer oturum boyunca sabit kalır; yoksa
 # ilk isim yazılınca panel kapanıyordu (ekip tablosu satır satır doldurulur).
 if "settings_expanded" not in st.session_state:
@@ -375,18 +414,12 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             st.session_state.last_stored_team_text = isimler_input
     
     with set_col2:
-        _now = now_tr()
-        if _now.month == 12:
-            current_year = _now.year + 1
-            current_month = 1
-        else:
-            current_year = _now.year
-            current_month = _now.month + 1
         yil = st.number_input("📅 Yıl", YEAR_MIN, YEAR_MAX, value=st.session_state.get('yil_val', current_year), key='yil_input_direct')
         st.session_state.yil_val = yil
         
         ay_options = list(range(1, 13))
-        ay = st.selectbox("📆 Ay", ay_options, index=ay_options.index(st.session_state.get('ay_val', current_month)), key='ay_input_direct')
+        ay = st.selectbox("📆 Ay", ay_options, index=ay_options.index(st.session_state.get('ay_val', current_month)), key='ay_input_direct',
+                          format_func=lambda m: TR_AY_ADLARI[m])
         st.session_state.ay_val = ay
         
         gun_sayisi = calendar.monthrange(yil, ay)[1]
@@ -589,10 +622,11 @@ if st.session_state.get("settings_conflict"):
     )
 
 # --- YEDEK: tüm aylar ve ayarlar tek dosyada; aynı dosyadan geri yükleme (nobet_yedek.py) ---
-if _db_ready:
-    render_backup_section(current_owner, yil, ay, isimler)
-
-if not isimler: st.stop()
+# Ekip varken bölüm sayfanın altında, Yedekle tuşunun yanında çizilir.
+if not isimler:
+    if _db_ready:
+        render_backup_section(current_owner, yil, ay, isimler)
+    st.stop()
 
 # --- GÜN VERİLERİ ---
 gun_detaylari = build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)
@@ -1283,13 +1317,22 @@ for col in sutunlar:
                 if pair in st.session_state.forbidden_pairs:
                     forbidden_msg.append(f"🚫 **{gun_no}. Gün**: {nobetciler[i]} ve {nobetciler[j]} birlikte çalışamaz!")
 
-for col, assigned in missing_shift_coverage(edited_df, sutunlar, kişi_sayısı):
-    _msg = f"🟠 **{gun_detaylari[col]['day_num']}. Gün**: Eksik nöbetçi! ({assigned}/{kişi_sayısı} kişi)"
+# Eksik günler tek satırda toplanır; kuralların engellediği günlerin nedeni altta küçük yazılır.
+_schedule_empty = not bool(edited_df.values.any())
+_missing_days = [] if _schedule_empty else missing_shift_coverage(edited_df, sutunlar, kişi_sayısı)
+if _missing_days:
+    min_person_msg.append(
+        f"🟠 **Eksik nöbetçi** ({len(_missing_days)} gün): "
+        + ", ".join(f"{gun_detaylari[col]['day_num']} ({assigned}/{kişi_sayısı})" for col, assigned in _missing_days)
+    )
+missing_reason_msg = []
+for col, assigned in _missing_days:
     _reasons = _missing_day_reasons(edited_df, col)
-    # Herkes uygunsa (ör. henüz boş çizelge) neden satırı gürültü olur.
+    # Herkes uygunsa neden satırı gürültü olur (elle atanabilir).
     if not _reasons or any(_label != MISSING_DAY_FREE_LABEL for _label, _ in _reasons):
-        _msg += f"  \nNeden: {format_missing_day_reason(_reasons)}"
-    min_person_msg.append(_msg)
+        missing_reason_msg.append(
+            f"**{gun_detaylari[col]['day_num']}. gün** — {format_missing_day_reason(_reasons)}"
+        )
 
 # Kişisel limit ihlali kontrolü
 _pl = st.session_state.get('person_limits', {})
@@ -1307,17 +1350,26 @@ if _fp_unk:
 if _lim_unk:
     input_warn_msg.append(f"⚠️ Kişisel limitte ekip dışı isim(ler): **{', '.join(_lim_unk)}** — bu limit etkisiz.")
 
-if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violations or limit_msg or input_warn_msg:
-    with st.expander("🚨 HATA RAPORU (Tıklayıp Açın)", expanded=True):
+_issue_count = (
+    len(max_person_msg) + len(_missing_days) + len(conflict_msg) + len(forbidden_msg)
+    + len(violations) + len(limit_msg) + len(input_warn_msg)
+)
+if _schedule_empty:
+    # Henüz hiç nöbet yokken her gün için "eksik" uyarısı yerine ne yapılacağını söyle.
+    st.info("Liste boş. İzin ve tercihleri işaretleyin, sonra ⚡ Simülasyon'a basın.")
+    for m in input_warn_msg: st.warning(m)
+elif _issue_count:
+    with st.expander(f"⚠️ Kontrol: {_issue_count} sorun", expanded=True):
         for m in max_person_msg: st.error(m)
         for m in min_person_msg: st.warning(m)
+        for m in missing_reason_msg: st.caption(m)
         for c in conflict_msg: st.error(c)
         for f in forbidden_msg: st.error(f)
         for v in violations: st.info(v)
         for m in limit_msg: st.warning(m)
         for m in input_warn_msg: st.warning(m)
 else:
-    st.success(f"✅ Kurallar uygun (Her gün {kişi_sayısı} kişi, çakışma yok).")
+    st.caption(f"✅ Kurallar uygun: her gün {kişi_sayısı} kişi, çakışma yok.")
 
 # --- VERİ HAZIRLIĞI ---
 # Only regenerate assignments when AI button is clicked, not on manual edits.
@@ -1526,6 +1578,12 @@ st.divider()
 render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_roles,
                yil, ay, gun_detaylari, isimler, sutunlar, role_names,
                _db_ready, current_owner, save_undo_state)
+render_backup_section(
+    current_owner, yil, ay, isimler, _db_ready,
+    excel_import=lambda: render_excel_import(
+        yil, ay, gun_detaylari, isimler, sutunlar, role_names, save_undo_state,
+    ),
+)
 
 st.divider()
 

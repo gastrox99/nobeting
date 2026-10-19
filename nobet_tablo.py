@@ -89,10 +89,20 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                 st.rerun()
 
     if st.session_state.get("reset_pending", False):
-        st.warning("⚠️ Çizelge ve tüm tercihler silinecek. Devam etmek istediğinizden emin misiniz?")
-        _reset_cols = st.columns(2)
+        # Çoğu zaman istenen, izinler kalırken nöbetleri yeniden dağıtmaktır.
+        st.warning("⚠️ Neyi silmek istiyorsunuz? Geri ile geri alınabilir.")
+        _reset_cols = st.columns(3)
         with _reset_cols[0]:
-            if st.button("🗑️ Evet, çizelgeyi sıfırla", type="primary", width="stretch"):
+            if st.button("🧹 Yalnız nöbetleri sil", type="primary", width="stretch"):
+                save_undo_state()
+                st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+                st.session_state.locked_cells = set()
+                st.session_state.cached_rows_liste = None
+                st.session_state.should_regenerate_assignments = True
+                st.session_state.reset_pending = False
+                st.rerun()
+        with _reset_cols[1]:
+            if st.button("🗑️ Tercih ve izinleri de sil", width="stretch"):
                 save_undo_state()
                 st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
                 st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -102,7 +112,7 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.reset_pending = False
                 st.rerun()
-        with _reset_cols[1]:
+        with _reset_cols[2]:
             if st.button("Vazgeç", width="stretch"):
                 st.session_state.reset_pending = False
                 st.rerun()
@@ -147,7 +157,7 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
     def _draw_day_header():
         header_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
         with header_cols[0]:
-            st.markdown(f"<div style='font-size:13px;font-weight:700;color:{ui['muted']};padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='grid-head' style='font-size:13px;font-weight:700;color:{ui['muted']};padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
         for i, col in enumerate(sutunlar):
             with header_cols[i + 1]:
                 day_num = gun_detaylari[col]['day_num']

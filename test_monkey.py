@@ -29,6 +29,8 @@ if os.environ.get("RUN_MONKEY") != "1":
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
+from nobet_core import TR_AY_ADLARI  # noqa: E402
+
 APP_DIR = Path(__file__).resolve().parent
 FINDINGS = APP_DIR / "monkey_findings.txt"
 ASSIGNED = {"✓", "!", "×", "🔺"}
@@ -451,7 +453,8 @@ def run_round(page, rnd, seed, plan=None):
         names = [n for n in team[:4] if n]
         if len(names) < 2:
             return
-        first, second = rnd.sample(names, 2)
+        # Birlikte Çalışamayan tablosu her ikiliyi bir kez (ekip sırasıyla) gösterir.
+        first, second = sorted(rnd.sample(names, 2), key=names.index)
         history.append(f"yasak={first!r}-{second!r}")
         ensure_settings(page, "textbox", "1. kişi")
         box = page.get_by_role("checkbox", name=f"{first} ile {second}", exact=True)
@@ -464,7 +467,7 @@ def run_round(page, rnd, seed, plan=None):
         history.append(f"ay={month}")
         state["month"] = None
         box.click()
-        page.get_by_role("option", name=str(month), exact=True).click()
+        page.get_by_role("option", name=TR_AY_ADLARI[month], exact=True).click()
 
     def act_people_per_shift():
         nonlocal per_shift
@@ -484,8 +487,11 @@ def run_round(page, rnd, seed, plan=None):
         history.append("sıfırla")
         page.get_by_role("button", name="🔄 Sıfırla").click()
         wait_idle(page)
-        if rnd.random() < 0.7:
-            page.get_by_role("button", name="🗑️ Evet, çizelgeyi sıfırla").click()
+        r = rnd.random()
+        if r < 0.35:
+            page.get_by_role("button", name="🧹 Yalnız nöbetleri sil").click()
+        elif r < 0.7:
+            page.get_by_role("button", name="🗑️ Tercih ve izinleri de sil").click()
         else:
             page.get_by_role("button", name="Vazgeç").click()
 

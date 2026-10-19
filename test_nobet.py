@@ -1966,7 +1966,7 @@ class TestFridayBalance(unittest.TestCase):
         schedule.at["Ali", "9 Cum"] = True
         load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali"], days, {}, 0, 1.0)
         self.assertEqual(int(load.at["Ali", "Cuma"]), 1)
-        self.assertEqual(int(load.at["Ali", "Özel"]), 1)
+        self.assertEqual(int(load.at["Ali", "Hafta sonu"]), 1)
 
     def test_cuma_takasi_sabit_musaitlik_ve_dinlenmeye_uyar(self):
         days = build_gun_detaylari(2026, 11, 30, [])
@@ -2160,7 +2160,7 @@ class TestSharedPageHelpers(unittest.TestCase):
 
     def test_paylas_dugmesi_tek_kalici_baglanti_kullanir(self):
         source = _app_source()
-        share = source[source.index('with st.popover("🔗 Paylaş"'):source.index("with _import_col:")]
+        share = source[source.index('with st.popover("🔗 Paylaş"'):source.index("with _snapshot_col:")]
         self.assertIn("create_share_link(current_owner, 0, 0)", share)
         self.assertNotIn("current_owner, yil, ay", share)
         self.assertEqual(share.count("delete_all_share_links(current_owner)"), 2)
@@ -3504,9 +3504,9 @@ class TestIzinVeMusaitDegil(unittest.TestCase):
             schedule, [], [], ["Ali", "Ayşe"], self.days, {}, self.full, 10, mesai
         )
         finance = pd.DataFrame(finance).set_index("İsim") if not isinstance(finance, pd.DataFrame) else finance
-        self.assertEqual(int(finance.loc["Ali", "Mesai"]), self.full - 8)
-        self.assertEqual(int(finance.loc["Ayşe", "Mesai"]), self.full)
-        self.assertEqual(int(finance.loc["Ali", "FM"]) - int(finance.loc["Ayşe", "FM"]), 8)
+        self.assertEqual(int(finance.loc["Ali", "Zorunlu mesai"]), self.full - 8)
+        self.assertEqual(int(finance.loc["Ayşe", "Zorunlu mesai"]), self.full)
+        self.assertEqual(int(finance.loc["Ali", "Fazla mesai"]) - int(finance.loc["Ayşe", "Fazla mesai"]), 8)
 
     def test_iki_kod_da_nobet_yazilmayan_gun_sayilir(self):
         self.assertTrue(is_blocked_preference(3))
