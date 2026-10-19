@@ -749,23 +749,33 @@ def normalize_role_names(text, count):
     return names, adjusted
 
 
-def detect_renames(old_names, new_names):
+def detect_renames(old_names, new_names, known=None, aliases=None):
     """Ekip listesinde yeniden adlandırılan kişileri bulur: {eski: yeni}.
 
     Yalnızca kişi sayısı aynı kaldığında ve aynı sıradaki bir isim, listede
     başka yerde olmayan yeni bir isimle değiştirildiğinde ad değişikliği
     sayılır; ekleme/çıkarma/sıra değişikliği ad değişikliği değildir.
+
+    ``known`` ekipte daha önce görülmüş (ya da saklı) isimlerdir. Satırlar
+    tek tek değiştirilirken (ör. sıra değiştirme) bir isim bir an listeden
+    düşüp sonra başka satıra yazılır; bu, ad değişikliği sanılınca bir
+    kişinin nöbetleri başka birine geçiyordu. Bilinen bir isme geçiş yalnızca
+    önceki adına geri dönüşse (``aliases[yeni] == eski``) ad değişikliğidir.
     """
     old_names = list(old_names or [])
     new_names = list(new_names or [])
     if not old_names or len(old_names) != len(new_names):
         return {}
+    known = set(known or ())
+    aliases = aliases or {}
     renames = {}
     old_set, new_set = set(old_names), set(new_names)
     for old, new in zip(old_names, new_names):
         if old == new:
             continue
         if old in new_set or new in old_set:
+            return {}
+        if new in known and aliases.get(new) != old:
             return {}
         renames[old] = new
     return renames
@@ -1125,7 +1135,13 @@ def restore_auto_saved_schedule(
                 for item in saved_settings["locked"]
                 if isinstance(item, (list, tuple)) and len(item) == 2
             ]
-    hidden_renames = _alias_map(saved_hidden, aliases, isimler)
+    # Saklı kişi o ayda kendi satırı olan birine eşlenmez: ikisi aynı ayda
+    # ayrı kişilerdi (eski, hatalı bir takma ad saklı nöbeti başkasına veriyordu).
+    hidden_renames = {
+        person: target
+        for person, target in _alias_map(saved_hidden, aliases, isimler).items()
+        if target not in saved_schedule.index
+    }
     saved_hidden = {hidden_renames.get(person, person): data for person, data in saved_hidden.items()}
 
     restored_schedule = pd.DataFrame(False, index=isimler, columns=sutunlar)

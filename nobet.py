@@ -354,7 +354,12 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             _dupes = sorted({x for x in _raw_isimler if _raw_isimler.count(x) > 1})
             st.warning(f"⚠️ Birden fazla yazılan isim(ler) bir kez kullanıldı: **{', '.join(_dupes)}**")
         # Bir ismin yazımı düzeltilince o kişinin nöbetleri/tercihleri silinmesin.
-        _renames = detect_renames(prev_isimler, isimler)
+        _seen_names = st.session_state.setdefault("seen_team_names", set(prev_isimler))
+        _renames = detect_renames(
+            prev_isimler, isimler,
+            known=_seen_names | set(st.session_state.get("hidden_people") or {}),
+            aliases=st.session_state.get("name_aliases"),
+        )
         if _renames:
             apply_renames(_renames)
             st.session_state.forbidden_pairs_text = rename_in_pairs_text(
@@ -362,6 +367,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             )
             st.toast("İsim değişikliği uygulandı: " + ", ".join(f"{a} → {b}" for a, b in _renames.items()), icon="✏️")
         st.session_state.isimler_cache = isimler
+        _seen_names.update(isimler)
         
         # Tarayıcı deposuna yalnızca ekip listesi değiştiğinde yaz.
         if st.session_state.get("last_stored_team_text") != isimler_input:
