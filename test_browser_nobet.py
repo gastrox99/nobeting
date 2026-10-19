@@ -124,8 +124,6 @@ def test_manual_assignment_updates_visible_total_without_simulation(app_url):
                 has=page.locator("b", has_text=PERSON)
             ).first
             first_day = row.locator(":scope > [data-testid='stColumn']").nth(1).get_by_role("button")
-            # Nöbet Yükü tablosu "Analiz" sekmesinde.
-            page.get_by_role("tab", name="📊 Analiz").click()
             baseline = displayed_total(page)
             assert baseline == 0
             assert first_day.inner_text() == "·"
@@ -254,8 +252,10 @@ def test_simulasyon_takvim_ve_analiz_karanlik_modda_hatasiz(app_url):
             page.get_by_text("Tercih Başarısı").wait_for()
             _wait_idle(page)
             _no_exception(page)
-            page.get_by_role("tab", name="📊 Analiz").click()
+            page.get_by_role("heading", name="📊 Analiz").scroll_into_view_if_needed()
             _no_exception(page)
+            # Günlük Liste sekmesi kaldırıldı; görev yeri takvimde değişir.
+            assert page.get_by_role("tab", name="📋 Günlük Liste").count() == 0
         finally:
             browser.close()
 

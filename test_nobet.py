@@ -24,7 +24,6 @@ from nobet_core import (
     parse_person_limits,
     parse_person_limits_with_issues,
     unknown_names,
-    apply_role_edits,
     previous_period,
     last_shift_offsets,
     special_shift_counts,
@@ -68,6 +67,8 @@ from nobet_core import (
     _balance_holidays,
     _balance_specials,
     unavailable_day_counts,
+    is_blocked_preference,
+    personal_work_hours,
     missing_shift_coverage,
     explain_missing_day,
     format_missing_day_reason,
@@ -92,7 +93,7 @@ from nobet_core import (
 # Arayüz nobet.py ve bölüm dosyalarına ayrıldı; kaynak denetimleri hepsine bakar.
 APP_FILES = (
     "nobet.py", "nobet_stil.py", "nobet_durum.py", "nobet_paylasim.py", "nobet_disa_aktar.py",
-    "nobet_yedek.py", "nobet_tablo.py", "nobet_takvim.py", "nobet_liste.py", "nobet_analiz.py",
+    "nobet_yedek.py", "nobet_tablo.py", "nobet_takvim.py", "nobet_analiz.py",
 )
 
 
@@ -900,14 +901,14 @@ class TestLargeSchedulePerformance(unittest.TestCase):
 
     def test_hizli_tercih_duzenleyicisi_gecersiz_kodlari_reddeder(self):
         valid = pd.DataFrame(
-            [[0, 1], [2, 3]],
+            [[0, 1], [2, 4]],
             index=["Ali", "Ayşe"],
             columns=["G01", "G02"],
             dtype=object,
         )
         self.assertTrue(normalize_preference_grid(valid).equals(valid.astype(int)))
 
-        for invalid_value in [None, 1.5, 4, -1]:
+        for invalid_value in [None, 1.5, 5, -1]:
             invalid = valid.copy()
             invalid.at["Ali", "G01"] = invalid_value
             self.assertIsNone(normalize_preference_grid(invalid))
@@ -1073,7 +1074,7 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 
     def test_hucre_ve_lejant_ayni_durum_sozlugunu_kullanir(self):
         legend = get_preference_grid_legend()
-        self.assertEqual(len(legend), 9)
+        self.assertEqual(len(legend), 11)
 
         for legend_state in legend:
             cell_state = get_preference_grid_state(
@@ -1083,11 +1084,13 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
                     "assigned_preferred": 1,
                     "assigned_avoid": 2,
                     "assigned_unavailable": 3,
+                    "assigned_not_available": 4,
                     "conflict": 3,
                     "neutral": 0,
                     "preferred": 1,
                     "avoid": 2,
                     "unavailable": 3,
+                    "not_available": 4,
                 }[legend_state["key"]],
                 legend_state["key"] == "conflict",
             )
@@ -1210,20 +1213,6 @@ class TestAlgorithmFixes(unittest.TestCase):
                 person_limits={"Ali": {"min": 18, "max": 999}},
             )
             self.assertGreaterEqual(int(schedule.loc["Ali"].sum()), 18)
-
-    def test_gorev_duzenleme_yer_degistirir(self):
-        row = {"Tarih": "01.11.2026 Paz", "AYB": "Ali", "Acil Servis": "Ayşe"}
-        roles = ["AYB", "Acil Servis"]
-        new_row, changed = apply_role_edits(row, {"AYB": "Ayşe", "Acil Servis": "Ayşe"}, roles, ["Ali", "Ayşe"])
-        self.assertTrue(changed)
-        self.assertEqual((new_row["AYB"], new_row["Acil Servis"]), ("Ayşe", "Ali"))
-        # İki hücreyi birden çapraz yazmak da aynı sonucu verir.
-        new_row, _ = apply_role_edits(row, {"AYB": "Ayşe", "Acil Servis": "Ali"}, roles, ["Ali", "Ayşe"])
-        self.assertEqual((new_row["AYB"], new_row["Acil Servis"]), ("Ayşe", "Ali"))
-        # O gün nöbeti olmayan isim yok sayılır.
-        same, changed = apply_role_edits(row, {"AYB": "Can", "Acil Servis": "Ayşe"}, roles, ["Ali", "Ayşe"])
-        self.assertFalse(changed)
-        self.assertEqual(same, row)
 
     def test_kayittaki_eksik_hucre_nobet_sayilmaz(self):
         saved = pd.DataFrame({"1 Paz": [True, None]}, index=["Ali", "Ayşe"])
@@ -2010,13 +1999,13 @@ class TestMissingDayExplanation(unittest.TestCase):
             person_limits={"Can": {"min": 0, "max": 2}},
             forbidden_pairs={("Deniz", "Fuat")},
         ))
-        self.assertEqual(reasons["izinli"], ["Ali"])
+        self.assertEqual(reasons["izinli / müsait değil"], ["Ali"])
         self.assertEqual(reasons["dinlenmede"], ["Ayşe (13. gün nöbetli)"])
         self.assertEqual(reasons["nöbet limitinde"], ["Can (en fazla 2)"])
         self.assertEqual(reasons["birlikte çalışamaz"], ["Deniz (Fuat ile)"])
         self.assertEqual(reasons["uygun, elle atanabilir"], ["Ece"])
         text = format_missing_day_reason(list(reasons.items()))
-        self.assertIn("izinli: Ali", text)
+        self.assertIn("izinli / müsait değil: Ali", text)
 
     def test_gecen_ay_sonu_nobeti_dinlenme_sayilir(self):
         days = build_gun_detaylari(2026, 11, 30, [])
@@ -2052,7 +2041,9 @@ class TestUiCleanup(unittest.TestCase):
     def test_disa_aktar_menusu_ve_sekmeler(self):
         self.assertIn('st.popover("📤 Dışa aktar"', self.source)
         self.assertNotIn("dl1, dl2, dl3, dl4, dl5, dl6", self.source)
-        self.assertIn('tab_liste, tab_analiz = st.tabs(["📋 Günlük Liste", "📊 Analiz"])', self.source)
+        self.assertIn('st.subheader("📊 Analiz")', self.source)
+        self.assertNotIn('"📋 Günlük Liste"', self.source)
+        self.assertNotIn("Görev Yerlerini Düzenle", self.source)
         self.assertNotIn('st.header("📅 Nöbet Çizelgesi")', self.source)
 
 
@@ -2242,9 +2233,10 @@ class TestTercihOzeti(unittest.TestCase):
         prefs.loc["Ali", ["1 Pzt", "2 Sal"]] = 1
         prefs.at["Ali", "3 Çar"] = 2
         prefs.at["Ayşe", "4 Per"] = 3
+        prefs.at["Ayşe", "2 Sal"] = 4
         summary = preference_summary(schedule, prefs, ["Ali", "Ayşe"])
-        self.assertEqual(summary.loc["Ali"].tolist(), [2, 1, "%50", 1, 1, 0])
-        self.assertEqual(summary.loc["Ayşe"].tolist(), [0, 0, "-", 0, 0, 1])
+        self.assertEqual(summary.loc["Ali"].tolist(), [2, 1, "%50", 1, 1, 0, 0, 0])
+        self.assertEqual(summary.loc["Ayşe"].tolist(), [0, 0, "-", 0, 0, 1, 1, 1])
 
     def test_isaret_yoksa_ozet_yok(self):
         schedule = pd.DataFrame(True, index=["Ali"], columns=["1 Pzt"])
@@ -2939,15 +2931,6 @@ class TestReviewFixes(unittest.TestCase):
         self.assertEqual(drop_unknown_people_from_rows(rows, ["Ali"]),
                          [{"Tarih": "01.10.2026 Per", "AYB": "-", "GYB": "Ali"}])
 
-    def test_uygulanamayan_gorev_duzenlemesi_bildirilir(self):
-        from nobet_core import ignored_role_edits
-        row = {"Tarih": "1", "AYB": "Ali", "GYB": "Ayşe"}
-        self.assertEqual(ignored_role_edits(row, {"AYB": "Can", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]),
-                         [("AYB", "Can")])
-        self.assertEqual(ignored_role_edits(row, {"AYB": "", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]),
-                         [("AYB", "")])
-        self.assertEqual(ignored_role_edits(row, {"AYB": "Ayşe", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]), [])
-
     def test_tireli_isimler_yasak_ciftte_dogru_ayrilir(self):
         team = ["Ayşe-Nur", "Ali", "Can", "Ece"]
         self.assertEqual(parse_forbidden_pairs("Ayşe-Nur-Ali, Can-Ece", team),
@@ -3236,7 +3219,7 @@ class TestFullAppRender(unittest.TestCase):
             at.run()
             self.assertEqual(
                 [t.label for t in at.tabs],
-                ["🗂️ Tablo Görünümü", "📅 Takvim Görünümü", "📋 Günlük Liste", "📊 Analiz"],
+                ["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"],
             )
             self.assertTrue(any(e.label.startswith("💾 Yedek") for e in at.expander))
             steps = [
@@ -3256,3 +3239,71 @@ class TestFullAppRender(unittest.TestCase):
         # Taklit "veritabanı hazır" sonucu sonraki testlere kalmasın.
         import streamlit
         streamlit.cache_resource.clear()
+
+
+class TestIzinVeMusaitDegil(unittest.TestCase):
+    """İzin (3) mesaiden düşer; Müsait Değil (4) düşmez. İkisine de nöbet yazılmaz."""
+
+    def setUp(self):
+        # Ekim 2026: 28 Ekim arife (yarım gün), 29 Ekim tatil.
+        self.days = build_gun_detaylari(2026, 10, 31, [29])
+        self.cols = list(self.days)
+        self.half = official_half_days(2026, 10)
+        self.full, _ = required_work_hours(self.days, self.half)
+        self.prefs = pd.DataFrame(0, index=["Ali", "Ayşe", "Can"], columns=self.cols)
+
+    def _col(self, day):
+        return next(c for c in self.cols if self.days[c]["day_num"] == day)
+
+    def test_izin_is_gunu_mesaiden_duser_musait_degil_dusmez(self):
+        self.prefs.at["Ali", self._col(1)] = 3   # Perşembe: 8 saat düşer
+        self.prefs.at["Ali", self._col(28)] = 3  # arife: 4 saat düşer
+        self.prefs.at["Ali", self._col(3)] = 3   # Cumartesi: düşmez
+        self.prefs.at["Ali", self._col(29)] = 3  # tatil: düşmez
+        self.prefs.at["Ayşe", self._col(1)] = 4
+        self.prefs.at["Ayşe", self._col(2)] = 4
+        hours = personal_work_hours(self.days, self.half, self.prefs, ["Ali", "Ayşe", "Can"])
+        self.assertEqual(hours["Ali"], self.full - 12)
+        self.assertEqual(hours["Ayşe"], self.full)
+        self.assertEqual(hours["Can"], self.full)
+
+    def test_ucret_ozeti_kisisel_mesaiyi_kullanir(self):
+        schedule = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=self.cols)
+        schedule.loc["Ali", self.cols[0:20:2]] = True
+        schedule.loc["Ayşe", self.cols[1:21:2]] = True
+        self.prefs.at["Ali", self._col(1)] = 3
+        mesai = personal_work_hours(self.days, self.half, self.prefs, ["Ali", "Ayşe"])
+        _, finance, _ = build_schedule_analysis(
+            schedule, [], [], ["Ali", "Ayşe"], self.days, {}, self.full, 10, mesai
+        )
+        finance = pd.DataFrame(finance).set_index("İsim") if not isinstance(finance, pd.DataFrame) else finance
+        self.assertEqual(int(finance.loc["Ali", "Mesai"]), self.full - 8)
+        self.assertEqual(int(finance.loc["Ayşe", "Mesai"]), self.full)
+        self.assertEqual(int(finance.loc["Ali", "FM"]) - int(finance.loc["Ayşe", "FM"]), 8)
+
+    def test_iki_kod_da_nobet_yazilmayan_gun_sayilir(self):
+        self.assertTrue(is_blocked_preference(3))
+        self.assertTrue(is_blocked_preference(4))
+        self.assertFalse(is_blocked_preference(2))
+        self.assertFalse(is_blocked_preference(None))
+        counts = unavailable_day_counts('{"1 Per": {"Ali": 3, "Ayşe": 4}, "2 Cum": {"Ali": 4, "Can": 2}}')
+        self.assertEqual(counts, {"Ali": 2, "Ayşe": 1})
+
+    def test_algoritma_musait_degil_gune_nobet_yazmaz(self):
+        team = ["Ali", "Ayşe", "Can", "Deniz"]
+        prefs = pd.DataFrame(0, index=team, columns=self.cols)
+        prefs.loc["Ali", self.cols[:10]] = 4
+        prefs.loc["Ayşe", self.cols[10:20]] = 3
+        unwanted = prefs.apply(lambda col: col.map(is_blocked_preference))
+        schedule = run_scheduling_core(team, self.cols, unwanted, self.days, 1, 1)[0]
+        self.assertFalse(schedule.loc["Ali", self.cols[:10]].any())
+        self.assertFalse(schedule.loc["Ayşe", self.cols[10:20]].any())
+
+    def test_yedek_ve_saklanan_kisi_4_kodunu_kabul_eder(self):
+        from nobet_core import _valid_backup_preferences, _clean_hidden
+        self.assertTrue(_valid_backup_preferences({"1 Per": {"Ali": 4}}))
+        self.assertFalse(_valid_backup_preferences({"1 Per": {"Ali": 5}}))
+        self.assertEqual(
+            _clean_hidden({"Ali": {"shifts": [], "prefs": {"3": 4}}}),
+            {"Ali": {"shifts": [], "prefs": {"3": 4}}},
+        )

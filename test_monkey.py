@@ -220,7 +220,7 @@ def run_round(page, rnd, seed):
     def act_pref():
         click_mode("🎨 Tercih Belirle")
         wait_idle(page)
-        color = rnd.choice(["⬜Nötr", "🟩Tercih", "🟨Kaçın", "🟥İzin"])
+        color = rnd.choice(["⬜Nötr", "🟩Tercih", "🟨Kaçın", "🟥İzin", "🟪Müsait Değil"])
         page.get_by_role("button", name=color).click()
         wait_idle(page)
         rows = grid(page)
@@ -267,7 +267,6 @@ def run_round(page, rnd, seed):
         page.get_by_role("tab", name="🗂️ Tablo Görünümü").click()
 
     def act_redistribute():
-        page.get_by_role("tab", name="📊 Analiz").click()
         history.append("otomatik-dağıt")
         page.get_by_role("button", name="🤖 Görev Yerlerini Otomatik Dağıt").click()
 

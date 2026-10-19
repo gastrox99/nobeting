@@ -68,7 +68,7 @@ def restore_snapshot(snap, sutunlar, gun_detaylari):
 def rotate_roles_for_day(day_number):
     """O günün nöbetçilerini görev yerleri arasında döngüsel kaydırır.
 
-    Takvimdeki ve Günlük Liste'deki 🔄 düğmeleri bunu kullanır."""
+    Takvimdeki 🔄 düğmesi bunu kullanır."""
     _rows = st.session_state.get('cached_rows_liste')
     if not _rows or not 1 <= day_number <= len(_rows):
         return False

@@ -18,7 +18,7 @@ import nobet_core as _core_module
 # uyumsuz çalışamaz.
 _UI_MODULES = (
     "nobet_stil", "nobet_durum", "nobet_paylasim", "nobet_disa_aktar",
-    "nobet_yedek", "nobet_tablo", "nobet_takvim", "nobet_liste", "nobet_analiz",
+    "nobet_yedek", "nobet_tablo", "nobet_takvim", "nobet_analiz",
 )
 
 
@@ -52,6 +52,8 @@ for _attempt in range(2):
             last_shift_offsets,
             schedule_totals,
             unavailable_day_counts,
+            is_blocked_preference,
+            personal_work_hours,
             previous_period,
             special_shift_counts,
             build_gun_detaylari,
@@ -118,15 +120,12 @@ for _attempt in range(2):
             raise
         _fresh_modules()
 from nobet_stil import GLOBAL_CSS, ui_colors
-from nobet_durum import (
-    apply_renames, rotate_roles_for_day, save_undo_state,
-)
+from nobet_durum import apply_renames, save_undo_state
 from nobet_paylasim import render_shared_view
 from nobet_disa_aktar import render_toolbar
 from nobet_yedek import render_backup_section, run_requested_snapshot
 from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
-from nobet_liste import render_list_tab
 from nobet_analiz import render_analysis_tab
 from streamlit_local_storage import LocalStorage
 
@@ -887,7 +886,7 @@ for _cf_col in sutunlar:
             if _cf_k in st.session_state.pref_df.index and _cf_col in st.session_state.pref_df.columns
             else 0
         )
-        if _pref_v == 3:
+        if is_blocked_preference(_pref_v):
             conflict_cells.add((_cf_k, _cf_col))
         if (_cf_gun - _last_cf.get(_cf_k, -10)) <= min_bosluk and _last_cf.get(_cf_k, -10) != -10:
             conflict_cells.add((_cf_k, _cf_col))
@@ -900,6 +899,11 @@ try:
 except Exception:
     _dark_theme = False
 ui = ui_colors(_dark_theme)
+
+# Kişisel zorunlu mesai: İzin işaretli iş günleri düşülür (Müsait Değil düşmez).
+mesai_saatleri = personal_work_hours(
+    gun_detaylari, official_half_days(yil, ay), st.session_state.pref_df, isimler
+)
 
 tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"])
 
@@ -915,7 +919,7 @@ with tab_grid:
 # ═══════════════════════════════════════════════════════
 with tab_cal:
     render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, tatil_gunleri,
-                        today_date, ui, person_colors, kişi_sayısı, zorunlu_saat, nobet_ucreti,
+                        today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, nobet_ucreti,
                         tatil_artirimi)
 
 # Build algorithm inputs from pref_df
@@ -925,7 +929,7 @@ df_preferred = pd.DataFrame(0, index=isimler, columns=sutunlar)
 for person in isimler:
     for col in sutunlar:
         status = st.session_state.pref_df.at[person, col] if person in st.session_state.pref_df.index and col in st.session_state.pref_df.columns else 0
-        if status == 3:
+        if is_blocked_preference(status):
             df_unwanted.at[person, col] = True
         if status == 1:
             df_preferred.at[person, col] = 1
@@ -1143,7 +1147,7 @@ for col in sutunlar:
         
     for k in nobetciler:
         if df_unwanted.at[k, col]:
-            conflict_msg.append(f"❌ **{k}**: {gun_no}. gün izinli.")
+            conflict_msg.append(f"❌ **{k}**: {gun_no}. gün izinli ya da müsait değil.")
         
         if (gun_no - last_shift_check[k]) <= min_bosluk:
             violations.append(f"⚠️ **{k}**: {gun_no}. gün dinlenme kuralına uymuyor.")
@@ -1189,11 +1193,6 @@ if max_person_msg or min_person_msg or conflict_msg or forbidden_msg or violatio
         for m in input_warn_msg: st.warning(m)
 else:
     st.success(f"✅ Kurallar uygun (Her gün {kişi_sayısı} kişi, çakışma yok).")
-
-# ── Günlük Listeden gelen görev yeri değişim isteği ──────────────────────────
-_liste_swap_dn = st.session_state.pop('liste_swap_day', None)
-if _liste_swap_dn is not None and rotate_roles_for_day(_liste_swap_dn):
-    st.rerun()
 
 # --- VERİ HAZIRLIĞI ---
 # Only regenerate assignments when AI button is clicked, not on manual edits.
@@ -1316,6 +1315,7 @@ _analysis_key = (
     tuple(sorted((person, limits.get("min", 0), limits.get("max", 999))
                  for person, limits in st.session_state.get("person_limits", {}).items())),
     zorunlu_saat,
+    tuple(sorted(mesai_saatleri.items())),
     nobet_ucreti,
     tatil_artirimi,
     tuple((column, gun_detaylari[column]["weekend"], gun_detaylari[column]["holiday"]) for column in sutunlar),
@@ -1333,6 +1333,7 @@ if (
         st.session_state.get("person_limits", {}),
         zorunlu_saat,
         nobet_ucreti,
+        mesai_saatleri,
         tatil_artirimi,
     )
     st.session_state.cached_analysis_key = _analysis_key
@@ -1349,12 +1350,8 @@ render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_role
 
 st.divider()
 
-tab_liste, tab_analiz = st.tabs(["📋 Günlük Liste", "📊 Analiz"])
-
-with tab_liste:
-    render_list_tab(rows_liste, liste_rows, liste_roles, role_names, isimler, sutunlar, edited_df)
-
-with tab_analiz:
-    render_analysis_tab(isimler, role_names, _prev_ctx, history_special, history_total, history_holiday,
-                        df_stats_load, df_stats_finance, pair_display, df_liste, liste_rows, liste_roles,
-                        yil, ay, zorunlu_saat, arife_gunleri, edited_df)
+# Görev yeri değişimi takvim görünümündeki 🔄 ile yapılır; altta doğrudan Analiz.
+st.subheader("📊 Analiz")
+render_analysis_tab(isimler, role_names, _prev_ctx, history_special, history_total, history_holiday,
+                    df_stats_load, df_stats_finance, pair_display, df_liste, liste_rows, liste_roles,
+                    yil, ay, zorunlu_saat, arife_gunleri, edited_df)

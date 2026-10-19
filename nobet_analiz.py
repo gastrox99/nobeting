@@ -78,7 +78,7 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                 # fazla atanmış kişiler sessizce siliniyordu).
                 st.session_state.should_regenerate_assignments = False
                 st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
-                # Üstteki Günlük Liste ve takvim yeni rolleri hemen göstersin.
+                # Üstteki takvim yeni rolleri hemen göstersin.
                 st.rerun()
 
     with an2:
@@ -124,7 +124,8 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
             _mesai_text += ", " + ", ".join(
                 f"{_day} {TR_AY_ADLARI[ay]} {_name}" for _day, _name in arife_gunleri
             ) + " yarım gün (4 saat)"
-        st.caption(_mesai_text + ".")
+        st.caption(_mesai_text + ". İzin işaretli iş günleri kişinin mesaisinden düşer; "
+                   "Müsait Değil düşmez.")
         st.dataframe(
             df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
                                   .format({"Ücret (TL)": "₺ {:,.2f}"}),
@@ -139,10 +140,10 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
     st.markdown("**Tercih Özeti**")
     _pref_summary = preference_summary(edited_df, st.session_state.pref_df, isimler)
     if _pref_summary is None:
-        st.caption("Tabloda işaretli tercih, kaçınma ya da izin günü yok.")
+        st.caption("Tabloda işaretli tercih, kaçınma, izin ya da müsait değil günü yok.")
     else:
         st.caption(
             "Her kişinin yeşil (tercih) günlerinin kaçında nöbet tuttuğu, sarı (kaçın) günlerine "
-            "kaç nöbet düştüğü ve izinli gününe nöbet yazılıp yazılmadığı."
+            "kaç nöbet düştüğü ve izinli ya da müsait olmadığı güne nöbet yazılıp yazılmadığı."
         )
         st.dataframe(_pref_summary, width="stretch")
