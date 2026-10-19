@@ -3,6 +3,10 @@
 Yavaş olduğu için yalnızca RUN_MONKEY=1 iken çalışır (GitHub'da "Maymun testi"
 iş akışı elle başlatılır). Bulguları monkey_findings.txt dosyasına yazar; test
 kendisi başarısız olmaz.
+
+Her işlemin rastgele seçimleri kaydedilir. Bir turda bulgu çıkarsa o turun
+adımları boş veritabanında yeniden oynatılıp hatayı hâlâ gösteren en kısa adım
+dizisi aranır (küçültme; süresi MONKEY_SHRINK_MINUTES, 0 ise kapalı).
 """
 import json
 import os
@@ -33,14 +37,117 @@ ASSIGNED = {"✓", "!", "×", "🔺"}
 FREE = {"·", "T", "K", "İ", "M"}
 ROUNDS = int(os.environ.get("MONKEY_ROUNDS", "3"))
 STEPS = int(os.environ.get("MONKEY_STEPS", "120"))
+SHRINK_MINUTES = float(os.environ.get("MONKEY_SHRINK_MINUTES", "30"))
 
 findings = []
+# Bulguların yazıldığı yer: normalde findings; küçültme denemelerinde geçici liste.
+_sink = {"entries": findings, "kinds": [], "quiet": False, "step": 0}
 
 
 def note(kind, detail, history):
     entry = f"[{kind}] {detail}\n  son işlemler: {' → '.join(history[-8:])}"
-    findings.append(entry)
-    print(entry, flush=True)
+    _sink["entries"].append(entry)
+    _sink["kinds"].append((kind, _sink["step"]))
+    if not _sink["quiet"]:
+        print(entry, flush=True)
+
+
+class _Skip(Exception):
+    """Tekrar oynatılan adım bu durumda uygulanamıyor (ör. kişi artık yok)."""
+
+
+class RecordingRandom:
+    """Seçimleri adım adım kaydeden rastgele üreteç (tekrar oynatmak için).
+
+    random.Random'u sarar (alt sınıf olsaydı random() değiştirildiği için
+    aynı tohum başka sayılar üretirdi).
+    """
+
+    def __init__(self, seed):
+        self._r = random.Random(seed)
+        self.log = None
+
+    def _rec(self, value):
+        if self.log is not None:
+            self.log.append(value)
+        return value
+
+    def choice(self, seq):
+        return self._rec(self._r.choice(seq))
+
+    def choices(self, population, weights):
+        return self._r.choices(population, weights)
+
+    def randrange(self, *args):
+        return self._rec(self._r.randrange(*args))
+
+    def randint(self, a, b):
+        return self._rec(self._r.randint(a, b))
+
+    def random(self):
+        return self._rec(self._r.random())
+
+    def sample(self, population, k):
+        return self._rec(self._r.sample(population, k))
+
+    def shuffle(self, x):
+        self._r.shuffle(x)
+        self._rec(list(x))
+
+
+class ReplayRandom:
+    """Kaydedilmiş seçimleri sırayla verir; durum uymuyorsa adımı atlatır."""
+
+    def __init__(self, values):
+        self.values = list(values)
+
+    def _next(self):
+        if not self.values:
+            raise _Skip()
+        return self.values.pop(0)
+
+    def choice(self, seq):
+        value = self._next()
+        if value not in seq:
+            raise _Skip()
+        return value
+
+    def randrange(self, *args):
+        value = self._next()
+        if value not in range(*args):
+            raise _Skip()
+        return value
+
+    def randint(self, a, b):
+        value = self._next()
+        if not a <= value <= b:
+            raise _Skip()
+        return value
+
+    def random(self):
+        return self._next()
+
+    def sample(self, population, k):
+        value = self._next()
+        if any(item not in population for item in value):
+            raise _Skip()
+        return value
+
+    def shuffle(self, x):
+        value = self._next()
+        if sorted(value) != sorted(x):
+            raise _Skip()
+        x[:] = value
+
+
+class _RndProxy:
+    """İşlemlerin kullandığı üreteç; kayıt ve tekrar oynatma arasında değiştirilir."""
+
+    def __init__(self, target):
+        self.target = target
+
+    def __getattr__(self, name):
+        return getattr(self.target, name)
 
 
 @pytest.fixture(scope="module")
@@ -216,8 +323,14 @@ def open_backup_section(page):
     return section
 
 
-def run_round(page, rnd, seed):
+def run_round(page, rnd, seed, plan=None):
+    """Bir tur oynatır; (geçmiş, adım kaydı) döner.
+
+    ``plan`` verilirse rastgele seçmek yerine kaydedilmiş adımları
+    [(işlem adı, seçimler), ...] sırayla tekrar oynatır.
+    """
     history = []
+    trace = []
     team = ["Ali", "Ayşe", "Can", "Deniz", "Ece", "Fatih"]
     per_shift = 2
     box = ensure_settings(page, "textbox", "1. kişi")
@@ -232,11 +345,11 @@ def run_round(page, rnd, seed):
         click_mode("✏️ Nöbet Ata/Kaldır")
         wait_idle(page)
         rows = grid(page)
-        r = rnd.choice(rows)
-        d = rnd.randrange(len(r["cells"]))
-        history.append(f"hücre({r['name']},{d+1})")
+        name = rnd.choice([r["name"] for r in rows])
+        d = rnd.randrange(len(rows[0]["cells"]))
+        history.append(f"hücre({name},{d+1})")
         row = page.locator(".st-key-schedule-grid [data-testid='stHorizontalBlock']").filter(
-            has=page.locator("b", has_text=re.compile(f"^{re.escape(r['name'])}$"))).first
+            has=page.locator("b", has_text=re.compile(f"^{re.escape(name)}$"))).first
         row.locator(":scope > [data-testid='stColumn']").nth(d + 1).get_by_role("button").click()
 
     def act_pref():
@@ -246,11 +359,11 @@ def run_round(page, rnd, seed):
         page.get_by_role("button", name=color).click()
         wait_idle(page)
         rows = grid(page)
-        r = rnd.choice(rows)
-        d = rnd.randrange(len(r["cells"]))
-        history.append(f"tercih({color},{r['name']},{d+1})")
+        name = rnd.choice([r["name"] for r in rows])
+        d = rnd.randrange(len(rows[0]["cells"]))
+        history.append(f"tercih({color},{name},{d+1})")
         row = page.locator(".st-key-preference-grid [data-testid='stHorizontalBlock']").filter(
-            has=page.locator("b", has_text=re.compile(f"^{re.escape(r['name'])}$"))).first
+            has=page.locator("b", has_text=re.compile(f"^{re.escape(name)}$"))).first
         row.locator(":scope > [data-testid='stColumn']").nth(d + 1).get_by_role("button").click()
 
     def act_undo():
@@ -462,39 +575,133 @@ def run_round(page, rnd, seed):
     ]
     funcs = [a for a, _ in actions]
     weights = [w for _, w in actions]
-    for step in range(STEPS):
-        action = rnd.choices(funcs, weights)[0]
+    by_name = {a.__name__: a for a in funcs}
+    recorder = rnd.target
+    steps = plan if plan is not None else [None] * STEPS
+    for step_no, planned in enumerate(steps):
+        _sink["step"] = step_no
+        if planned is None:
+            recorder.log = None
+            action = recorder.choices(funcs, weights)[0]
+            recorder.log = []
+        else:
+            action = by_name[planned[0]]
+            rnd.target = ReplayRandom(planned[1])
         try:
             action()
+        except _Skip:
+            history.append(f"({action.__name__} atlandı)")
         except Exception as exc:
             history.append(f"({action.__name__} uygulanamadı: {type(exc).__name__})")
+        if planned is None:
+            trace.append((action.__name__, recorder.log))
+        else:
+            trace.append(planned)
         if not wait_idle(page, limit=60):
             note("SONSUZ ÇİZİM", "sayfa 60 sn boyunca durmadı", history)
         check_invariants(page, history, per_shift)
-    return history
+    rnd.target = recorder
+    return history, trace
+
+
+def _open_page(browser, app_url, color_scheme, sink):
+    context = browser.new_context(viewport={"width": 1700, "height": 1100}, color_scheme=color_scheme)
+    page = context.new_page()
+    page.on("console", lambda m: m.type == "error" and "favicon" not in m.text and
+            sink.append(f"[KONSOL] {m.text[:300]}"))
+    page.on("pageerror", lambda e: sink.append(f"[SAYFA HATASI] {str(e)[:300]}"))
+    page.goto(app_url)
+    wait_idle(page, limit=60)
+    return context, page
+
+
+def _clear_anonymous_data():
+    """Küçültme denemeleri boş veritabanından başlasın (girişsiz kullanıcının kayıtları)."""
+    import db
+    conn = db._connect()
+    with conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM schedules WHERE owner = ''")
+        cur.execute("DELETE FROM backup_snapshots WHERE owner = ''")
+        cur.execute("DELETE FROM app_settings WHERE key = %s", (db.settings_key(""),))
+        cur.execute("DELETE FROM share_links WHERE owner = ''")
+    conn.close()
+
+
+def _replay(browser, app_url, seed, color_scheme, plan, kind):
+    """Adımları boş veritabanında oynatır; aynı türde bulgu çıkarsa geçmişi döner."""
+    _clear_anonymous_data()
+    entries = []
+    _sink.update(entries=entries, kinds=[], quiet=True)
+    context, page = _open_page(browser, app_url, color_scheme, entries)
+    try:
+        history, _ = run_round(page, _RndProxy(RecordingRandom(seed)), seed, plan=plan)
+    except Exception:
+        history = None
+    finally:
+        context.close()
+        kinds = _sink["kinds"]
+        _sink.update(entries=findings, kinds=[], quiet=False)
+    if history is None:
+        return None
+    return history if any(k == kind for k, _ in kinds) else None
+
+
+def _shrink(browser, app_url, seed, color_scheme, trace, kind, at_step, deadline):
+    """Bulguyu hâlâ gösteren en kısa adım dizisini arar (parça parça çıkararak)."""
+    plan = trace[:at_step + 1]
+    history = _replay(browser, app_url, seed, color_scheme, plan, kind)
+    if history is None:
+        return None, f"[KÜÇÜLTME] {kind}: boş veritabanından tekrar oynatınca çıkmadı"
+    chunks = 2
+    while len(plan) > 1 and time.monotonic() < deadline:
+        size = max(1, len(plan) // chunks)
+        for start in range(0, len(plan), size):
+            if time.monotonic() >= deadline:
+                break
+            candidate = plan[:start] + plan[start + size:]
+            found = _replay(browser, app_url, seed, color_scheme, candidate, kind) if candidate else None
+            if found is not None:
+                plan, history = candidate, found
+                chunks = max(chunks - 1, 2)
+                break
+        else:
+            if size == 1:
+                break
+            chunks = min(chunks * 2, len(plan))
+    status = "" if time.monotonic() < deadline else " (süre doldu, daha da kısalabilir)"
+    return plan, (f"[KÜÇÜLTÜLDÜ] {kind}: {at_step + 1} adım → {len(plan)} adım{status}\n"
+                  f"  boş veritabanında şu adımlar yeterli: {' → '.join(history)}")
 
 
 def test_maymun(app_url):
     browser_path = os.environ.get("CHROMIUM_EXECUTABLE") or shutil.which("chromium")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, executable_path=browser_path, args=["--no-sandbox"])
+        to_shrink = []
         for round_no in range(ROUNDS):
             seed = 1000 + round_no
-            rnd = random.Random(seed)
-            context = browser.new_context(viewport={"width": 1700, "height": 1100},
-                                          color_scheme=rnd.choice(["light", "dark"]))
-            page = context.new_page()
-            page.on("console", lambda m: m.type == "error" and "favicon" not in m.text and
-                    findings.append(f"[KONSOL] {m.text[:300]}"))
-            page.on("pageerror", lambda e: findings.append(f"[SAYFA HATASI] {str(e)[:300]}"))
-            page.goto(app_url)
-            wait_idle(page, limit=60)
+            rnd = _RndProxy(RecordingRandom(seed))
+            color_scheme = rnd.choice(["light", "dark"])
+            context, page = _open_page(browser, app_url, color_scheme, findings)
+            _sink["kinds"] = []
             try:
-                history = run_round(page, rnd, seed)
+                history, trace = run_round(page, rnd, seed)
                 findings.append(f"--- tur {round_no} (seed {seed}) bitti: {len(history)} işlem")
+                # Turun ilk bulgusu küçültülür (sonsuz çizim zamanlamaya bağlı, atlanır).
+                first = next(((k, n) for k, n in _sink["kinds"] if k != "SONSUZ ÇİZİM"), None)
+                if first:
+                    to_shrink.append((seed, color_scheme, trace, first[0], first[1]))
             except Exception:
                 findings.append(f"[TUR ÇÖKTÜ] tur {round_no}: {traceback.format_exc()[-800:]}")
             context.close()
+            write_findings()
+        deadline = time.monotonic() + SHRINK_MINUTES * 60
+        for seed, color_scheme, trace, kind, step in to_shrink:
+            if time.monotonic() >= deadline:
+                break
+            _, entry = _shrink(browser, app_url, seed, color_scheme, trace, kind, step, deadline)
+            findings.append(entry)
+            print(entry, flush=True)
             write_findings()
         browser.close()
     log = (APP_DIR / "server.log").read_text(errors="replace") if (APP_DIR / "server.log").exists() else ""

@@ -12,6 +12,9 @@ on:
       adim:
         description: "Tur başına işlem sayısı"
         default: "120"
+      kucultme:
+        description: "Bulguyu en kısa adımlara indirme süresi (dakika, 0 = kapalı)"
+        default: "30"
 
 # Depoyu yalnızca okur; varsayılan jeton yetkisi gerekmez.
 permissions:
@@ -35,6 +38,7 @@ jobs:
       GIRISSIZ_KULLANIM: "1"
       MONKEY_ROUNDS: ${{ inputs.turlar }}
       MONKEY_STEPS: ${{ inputs.adim }}
+      MONKEY_SHRINK_MINUTES: ${{ inputs.kucultme }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

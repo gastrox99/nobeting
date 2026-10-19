@@ -267,6 +267,27 @@ def test_isim_duzeltilince_nobetler_korunur(app_url):
             browser.close()
 
 
+def test_ekip_satir_satir_siralaninca_nobetler_yer_degistirmez(app_url):
+    # Maymun bulgusu: satırlar tek tek yeniden yazılırken ara adımlar ad
+    # değişikliği sanılıyor, nöbetler başka kişiye geçiyordu.
+    team = ["Sıra Ali", "Sıra Ayşe", "Sıra Can", "Sıra Deniz"]
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, ", ".join(team))
+        try:
+            for day, person in enumerate(team):
+                button = _day_button(page, person, day)
+                button.click()
+                button.get_by_text("✓").wait_for()
+                _wait_idle(page, 1.5)
+            _set_team(page, "Sıra Deniz, Sıra Ali, Sıra Ayşe, Sıra Can")
+            _no_exception(page)
+            for day, person in enumerate(team):
+                cells = [_day_button(page, person, d).inner_text() for d in range(len(team))]
+                assert cells == ["✓" if d == day else "·" for d in range(len(team))], (person, cells)
+        finally:
+            browser.close()
+
+
 def test_simulasyon_takvim_ve_analiz_karanlik_modda_hatasiz(app_url):
     with sync_playwright() as playwright:
         browser, page = _open_app(playwright, app_url, "Sim Ali, Sim Ayşe, Sim Can, Sim Deniz, Sim Ece",

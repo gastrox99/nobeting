@@ -3211,6 +3211,49 @@ class TestInceleme20261014(unittest.TestCase):
         self.assertEqual(resolve_alias("A", aliases, ["C"]), "C")
         self.assertEqual(record_renames({"A": "B"}, {"B": "A"}), {"B": "A"})
 
+    def test_satir_satir_siralama_ad_degisikligi_sanilmaz(self):
+        # Maymun bulgusu: ekip tablosunda sıra satır satır değiştirilince bir
+        # isim bir an listeden düşüp başka satıra yazılıyor; bu ad değişikliği
+        # sanılıp nöbetler başka kişiye geçiyordu.
+        from nobet_core import detect_renames, record_renames
+        rows = ["Ali", "Ayşex", "Can", "Deniz", "Ece", "Fatihx", "Oya1"]
+        target = ["Deniz", "Ali", "Oya1", "Ece", "Ayşex", "Can", "Fatihx"]
+        prev, seen, aliases = list(rows), set(rows), {"Fatih": "Fatihx", "Ayşe": "Ayşex"}
+        for index, name in enumerate(target):
+            rows[index] = name
+            team = list(dict.fromkeys(rows))
+            renames = detect_renames(prev, team, known=seen, aliases=aliases)
+            self.assertEqual(renames, {}, (index, team))
+            aliases = record_renames(aliases, renames)
+            seen.update(team)
+            prev = team
+        self.assertEqual(aliases, {"Fatih": "Fatihx", "Ayşe": "Ayşex"})
+
+    def test_bilinen_isme_gecis_yalniz_geri_donusse_ad_degisikligi(self):
+        from nobet_core import detect_renames
+        self.assertEqual(detect_renames(["Ali", "Veli"], ["Ali", "Can"], known={"Ali", "Veli", "Can"}), {})
+        self.assertEqual(detect_renames(["Ali", "Veli"], ["Ali", "Veli C."], known={"Ali", "Veli"}),
+                         {"Veli": "Veli C."})
+        # Yanlış yazılan ad geri düzeltilince eski adına döner.
+        self.assertEqual(
+            detect_renames(["Ali", "Veli C."], ["Ali", "Veli"], known={"Ali", "Veli", "Veli C."},
+                           aliases={"Veli": "Veli C."}),
+            {"Veli C.": "Veli"},
+        )
+
+    def test_sakli_nobet_eski_takma_adla_ekipteki_kisiye_gecmez(self):
+        # "19 Kasım: Can": Fatihx çıkarılıp nöbeti saklandı; eski hatalı takma
+        # ad (Fatihx → Can) yüzünden sayfa yenilenince nöbet Can'a geçiyordu.
+        saved = self._saved(["Ayşe", "Can"], {"Ayşe": 1})
+        settings = {"hidden": {"Fatihx": {"shifts": [19], "prefs": {}}}}
+        state = {}
+        restore_auto_saved_schedule(
+            state, lambda *a: (["Ayşe", "Can"], saved, None, settings, None), "x", 2026, 9,
+            ["Ayşe", "Can"], self.cols, self.days, aliases={"Fatihx": "Can"},
+        )
+        self.assertEqual(int(state["schedule_bool"].loc["Can"].sum()), 0)
+        self.assertEqual(state["hidden_people"], {"Fatihx": {"shifts": [19], "prefs": {}}})
+
     def test_ad_kayitlari_ayarlarda_saklanir(self):
         state = {"name_aliases": {"Ali": "Ali K."}}
         self.assertEqual(collect_app_settings(state)["name_aliases"], {"Ali": "Ali K."})
