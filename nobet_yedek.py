@@ -100,8 +100,17 @@ def restore_backup(parsed, summary, current_owner):
     st.rerun()
 
 
-def render_backup_section(current_owner, yil, ay, isimler):
-    """Yedek bölümü (yalnızca veritabanı bağlıyken çizilir)."""
+def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_import=None):
+    """Yedek bölümü; ``excel_import`` verilirse Excel'den yükleme de burada çizilir.
+
+    Veritabanı yoksa yalnızca Excel'den yükleme gösterilir.
+    """
+    if not db_ready:
+        if excel_import is not None:
+            with st.expander("💾 Yedek ve Excel yükleme", expanded=False):
+                st.markdown("**📂 Excel'den yükle**")
+                excel_import()
+        return
     _restored_notice = st.session_state.pop("backup_restored_notice", None)
     # Yedekteki "son indirme" tarihi, bu yedeği indirmeden önceki tarihtir.
     _kept_backup_at = st.session_state.pop("backup_restored_last_at", None)
@@ -120,11 +129,12 @@ def render_backup_section(current_owner, yil, ay, isimler):
             )
         _snapshot_notice = st.session_state.pop("snapshot_notice", None)
         if _snapshot_notice:
+            # Bölüm Yedekle tuşunun hemen altında; ayrıca bildirim gerekmez.
             st.success(f"✅ {_snapshot_notice}")
-            # Tuş sayfanın aşağısında; bildirim oradan da görünsün.
-            st.toast(f"✅ {_snapshot_notice}")
     _backup_hint = backup_reminder(st.session_state.get("last_backup_at"))
-    _backup_label = "💾 Yedek" + (f" — {_backup_hint} İndirmeniz önerilir." if _backup_hint else "")
+    _backup_label = "💾 Yedek ve Excel yükleme" + (
+        f" — {_backup_hint} Bilgisayara indirmeniz önerilir." if _backup_hint else ""
+    )
     with st.expander(_backup_label, expanded=False):
         st.markdown("**Uygulamadaki yedekler**")
         st.caption(
@@ -266,3 +276,8 @@ def render_backup_section(current_owner, yil, ay, isimler):
                     _confirm = st.checkbox("Mevcut kayıtların üzerine yazılsın", key="backup_restore_confirm")
                     if st.button("♻️ Geri yükle", type="primary", disabled=not _confirm, width="stretch"):
                         restore_backup(_parsed_backup, _summary, current_owner)
+
+        if excel_import is not None:
+            st.divider()
+            st.markdown("**📂 Excel'den yükle**")
+            excel_import()

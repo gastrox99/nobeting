@@ -228,7 +228,7 @@ def test_yedekle_ve_geri_yukle(app_url, tmp_path):
             _toggle(page, ALI, 2, "✓")
 
             section = _open_backup_section(page)
-            section.locator("input[type='file']").set_input_files(str(path))
+            section.locator("input[type='file'][accept*='.json']").set_input_files(str(path))
             expect(section.get_by_text("Yedek: 1 ay")).to_be_visible()
             section.get_by_text("Mevcut kayıtların üzerine yazılsın").last.click()
             restore = section.get_by_role("button", name="♻️ Geri yükle")
@@ -256,7 +256,7 @@ def test_bozuk_yedek_dosyasi_reddedilir(app_url, tmp_path):
             page.goto(app_url)
             _wait_idle(page)
             section = _open_backup_section(page)
-            section.locator("input[type='file']").set_input_files(str(bad))
+            section.locator("input[type='file'][accept*='.json']").set_input_files(str(bad))
             expect(section.get_by_text("Yedek yüklenemedi")).to_be_visible()
             expect(section.get_by_role("button", name="♻️ Geri yükle")).to_have_count(0)
             _no_exception(page)
