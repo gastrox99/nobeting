@@ -36,6 +36,7 @@ from nobet_core import (
     build_share_text,
     build_person_ics,
     shared_default_month,
+    shared_visible_months,
     shared_day_states,
     on_duty_summary,
     shared_updated_text,
@@ -2072,6 +2073,16 @@ class TestSharedPageHelpers(unittest.TestCase):
         self.assertEqual(shared_default_month(months, date(2026, 8, 1)), 0)
         self.assertEqual(shared_default_month(months, date(2027, 3, 1)), 2)
         self.assertIsNone(shared_default_month([], date(2026, 10, 17)))
+
+    def test_kalici_linkte_ileri_aylar_gizlenir(self):
+        from datetime import date
+        months = [(2025, 12), (2026, 10), (2026, 11), (2026, 12), (2027, 1)]
+        self.assertEqual(
+            shared_visible_months(months, date(2026, 10, 17)),
+            [(2025, 12), (2026, 10), (2026, 11)],
+        )
+        # Aralık'ta sonraki ay yeni yılın Ocak'ı.
+        self.assertEqual(shared_visible_months(months, date(2026, 12, 31)), months)
 
     def test_gun_durumlari(self):
         from datetime import date

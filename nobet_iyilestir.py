@@ -4,7 +4,8 @@
 Simülasyonun yerine geçmez; onun bulduğu listeden başlar. Kurallar
 (izin, dinlenme, günlük kişi sayısı, yasak ikili, en fazla nöbet, kilitli
 nöbetler) aynen uygulanır. Öncelikli dengeler (boş nöbet, toplam, hafta
-sonu/tatil, tatil, Cuma) mevcut listeden kötü olamaz; çözücü bunların
+sonu/tatil, tatil, Cuma) mevcut listeden kötü olamaz; kişisel limiti
+olanların nöbet sayısı değişmez. Çözücü bunların
 içinde tercihleri, art arda hafta sonlarını ve nöbet aralıklarını da
 iyileştirir. ortools yalnızca düğmeye basılınca yüklenir.
 """
@@ -144,6 +145,38 @@ def improvement_lines(before, after):
     return lines
 
 
+def rule_breaking_shifts(current, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk,
+                         forbidden_pairs=None, fixed_assignments=None, initial_last_shift=None):
+    """Kilitli olmayan, kurala uymayan nöbet sayısı (izin günü, dinlenme, yasak ikili).
+
+    İyileştir çözüm bulamadığında nedenini söylemek için kullanılır.
+    """
+    fixed = set(fixed_assignments or ())
+    initial = initial_last_shift or {}
+    days = {c: gun_detaylari[c]["day_num"] for c in columns}
+
+    def assigned(p, c):
+        return bool(p in current.index and c in current.columns and current.at[p, c])
+
+    bad = set()
+    for p in people:
+        mine = [c for c in columns if assigned(p, c)]
+        for c in mine:
+            if (p, c) in fixed:
+                continue
+            if p in df_unwanted_bool.index and c in df_unwanted_bool.columns and bool(df_unwanted_bool.at[p, c]):
+                bad.add((p, c))
+            if p in initial and days[c] - initial[p] <= min_bosluk:
+                bad.add((p, c))
+            if any(o != c and abs(days[o] - days[c]) <= min_bosluk for o in mine):
+                bad.add((p, c))
+    for c in columns:
+        for a, b in (forbidden_pairs or ()):
+            if assigned(a, c) and assigned(b, c):
+                bad.update(cell for cell in ((a, c), (b, c)) if cell not in fixed)
+    return len(bad)
+
+
 def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
                      forbidden_pairs=None, person_limits=None, df_preferred=None,
                      fixed_assignments=None, initial_last_shift=None, history_special=None,
@@ -188,7 +221,15 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
                     model.Add(x[p, first] + x[p, second] <= 1)
         if p in person_limits:
             locked = sum(1 for c in columns if (p, c) in fixed)
-            model.Add(sum(x[p, c] for c in columns) <= max(person_limits[p].get("max", 999), locked))
+            cap = max(person_limits[p].get("max", 999), locked)
+            model.Add(sum(x[p, c] for c in columns) <= cap)
+            # Limitli kişi toplam dengesinde sayılmaz; nöbet sayısı da değişmesin
+            # (yoksa çözücü fazla/eksik nöbeti ona yükleyip diğerlerini dengeliyordu).
+            current_total = sum(
+                1 for c in columns if p in current.index and c in current.columns and bool(current.at[p, c])
+            )
+            if current_total <= cap:
+                model.Add(sum(x[p, c] for c in columns) == current_total)
     for c in columns:
         for a, b in (forbidden_pairs or ()):
             if a in people and b in people and not ((a, c) in fixed and (b, c) in fixed):

@@ -12,6 +12,7 @@ from nobet_iyilestir import (  # noqa: E402
     PRIMARY_METRICS,
     improve_schedule,
     improvement_lines,
+    rule_breaking_shifts,
     schedule_metrics,
     weighted_score,
 )
@@ -108,3 +109,50 @@ def test_degisiklik_metni():
         "Cuma farkı 2 → 0", "art arda hafta sonu nöbeti 3 → 0", "karşılanmayan tercih 2 → 1",
     ]
     assert improvement_lines(after, dict(after, spread=1)) == ["nöbetler aya daha düzenli yayıldı"]
+
+
+@pytest.mark.parametrize("max_limit", [6, 9])
+def test_limitli_kisinin_nobet_sayisi_degismez(max_limit):
+    # Eskiden limitli kişi toplam dengesinde sayılmadığı için 4'e düşüyor ya da
+    # 11'e çıkıyordu (toplam farkı 1 → 4).
+    gd, cols, names = _month()
+    rng = random.Random(13)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    prefs = pd.DataFrame(0, index=names, columns=cols)
+    for p in names:
+        for c in rng.sample(cols, 4):
+            unwanted.at[p, c] = True
+        for c in rng.sample(cols, 4):
+            if not unwanted.at[p, c]:
+                prefs.at[p, c] = rng.choice((1, 2))
+    limits = {"K0": {"min": 0, "max": max_limit}}
+    random.seed(13)
+    current, _ = n.run_scheduling_core(names, cols, unwanted, gd, 1, 2, person_limits=limits,
+                                       df_preferred=prefs, simulation_count=10)
+    improved, _, _ = improve_schedule(current, names, cols, unwanted, gd, 1, 2, person_limits=limits,
+                                      df_preferred=prefs, time_limit=3)
+    result = improved if improved is not None else current
+    assert result.loc["K0"].sum() == current.loc["K0"].sum()
+    free = result.drop(index="K0").sum(axis=1)
+    assert free.max() - free.min() <= 1
+
+
+def test_kurala_uymayan_nobet_sayilir():
+    gd, cols, names = _month(team=4)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    current = pd.DataFrame(False, index=names, columns=cols)
+    current.at["K0", cols[0]] = True
+    current.at["K0", cols[1]] = True          # dinlenme kuralı (1 gün)
+    current.at["K1", cols[5]] = True
+    unwanted.at["K1", cols[5]] = True          # izin günü
+    current.at["K2", cols[9]] = True
+    current.at["K3", cols[9]] = True           # birlikte çalışamaz
+    assert rule_breaking_shifts(current, names, cols, unwanted, gd, 1,
+                                forbidden_pairs={("K2", "K3")}) == 5
+    # Kilitli nöbet sayılmaz; önceki ayın son nöbeti de dinlenmeye katılır.
+    assert rule_breaking_shifts(current, names, cols, unwanted, gd, 1, forbidden_pairs={("K2", "K3")},
+                                fixed_assignments={("K1", cols[5])}) == 4
+    clean = pd.DataFrame(False, index=names, columns=cols)
+    clean.at["K0", cols[0]] = True
+    assert rule_breaking_shifts(clean, names, cols, unwanted, gd, 1) == 0
+    assert rule_breaking_shifts(clean, names, cols, unwanted, gd, 1, initial_last_shift={"K0": 0}) == 1
