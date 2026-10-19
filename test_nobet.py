@@ -2585,6 +2585,13 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         apply_app_settings(restored, {"title": "Profesör", "risky_unit": "evet"})
         self.assertEqual(restored, {})
 
+    def test_tutarlar_turkce_bicimde(self):
+        from nobet_core import tr_sayi
+        self.assertEqual(tr_sayi(5985.36), "5.985,36")
+        self.assertEqual(tr_sayi(1234567.891), "1.234.567,89")
+        self.assertEqual(tr_sayi(0), "0,00")
+        self.assertEqual(tr_sayi(8139, 0), "8.139")
+
 
 class TestAppSettingsPersistence(unittest.TestCase):
     def test_ayarlar_toplanir_ve_aynen_geri_yuklenir(self):
@@ -3378,6 +3385,11 @@ class TestFullAppRender(unittest.TestCase):
 
 
 class TestIzinVeMusaitDegil(unittest.TestCase):
+    def test_izin_hucresi_i_harfiyle_gosterilir(self):
+        from nobet_core import get_preference_grid_state
+        self.assertEqual(get_preference_grid_state(False, 3)["symbol"], "İ")
+        self.assertEqual(get_preference_grid_state(False, 4)["symbol"], "M")
+
     """İzin (3) mesaiden düşer; Müsait Değil (4) düşmez. İkisine de nöbet yazılmaz."""
 
     def setUp(self):

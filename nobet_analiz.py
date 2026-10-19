@@ -5,7 +5,7 @@ import random
 import pandas as pd
 import streamlit as st
 
-from nobet_core import TR_AY_ADLARI, build_person_ics, preference_summary
+from nobet_core import TR_AY_ADLARI, build_person_ics, preference_summary, tr_sayi
 from nobet_durum import save_undo_state
 
 
@@ -128,7 +128,7 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                    "Müsait Değil düşmez.")
         st.dataframe(
             df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
-                                  .format({"Ücret (TL)": "₺ {:,.2f}"}),
+                                  .format({"Ücret (TL)": lambda value: f"{tr_sayi(value)} ₺"}),
             width="stretch"
         )
 

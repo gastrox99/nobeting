@@ -4,7 +4,7 @@ from datetime import date
 
 import streamlit as st
 
-from nobet_core import TR_GUN_KISA, escape_html, find_person_role, nobet_ucreti_hesapla
+from nobet_core import TR_GUN_KISA, escape_html, find_person_role, nobet_ucreti_hesapla, tr_sayi
 from nobet_durum import rotate_roles_for_day
 
 
@@ -111,7 +111,7 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
             f"<div style='font-size:11px;color:{ui['label_text']};'>Tercih Başarısı</div></div>"
             f"<div style='background:{ui['stat_bg']};border-radius:10px;padding:8px 14px;min-width:90px;text-align:center;"
             f"box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
-            f"<div style='font-size:22px;font-weight:800;color:{ui['stat_purple']};'>{dp_pay:.0f} ₺</div>"
+            f"<div style='font-size:22px;font-weight:800;color:{ui['stat_purple']};'>{tr_sayi(dp_pay, 0)} ₺</div>"
             f"<div style='font-size:11px;color:{ui['label_text']};'>Tahmini Ödeme</div></div>"
             f"</div>"
             f"<div style='margin-top:10px;font-size:11px;color:{ui['label_text']};'>"

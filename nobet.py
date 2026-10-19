@@ -82,6 +82,7 @@ for _attempt in range(2):
             ELLE_UNVAN,
             unvan_saat_ucreti,
             donem_adi,
+            tr_sayi,
             TATIL_ARTIRIMI,
             GECE_FARKI,
             UCRET_TURLERI,
@@ -464,8 +465,8 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             saat_ucretleri_secili = nobet_ucreti
         if _rate_info:
             _rate_note = (
-                f"Gündüz {_rate_info['gunduz']:.2f} · gece (20-08) {_rate_info['gece']:.2f} · "
-                f"bayram {_rate_info['tatil']:.2f} · bayram gece {_rate_info['tatil_gece']:.2f} TL/sa "
+                f"Gündüz {tr_sayi(_rate_info['gunduz'])} · gece (20-08) {tr_sayi(_rate_info['gece'])} · "
+                f"bayram {tr_sayi(_rate_info['tatil'])} · bayram gece {tr_sayi(_rate_info['tatil_gece'])} TL/sa "
                 f"({donem_adi(_rate_info['donem'])}, damga vergisi düşülmüş). "
                 "Yalnız fazla mesai ödenir: gece ücreti, ayın gece saati ile fazla mesai "
                 "saatinden küçük olanına (her nöbet 12 sa gece), kalan fazla mesaiye "

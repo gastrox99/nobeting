@@ -45,6 +45,12 @@ def escape_html(value):
     return _escape_html(str(value), quote=True)
 
 
+def tr_sayi(value, decimals=2):
+    """Türkçe sayı biçimi: binlik nokta, ondalık virgül (5985.36 -> "5.985,36")."""
+    text = f"{float(value):,.{decimals}f}"
+    return text.replace(",", "\0").replace(".", ",").replace("\0", ".")
+
+
 # Türkiye 2016'dan beri yaz saati uygulamıyor; sunucu UTC'de çalışsa da
 # "bugün" ve yazdırma saati Türkiye saatine göre olsun.
 TR_TZ = timezone(timedelta(hours=3))
@@ -362,7 +368,7 @@ PREFERENCE_GRID_STATES = (
     {
         "key": "unavailable",
         "soft": True,
-        "symbol": "Y",
+        "symbol": "İ",
         "color": "#991b1b",
         "css_class": "preference-free-3",
         "description": "İzin",
