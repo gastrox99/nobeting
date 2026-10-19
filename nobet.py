@@ -314,7 +314,8 @@ if "settings_expanded" not in st.session_state:
 settings_expanded = st.session_state.settings_expanded
 
 with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
-    set_col1, set_col2, set_col3 = st.columns([2, 1, 1])
+    # Sol: ekip tablosu. Sağ: dönem, tatil, ücret ve görev ayarları alt alta.
+    set_col1, set_col2 = st.columns([3, 2])
     
     with set_col1:
         # Ekip tablosu (isim + limitler) ayarlardaki metinleri düzenler (nobet_ekip.py).
@@ -360,8 +361,9 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         kişi_sayısı = st.slider("👤 Nöbet Başına Kişi:", 1, 5, value=st.session_state.get('kisi_sayisi_val', 2), key='kisi_slider_direct')
         st.session_state.kisi_sayisi_val = kişi_sayısı
     
-    with set_col3:
-        min_bosluk = st.slider("⏸️ Dinlenme (gün):", 0, 3, st.session_state.get("min_bosluk_val", 1), key="w_min_bosluk_val")
+        # Dinlenme ayarı kaldırıldı: nöbetten sonra her zaman 1 gün boş kalır.
+        # Eski kayıtlarda farklı değer olsa da 1 kullanılır (kayda da 1 yazılır).
+        min_bosluk = 1
         st.session_state.min_bosluk_val = min_bosluk
         # Tatiller her ay için ayrı saklanır ("2026-10": "29"). Hiç girilmemiş
         # bir ayda resmi tatiller kendiliğinden gelir; silinirse boş kalır.
@@ -439,11 +441,6 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                 _rate_note += " Ücret elle değiştirildi."
             st.caption(_rate_note)
     
-    # Additional settings row
-    st.divider()
-    adv_col1, adv_col2 = st.columns([1, 2])
-    
-    with adv_col1:
         role_names_input = st.text_input(
             "🏷️ Görev İsimleri:",
             value=st.session_state.get("role_names_text", ""),
@@ -467,11 +464,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                 "az tutana verilir."
             ),
         )
-    
-    with adv_col2:
-        render_pair_matrix(isimler)
-        forbidden_input = st.session_state.get("forbidden_pairs_text", "")
-        limits_text = st.session_state.get("limits_text", "")
+
+    st.divider()
+    render_pair_matrix(isimler)
+    forbidden_input = st.session_state.get("forbidden_pairs_text", "")
+    limits_text = st.session_state.get("limits_text", "")
 
     # Yasak çiftler ve kişisel limitler (ayrıştırma nobet_core'da, test edilir)
     forbidden_pairs = parse_forbidden_pairs(forbidden_input, isimler)

@@ -157,6 +157,37 @@ GLOBAL_CSS = """
 }
 .yasak-kendi { opacity: 0.35; text-align: center; }
 
+/* Tablo üstü: boya renkleri bitişik, yazı genişliğinde düğmeler. */
+.st-key-paint-palette [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    justify-content: flex-end;
+}
+.st-key-paint-palette :is([data-testid="column"],[data-testid="stColumn"]) {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+.st-key-paint-palette .stButton > button { padding: 4px 12px; min-height: 36px; }
+@media (max-width: 768px) {
+    .st-key-paint-palette [data-testid="stHorizontalBlock"] { justify-content: flex-start; }
+    /* İşlem düğmeleri alt alta 5 satır yerine iki satır: Simülasyon + İyileştir,
+       altında Sıfırla + Geri + İleri. */
+    .st-key-grid-actions [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+    }
+    .st-key-grid-actions :is([data-testid="column"],[data-testid="stColumn"]) {
+        flex: 1 1 calc(33% - 6px) !important;
+        min-width: calc(33% - 6px) !important;
+        width: auto !important;
+    }
+    .st-key-grid-actions :is([data-testid="column"],[data-testid="stColumn"]):nth-child(-n+2) {
+        flex: 1 1 calc(50% - 6px) !important;
+        min-width: calc(50% - 6px) !important;
+    }
+}
+
 </style>
 """
 
@@ -172,12 +203,18 @@ def ui_colors(_dark_theme):
         "weekend_text": "#93c5fd" if _dark_theme else "#1d4ed8",
         "holiday_text": "#fca5a5" if _dark_theme else "#c62828",
         "today_text": "#fcd34d" if _dark_theme else "#b45309",
-        "weekend_bg": "rgba(59,130,246,0.18)" if _dark_theme else "rgba(219,234,254,0.5)",
-        "holiday_bg": "rgba(239,68,68,0.18)" if _dark_theme else "rgba(254,226,226,0.55)",
+        "weekend_bg": "rgba(59,130,246,0.18)" if _dark_theme else "#dbeafe",
+        "holiday_bg": "rgba(239,68,68,0.18)" if _dark_theme else "#fee2e2",
         "today_bg": "rgba(245,158,11,0.22)" if _dark_theme else "rgba(254,243,199,0.75)",
         "legend_text": "#d1d5db" if _dark_theme else "#374151",
         # Nöbetsiz hücreler: açık zemin + renkli yazı (nöbetliler dolu renk)
-        "free_bg": "rgba(148,163,184,0.10)" if _dark_theme else "#ffffff",
+        # Açık temada yarı saydam: hafta sonu/tatil sütun zemini hücrelerden görünür.
+        "free_bg": "rgba(148,163,184,0.10)" if _dark_theme else "rgba(255,255,255,0.6)",
+        # Nöbet yazılmış (tercihsiz) hücre. Koyu temada açık zemin + koyu ✓:
+        # koyu gri boş hücrelerle karışıyordu.
+        "assigned_bg": "#cbd5e1" if _dark_theme else "#475569",
+        "assigned_border": "#e2e8f0" if _dark_theme else "#334155",
+        "assigned_text": "#0f172a" if _dark_theme else "#ffffff",
         "free_border": "#334155" if _dark_theme else "#e2e8f0",
         "free_text": "#64748b",
         "soft_green_bg": "rgba(34,197,94,0.16)" if _dark_theme else "#dcfce7",
@@ -285,8 +322,9 @@ def grid_css(ui, name_col_px, col_bg_css):
     font-weight: 800 !important;
 }}
 :is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-0) .stButton > button {{
-    background: #475569 !important;
-    border-color: #334155 !important;
+    background: {ui['assigned_bg']} !important;
+    border-color: {ui['assigned_border']} !important;
+    color: {ui['assigned_text']} !important;
 }}
 :is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-1) .stButton > button {{
     background: #166534 !important;
@@ -371,6 +409,9 @@ def grid_css(ui, name_col_px, col_bg_css):
     color: #ffffff !important;
     font-weight: 800;
     line-height: 1;
+}}
+.st-key-preference-legend .preference-legend-swatch.swatch-assigned_neutral {{
+    color: {ui['assigned_text']} !important;
 }}
 </style>
 """
