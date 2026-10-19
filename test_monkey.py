@@ -28,7 +28,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 APP_DIR = Path(__file__).resolve().parent
 FINDINGS = APP_DIR / "monkey_findings.txt"
 ASSIGNED = {"✓", "!", "×", "🔺"}
-FREE = {"·", "T", "K", "Y"}
+FREE = {"·", "T", "K", "İ", "M"}
 ROUNDS = int(os.environ.get("MONKEY_ROUNDS", "3"))
 STEPS = int(os.environ.get("MONKEY_STEPS", "120"))
 

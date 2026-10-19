@@ -122,3 +122,46 @@ def test_tercihler_toplu_kaydedilir(app_url):  # noqa: F811
             _no_exception(page)
         finally:
             browser.close()
+
+
+def test_kaydedilmemis_tercihler_yenilemede_kaybolmaz(app_url):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+    person = "Bekleyen Ali"
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, f"{person}, Bekleyen Ayşe, Bekleyen Can")
+        try:
+            _wait_idle(page)
+            _toggle(page, "Bekleyen Ayşe", 5, "✓")
+            page.get_by_text("🎨 Tercih Belirle", exact=True).click()
+            _wait_idle(page, 1.0)
+            page.get_by_role("button", name="🟥İzin").click()
+            _wait_idle(page, 1.0)
+            for day in (0, 1):
+                _pref_button(page, person, day).click()
+                expect(_pref_button(page, person, day)).to_have_text("İ")
+            _wait_idle(page, 1.5)
+            expect(page.get_by_text("Tercih değişiklikleri henüz kaydedilmedi")).to_be_visible()
+            assert _pref_code(person, 0) == 0
+            # Kaydetmeden yenile: işaretler tarayıcıdan geri gelir ve kaydedilir.
+            page.reload()
+            _wait_idle(page)
+            assert (_pref_code(person, 0), _pref_code(person, 1)) == (3, 3)
+            page.get_by_text("🎨 Tercih Belirle", exact=True).click()
+            _wait_idle(page, 1.0)
+            expect(_pref_button(page, person, 0)).to_have_text("İ")
+            expect(page.get_by_text("Tercih değişiklikleri henüz kaydedilmedi")).to_have_count(0)
+            # Kaydedildikten sonra yenilemek aynı tercihleri bir daha uygulamaz.
+            page.get_by_role("button", name="⬜Nötr").click()
+            _wait_idle(page, 1.0)
+            _pref_button(page, person, 0).click()
+            expect(_pref_button(page, person, 0)).to_have_text("·")
+            page.get_by_role("button", name="💾 Tercihleri Kaydet").click()
+            _wait_idle(page, 1.5)
+            page.reload()
+            _wait_idle(page)
+            assert _pref_code(person, 0) == 0
+            text = page.locator("body").inner_text()
+            assert "başka bir yerde" not in text and "kaydedilemedi" not in text
+            _no_exception(page)
+        finally:
+            browser.close()

@@ -2585,6 +2585,13 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         apply_app_settings(restored, {"title": "Profesör", "risky_unit": "evet"})
         self.assertEqual(restored, {})
 
+    def test_tutarlar_turkce_bicimde(self):
+        from nobet_core import tr_sayi
+        self.assertEqual(tr_sayi(5985.36), "5.985,36")
+        self.assertEqual(tr_sayi(1234567.891), "1.234.567,89")
+        self.assertEqual(tr_sayi(0), "0,00")
+        self.assertEqual(tr_sayi(8139, 0), "8.139")
+
 
 class TestAppSettingsPersistence(unittest.TestCase):
     def test_ayarlar_toplanir_ve_aynen_geri_yuklenir(self):
@@ -3377,7 +3384,48 @@ class TestFullAppRender(unittest.TestCase):
         streamlit.cache_resource.clear()
 
 
+class TestBekleyenTercihler(unittest.TestCase):
+    """Kaydedilmemiş tercihler tarayıcıda tutulup sayfa açılınca geri gelir."""
+
+    def _prefs(self, people=("Ali", "Ayşe"), columns=("1 Paz", "2 Pzt")):
+        return pd.DataFrame(0, index=list(people), columns=list(columns))
+
+    def test_ayni_surumde_geri_gelir(self):
+        from nobet_core import apply_pending_prefs, pending_prefs_payload
+        pending = self._prefs()
+        pending.at["Ali", "2 Pzt"] = 3
+        raw = pending_prefs_payload("", 2026, 11, "v1", pending)
+        restored = apply_pending_prefs(raw, "", 2026, 11, "v1", self._prefs())
+        self.assertEqual(int(restored.at["Ali", "2 Pzt"]), 3)
+        self.assertEqual(int(restored.values.sum()), 3)
+
+    def test_baska_yerde_kaydedildiyse_ya_da_baska_ay_ise_uygulanmaz(self):
+        from nobet_core import apply_pending_prefs, is_pending_prefs_for, pending_prefs_payload
+        pending = self._prefs()
+        pending.at["Ali", "1 Paz"] = 1
+        raw = pending_prefs_payload("a@b.c", 2026, 11, "v1", pending)
+        self.assertIsNone(apply_pending_prefs(raw, "a@b.c", 2026, 11, "v2", self._prefs()))
+        self.assertIsNone(apply_pending_prefs(raw, "a@b.c", 2026, 12, "v1", self._prefs()))
+        self.assertIsNone(apply_pending_prefs(raw, "x@y.z", 2026, 11, "v1", self._prefs()))
+        self.assertIsNone(apply_pending_prefs("bozuk", "a@b.c", 2026, 11, "v1", self._prefs()))
+        self.assertTrue(is_pending_prefs_for(raw, "a@b.c", 2026, 11))
+        self.assertFalse(is_pending_prefs_for(raw, "a@b.c", 2026, 12))
+
+    def test_ekipten_cikan_ve_degismeyen_atlanir(self):
+        from nobet_core import apply_pending_prefs, pending_prefs_payload
+        pending = self._prefs(people=("Ali", "Can"))
+        pending.at["Can", "1 Paz"] = 4
+        raw = pending_prefs_payload("", 2026, 11, "v1", pending)
+        # Can artık ekipte yok, Ali'de değişiklik yok: uygulanacak bir şey kalmaz.
+        self.assertIsNone(apply_pending_prefs(raw, "", 2026, 11, "v1", self._prefs()))
+
+
 class TestIzinVeMusaitDegil(unittest.TestCase):
+    def test_izin_hucresi_i_harfiyle_gosterilir(self):
+        from nobet_core import get_preference_grid_state
+        self.assertEqual(get_preference_grid_state(False, 3)["symbol"], "İ")
+        self.assertEqual(get_preference_grid_state(False, 4)["symbol"], "M")
+
     """İzin (3) mesaiden düşer; Müsait Değil (4) düşmez. İkisine de nöbet yazılmaz."""
 
     def setUp(self):

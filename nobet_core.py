@@ -45,6 +45,12 @@ def escape_html(value):
     return _escape_html(str(value), quote=True)
 
 
+def tr_sayi(value, decimals=2):
+    """Türkçe sayı biçimi: binlik nokta, ondalık virgül (5985.36 -> "5.985,36")."""
+    text = f"{float(value):,.{decimals}f}"
+    return text.replace(",", "\0").replace(".", ",").replace("\0", ".")
+
+
 # Türkiye 2016'dan beri yaz saati uygulamıyor; sunucu UTC'de çalışsa da
 # "bugün" ve yazdırma saati Türkiye saatine göre olsun.
 TR_TZ = timezone(timedelta(hours=3))
@@ -362,7 +368,7 @@ PREFERENCE_GRID_STATES = (
     {
         "key": "unavailable",
         "soft": True,
-        "symbol": "Y",
+        "symbol": "İ",
         "color": "#991b1b",
         "css_class": "preference-free-3",
         "description": "İzin",
@@ -1342,6 +1348,72 @@ def collect_app_settings(session_state):
     # Derin kopya: iç içe sözlükler (aylık tatiller) sonradan değişince
     # "son kaydedilen" kopya da değişip kaydı engellemesin.
     return json.loads(json.dumps(settings, ensure_ascii=False))
+
+
+PENDING_PREFS_KEY = "nobet_bekleyen_tercihler"
+
+
+def pending_prefs_payload(owner, yil, ay, version, preferences):
+    """Kaydedilmemiş tercihler için tarayıcıda saklanacak metin.
+
+    ``version``: ayın veritabanındaki son bilinen sürümü; geri yüklerken
+    arada başka bir kayıt olup olmadığını anlamak için.
+    """
+    return json.dumps({
+        "owner": owner or "",
+        "period": period_key(yil, ay),
+        "version": version,
+        "columns": [str(column) for column in preferences.columns],
+        "prefs": {
+            str(person): [int(value) for value in preferences.loc[person].tolist()]
+            for person in preferences.index
+        },
+    }, ensure_ascii=False)
+
+
+def is_pending_prefs_for(raw, owner, yil, ay):
+    """Tarayıcıdaki bekleyen tercihler bu kullanıcının bu ayına mı ait?"""
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("owner") == (owner or "")
+        and data.get("period") == period_key(yil, ay)
+    )
+
+
+def apply_pending_prefs(raw, owner, yil, ay, version, preferences):
+    """Tarayıcıdaki kaydedilmemiş tercihleri ``preferences``'a uygular.
+
+    Kayıt bu kullanıcıya ve aya aitse ve ay o zamandan beri başka yerde
+    kaydedilmediyse (sürüm aynı) yeni tablo döner; değilse None. Ekipten
+    çıkmış kişiler ve artık olmayan günler atlanır.
+    """
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        if (
+            not isinstance(data, dict)
+            or data.get("owner") != (owner or "")
+            or data.get("period") != period_key(yil, ay)
+            or data.get("version") != version
+        ):
+            return None
+        columns = [str(column) for column in data["columns"]]
+        result = preferences.copy()
+        changed = False
+        for person, codes in data["prefs"].items():
+            if person not in result.index or len(codes) != len(columns):
+                continue
+            for column, code in zip(columns, codes):
+                code = int(code)
+                if column in result.columns and 0 <= code <= MAX_PREF_CODE and result.at[person, column] != code:
+                    result.at[person, column] = code
+                    changed = True
+    except (TypeError, ValueError, KeyError):
+        return None
+    return result if changed else None
 
 
 def persistence_fingerprint(schedule, preferences, rows, locked=None, hidden=None):
