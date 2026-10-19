@@ -85,6 +85,20 @@ from nobet_core import (
     update_persistence_feedback,
 )
 
+# Arayüz nobet.py ve bölüm dosyalarına ayrıldı; kaynak denetimleri hepsine bakar.
+APP_FILES = (
+    "nobet.py", "nobet_stil.py", "nobet_durum.py", "nobet_paylasim.py", "nobet_disa_aktar.py",
+    "nobet_yedek.py", "nobet_tablo.py", "nobet_takvim.py", "nobet_liste.py", "nobet_analiz.py",
+)
+
+
+def _app_source(*names):
+    return "\n".join(
+        Path(__file__).with_name(name).read_text(encoding="utf-8") for name in (names or APP_FILES)
+    )
+
+
+
 
 class TestParseHolidayDays(unittest.TestCase):
     def test_gecerli_ve_gecersiz_karisik_girdi(self):
@@ -1004,7 +1018,7 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app_source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        cls.app_source = _app_source()
 
     def test_tercih_grid_gercek_anahtarli_container_kullanir(self):
         self.assertIn('grid_key = "preference-grid"', self.app_source)
@@ -1160,7 +1174,7 @@ class TestFixedShifts(unittest.TestCase):
         self.assertEqual(state["locked_cells"], {("Ali", "1 Paz")})
 
     def test_uygulama_baglantilari(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertIn('fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)', source)
         self.assertIn('settings_dict={"locked": locks_to_json(_active_locks),', source)
         self.assertIn("'locked': set(st.session_state.get('locked_cells', set())),", source)
@@ -1219,7 +1233,7 @@ class TestAlgorithmFixes(unittest.TestCase):
         self.assertFalse(state["schedule_bool"].at["Ayşe", "1 Paz"])
 
     def test_uygulama_tekrar_eden_isimleri_ayiklar(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertIn("isimler = list(dict.fromkeys(_raw_isimler))", source)
         self.assertNotIn("itertuples(index=False), rows_liste", source)
 
@@ -1698,7 +1712,7 @@ class TestBackup(unittest.TestCase):
                 db.export_owner_data()
 
     def test_uygulama_yedegi_kullaniciya_baglar(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertIn("export_owner_data(owner=current_owner)", source)
         # Veritabanı hatası kullanıcıya ham mesajla gösterilmez.
         self.assertIn("Yedek hazırlanamadı", source)
@@ -1741,16 +1755,17 @@ class TestBackup(unittest.TestCase):
         self.assertEqual(load_params, (5, "ali@gmail.com"))
 
     def test_yedekle_tusu_kayittan_sonra_calisir(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source("nobet.py")
         # Yedek, son değişiklik otomatik kaydedildikten sonra alınır.
         self.assertLess(
             source.index('st.error(st.session_state.persistence_error)'),
-            source.index("\n_run_requested_snapshot()"),
+            source.index("\nrun_requested_snapshot(current_owner, yil, ay)"),
         )
         # Geri yüklemeden önce mevcut hâlin kopyası alınır; alınamazsa geri yüklenmez.
-        restore = source[source.index("def _restore_backup"):]
+        backup = _app_source("nobet_yedek.py")
+        restore = backup[backup.index("def restore_backup"):]
         self.assertLess(
-            restore.index("_take_snapshot(SNAPSHOT_BEFORE_RESTORE)"),
+            restore.index("take_snapshot(SNAPSHOT_BEFORE_RESTORE, current_owner)"),
             restore.index("restore_owner_data(parsed"),
         )
 
@@ -1799,7 +1814,7 @@ class TestShareAndCalendar(unittest.TestCase):
 
 class TestGridAppearance(unittest.TestCase):
     def setUp(self):
-        self.source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.source = _app_source()
 
     def test_atandi_gri_zemin_ustunde_tik(self):
         state = get_preference_grid_state(True, 0)
@@ -1863,7 +1878,7 @@ class TestOfficialHolidaysAndReminder(unittest.TestCase):
             self.assertLessEqual(len(raw.encode("utf-8")), 75)
 
     def test_uygulama_resmi_tatilleri_varsayilan_yapar(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertIn("value=holiday_text_for_period(_holidays_by_period, yil, ay),", source)
         self.assertIn("_holidays_by_period[_holiday_period] = holiday_input", source)
         self.assertIn("_holidays_by_period.pop(_holiday_period, None)", source)
@@ -1905,12 +1920,12 @@ class TestFairDistribution(unittest.TestCase):
         self.assertLessEqual(int(schedule.loc["Can"].sum()), 12)
 
     def test_isimler_ve_dugmeler_ayni_hizada(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertIn(':is([data-testid="stElementContainer"], .element-container):has(.preference-state) {{\n    display: none !important;', source)
         self.assertIn('[data-testid="stHorizontalBlock"] {{\n    align-items: center !important;', source)
 
     def test_gun_basligi_bolunmez(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertIn("f\"<div style='{num_style}white-space:nowrap;'>{day_num}</div>\"", source)
         self.assertNotIn('badge = "★"', source)
 
@@ -2013,7 +2028,7 @@ class TestMissingDayExplanation(unittest.TestCase):
 
 class TestUiCleanup(unittest.TestCase):
     def setUp(self):
-        self.source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.source = _app_source()
 
     def test_bos_hucreler_acik_nobetliler_dolu(self):
         free = get_preference_grid_state(False, 0)
@@ -2039,11 +2054,22 @@ class TestUiCleanup(unittest.TestCase):
 
 class TestStaleModuleRecovery(unittest.TestCase):
     def test_eski_modul_kalirsa_yenilenip_tekrar_denenir(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
-        recovery = source[source.index("try:\n    from db import ("):source.index("from streamlit_local_storage")]
-        self.assertIn("except ImportError:\n    _fresh_modules()", recovery)
-        self.assertEqual(recovery.count("from db import ("), 2)
-        self.assertEqual(recovery.count("from nobet_core import ("), 2)
+        source = _app_source("nobet.py")
+        recovery = source[source.index("for _attempt in range(2):"):source.index("from streamlit_local_storage")]
+        self.assertIn("except ImportError:\n        if _attempt:\n            raise\n        _fresh_modules()", recovery)
+        # İçe aktarma listesi tek yerde (eskiden iki kopya elle eş tutuluyordu).
+        self.assertEqual(recovery.count("from db import ("), 1)
+        self.assertEqual(recovery.count("from nobet_core import ("), 1)
+        # Arayüz bölümleri de her çalışmada yeniden okunur.
+        self.assertIn("_load_ui_modules()", recovery)
+
+    def test_tum_arayuz_dosyalari_yeniden_okunur(self):
+        source = _app_source("nobet.py")
+        listed = re.search(r"_UI_MODULES = \((.*?)\)", source, flags=re.S).group(1)
+        self.assertEqual(
+            sorted(re.findall(r'"(\w+)"', listed)),
+            sorted(name[:-3] for name in APP_FILES if name != "nobet.py"),
+        )
 
     def test_yenileme_yeni_fonksiyonlari_getirir(self):
         import importlib, types
@@ -2055,6 +2081,22 @@ class TestStaleModuleRecovery(unittest.TestCase):
         fresh = importlib.import_module("db")
         importlib.reload(fresh)
         self.assertTrue(hasattr(fresh, "resolve_share_token"))
+
+
+class TestAppModulesStatic(unittest.TestCase):
+    def test_arayuz_dosyalarinda_tanimsiz_ad_yok(self):
+        # Bölümler ayrı dosyada fonksiyon olduğundan unutulan bir ad (ör. eksik
+        # parametre) sayfa açılmadan önce burada yakalanır.
+        try:
+            import ast
+            from pyflakes import checker, messages
+        except ImportError:
+            self.skipTest("pyflakes yüklü değil")
+        undefined = (messages.UndefinedName, messages.UndefinedLocal, messages.UndefinedExport)
+        for name in APP_FILES:
+            tree = ast.parse(_app_source(name), filename=name)
+            found = [str(m) for m in checker.Checker(tree, filename=name).messages if isinstance(m, undefined)]
+            self.assertEqual(found, [], name)
 
 
 class TestSharedPageHelpers(unittest.TestCase):
@@ -2115,7 +2157,7 @@ class TestSharedPageHelpers(unittest.TestCase):
         self.assertEqual(shared_updated_text(None), "")
 
     def test_paylas_dugmesi_tek_kalici_baglanti_kullanir(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         share = source[source.index('with st.popover("🔗 Paylaş"'):source.index("with _import_col:")]
         self.assertIn("create_share_link(current_owner, 0, 0)", share)
         self.assertNotIn("current_owner, yil, ay", share)
@@ -2180,7 +2222,7 @@ class TestSecmeliAyarlar(unittest.TestCase):
         self.assertEqual(person_limits_to_text({}), "")
 
     def test_ayarlar_seçim_kutusuyla_girilir(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertNotIn('st.text_area(\n            "🚫 Birlikte', source)
         self.assertNotIn('st.text_area(\n            "📊 Kişisel', source)
         self.assertIn('"🚫 Birlikte Çalışamayan:",\n            list(_fp_choices)', source)
@@ -2230,10 +2272,10 @@ class TestShareLinksDb(unittest.TestCase):
         connect.assert_not_called()
 
     def test_paylasim_sayfasi_giristen_once_ve_salt_okunur(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source("nobet.py")
         self.assertLess(source.index('st.query_params.get("paylas")'),
                         source.index("AUTH_ENABLED = _auth_configured()"))
-        shared = source[source.index("def _render_shared_view"):source.index('_share_token = st.query_params')]
+        shared = _app_source("nobet_paylasim.py")
         for forbidden in ("save_schedule", "save_app_settings", "st.button("):
             self.assertNotIn(forbidden, shared)
 
@@ -2260,7 +2302,7 @@ class TestSharedCoreFunctions(unittest.TestCase):
         self.assertIn("class='weekend'", html)
 
     def test_uygulama_kopya_fonksiyon_tanimlamaz(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         for name in ("escape_html", "validate_inputs", "create_print_html"):
             self.assertNotIn(f"\ndef {name}(", source, f"{name} nobet_core'dan alınmalı")
         self.assertIn("build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)", source)
@@ -2352,7 +2394,7 @@ class TestGoogleLoginSupport(unittest.TestCase):
         self.assertFalse(db.claim_legacy_data(""))
 
     def test_uygulama_tum_kayitlari_kullaniciya_baglar(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         calls = re.findall(r"(?<!def )\b(save_schedule|load_schedule|save_app_settings|load_app_settings)\((.*?)\)\n",
                            source, flags=re.S)
         self.assertGreaterEqual(len(calls), 6)
@@ -2362,7 +2404,7 @@ class TestGoogleLoginSupport(unittest.TestCase):
                 "owner=current_owner" in args or "owner=_owner" in args,
                 f"{name} kullanıcıya bağlı değil",
             )
-        shared = source[source.index("def _render_shared_view"):source.index('_share_token = st.query_params')]
+        shared = _app_source("nobet_paylasim.py")
         self.assertEqual(shared.count("owner=_owner"), 1)
         self.assertNotIn("owner=_owner", source.replace(shared, ""))
         # Giriş kontrolü ayarlar yüklenmeden önce yapılmalı.
@@ -2370,7 +2412,7 @@ class TestGoogleLoginSupport(unittest.TestCase):
                         source.index("load_app_settings(owner=current_owner"))
 
     def test_indirme_dosyalari_tiklaninca_uretilir(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertIn('st.download_button("🖼️ Resim (PNG)", _png_bytes,', source)
         self.assertNotIn("st.session_state[png_key]", source)
 
@@ -2448,7 +2490,7 @@ class TestAppSettingsPersistence(unittest.TestCase):
             self.assertNotEqual(base, persistence_fingerprint(*args))
 
     def test_uygulama_her_degisiklikte_kaydeder_ve_ayarlari_yukler(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertNotIn("elapsed >= 30", source)
         self.assertIn("_persist_fp != st.session_state.get(\"last_saved_fingerprint\")", source)
         self.assertIn("load_app_settings(owner=current_owner, raise_on_error=True)", source)
@@ -2508,7 +2550,7 @@ class TestSwitchSchedulePeriod(unittest.TestCase):
         self.assertNotIn("schedule_bool", state)
 
     def test_uygulama_donem_degisimini_otomatik_yuklemeden_once_yapar(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         switch_pos = source.index("switch_schedule_period(st.session_state, (yil, ay)")
         restore_pos = source.index("if not restore_auto_saved_schedule(")
         self.assertLess(switch_pos, restore_pos)
@@ -2542,7 +2584,7 @@ class TestDatabaseConnectionDiagnostics(unittest.TestCase):
         self.assertIsNone(db.get_last_error())
 
     def test_basarisiz_baglanti_kalici_onbelleklenmez(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         self.assertNotIn("def _init_db_once", source)
         self.assertIn('if not _db_state["ready"] and not st.session_state.get("_db_init_attempted")', source)
 
@@ -2938,7 +2980,7 @@ class TestReviewFixes(unittest.TestCase):
         self.assertGreaterEqual(YEAR_MAX, 2031)
 
     def test_uygulama_kaynaginda_duzeltmeler_var(self):
-        source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        source = _app_source()
         # Excel her dosya için bir kez işlenir (sonsuz döngü düzeltmesi).
         self.assertIn('excel_import_done', source)
         # CSV Excel'de Türkçe karakterlerle açılır.
@@ -3082,7 +3124,7 @@ class TestInceleme20261014(unittest.TestCase):
 
 class TestSecurityHardening(unittest.TestCase):
     def setUp(self):
-        self.source = Path(__file__).with_name("nobet.py").read_text(encoding="utf-8")
+        self.source = _app_source()
 
     def test_giris_ayari_yoksa_veritabanli_uygulama_kilitlenir(self):
         from streamlit.testing.v1 import AppTest
@@ -3117,3 +3159,46 @@ class TestSecurityHardening(unittest.TestCase):
         with patch.dict("os.environ", {"DATABASE_URL": ""}), \
                 patch("streamlit.secrets", {}):
             self.assertFalse(db.is_database_configured())
+
+
+class TestFullAppRender(unittest.TestCase):
+    """Uygulama veritabanı taklidiyle baştan sona çizilir; her bölüm dosyası çalışır."""
+
+    def test_tum_bolumler_hatasiz_cizilir(self):
+        from streamlit.testing.v1 import AppTest
+        fakes = dict(
+            init_db=lambda: True, get_last_error=lambda: None, is_database_configured=lambda: False,
+            load_app_settings=lambda **k: None, save_app_settings=lambda *a, **k: True,
+            load_schedule=lambda *a, **k: None, save_schedule=lambda *a, **k: True,
+            load_auto_saved_assignments=lambda *a, **k: ({}, {}), list_backup_snapshots=lambda **k: [],
+            get_share_link=lambda *a: None,
+        )
+        with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, **fakes):
+            at = AppTest.from_file(str(Path(__file__).with_name("nobet.py")), default_timeout=120)
+            at.session_state["isimler_text"] = "Ali, Ayşe, Can, Deniz, Ece"
+            # Tarayıcı deposu bileşeni testte yanıt vermez; boş depo verilir.
+            at.session_state["storage_init"] = {}
+            at.session_state["yil_val"], at.session_state["ay_val"] = 2026, 10
+            at.run()
+            self.assertEqual(
+                [t.label for t in at.tabs],
+                ["🗂️ Tablo Görünümü", "📅 Takvim Görünümü", "📋 Günlük Liste", "📊 Analiz"],
+            )
+            self.assertTrue(any(e.label.startswith("💾 Yedek") for e in at.expander))
+            steps = [
+                lambda: next(b for b in at.button if b.label == "⚡ Simülasyon").click(),
+                lambda: at.session_state.__setitem__("cal_person_filter", ["Ali"]),
+                lambda: next(b for b in at.button if b.label.startswith("🤖 Görev")).click(),
+                lambda: next(b for b in at.button if b.label == "↩️ Geri").click(),
+                lambda: at.radio(key="mode_radio").set_value("✏️ Nöbet Ata/Kaldır"),
+                lambda: next(b for b in at.button if b.key and b.key.startswith("g_Ali_")).click(),
+                lambda: next(b for b in at.button if b.key == "cal_swap_3").click(),
+                lambda: next(b for b in at.button if b.label == "🔄 Sıfırla").click(),
+            ]
+            for step in steps:
+                step()
+                at.run()
+                self.assertEqual([e.value for e in at.exception], [])
+        # Taklit "veritabanı hazır" sonucu sonraki testlere kalmasın.
+        import streamlit
+        streamlit.cache_resource.clear()
