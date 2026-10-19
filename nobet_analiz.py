@@ -78,7 +78,7 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                 # fazla atanmış kişiler sessizce siliniyordu).
                 st.session_state.should_regenerate_assignments = False
                 st.toast("Görev yerleri yeniden dağıtıldı!", icon="🤖")
-                # Üstteki Günlük Liste ve takvim yeni rolleri hemen göstersin.
+                # Üstteki takvim yeni rolleri hemen göstersin.
                 st.rerun()
 
     with an2:

@@ -643,51 +643,6 @@ def assignment_warnings(
     return warnings
 
 
-def apply_role_edits(original_row, edited_values, role_names, assigned_today):
-    """Görev yeri düzenlemesini uygular: (yeni_satır, değişti_mi).
-
-    Bir göreve o gün başka görevde olan kişi yazılırsa ikisi yer değiştirir;
-    böylece aynı kişi iki birimde görünmez, diğeri de listeden düşmez.
-    O gün nöbeti olmayan isimler yok sayılır.
-    """
-    new_row = dict(original_row)
-    changed = False
-    for role in role_names:
-        value = str(edited_values.get(role, "-")).strip()
-        # Yalnızca kullanıcının gerçekten değiştirdiği hücreler işlenir.
-        if value == str(original_row.get(role, "-")).strip():
-            continue
-        if not value or value in ("nan", "-") or value not in assigned_today:
-            continue
-        if new_row.get(role) == value:
-            continue
-        previous = new_row.get(role, "-")
-        for other in role_names:
-            if other != role and new_row.get(other) == value:
-                new_row[other] = previous
-                break
-        new_row[role] = value
-        changed = True
-    return new_row, changed
-
-
-def ignored_role_edits(original_row, edited_values, role_names, assigned_today):
-    """apply_role_edits'in uygulamadığı düzenlemeler: [(görev, yazılan), ...].
-
-    Kullanıcıya neden değişmediğini söylemek için: o gün nöbeti olmayan bir isim
-    yazılmışsa ya da hücre boşaltılmışsa (kişiyi görevden almak nöbeti
-    kaldırmakla olur).
-    """
-    ignored = []
-    for role in role_names:
-        value = str(edited_values.get(role, "-")).strip()
-        if value == str(original_row.get(role, "-")).strip():
-            continue
-        if not value or value in ("nan", "-") or value not in assigned_today:
-            ignored.append((role, value if value not in ("nan",) else ""))
-    return ignored
-
-
 RESERVED_ROLE_NAMES = ("Tarih",)
 
 

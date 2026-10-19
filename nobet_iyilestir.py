@@ -42,6 +42,15 @@ WEIGHTS = {
     "missed_preference": 20,
     "spread": 1,
 }
+# Geçmiş aylardan gelen farklar kesirli olabilir (ör. 2/9); çözücü yalnız tam
+# sayı kabul ettiği için bu ölçüler 100 ile çarpılıp kuruşa yuvarlanır.
+SCALE = 100
+SCALED_METRICS = ("special", "holiday", "total_history")
+
+
+def _history(values):
+    """Geçmiş farklarını iki basamağa yuvarlar (çözücü ve ölçüler aynı sayıyı görsün)."""
+    return {p: round(float(v), 2) for p, v in (values or {}).items()}
 
 
 def _is_special(info):
@@ -85,7 +94,7 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
         return bool(person in schedule.index and column in schedule.columns and schedule.at[person, column])
 
     def spread(values):
-        return max(values) - min(values) if values else 0
+        return round(max(values) - min(values), 2) if values else 0
 
     totals = {p: sum(assigned(p, c) for c in columns) for p in people}
     free = [p for p in people if p not in person_limits]
@@ -139,7 +148,7 @@ def improvement_lines(before, after):
     lines = []
     for name in PRIMARY_METRICS + SECONDARY_METRICS:
         if name in METRIC_LABELS and after[name] != before[name]:
-            lines.append(f"{METRIC_LABELS[name]} {before[name]} → {after[name]}")
+            lines.append(f"{METRIC_LABELS[name]} {before[name]:g} → {after[name]:g}")
     if not lines and after["spread"] < before["spread"]:
         lines.append("nöbetler aya daha düzenli yayıldı")
     return lines
@@ -190,9 +199,9 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     from ortools.sat.python import cp_model
 
     person_limits = person_limits or {}
-    history_special = history_special or {}
-    history_total = history_total or {}
-    history_holiday = history_holiday or {}
+    history_special = _history(history_special)
+    history_total = _history(history_total)
+    history_holiday = _history(history_holiday)
     initial_last_shift = initial_last_shift or {}
     fixed = {(p, c) for p, c in (fixed_assignments or ()) if p in people and c in columns}
     metric_args = dict(
@@ -235,12 +244,12 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
             if a in people and b in people and not ((a, c) in fixed and (b, c) in fixed):
                 model.Add(x[a, c] + x[b, c] <= 1)
 
-    def range_of(exprs, terms_name):
-        high = model.NewIntVar(-1000, 1000, f"hi_{terms_name}")
-        low = model.NewIntVar(-1000, 1000, f"lo_{terms_name}")
+    def range_of(exprs, terms_name, bound=1000):
+        high = model.NewIntVar(-bound, bound, f"hi_{terms_name}")
+        low = model.NewIntVar(-bound, bound, f"lo_{terms_name}")
         model.AddMaxEquality(high, exprs)
         model.AddMinEquality(low, exprs)
-        value = model.NewIntVar(0, 2000, terms_name)
+        value = model.NewIntVar(0, 2 * bound, terms_name)
         model.Add(value == high - low)
         return value
 
@@ -267,15 +276,22 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     def count(p, test):
         return sum(x[p, c] for c in columns if test(gun_detaylari[c]))
 
-    expr["special"] = range_of([count(p, _is_special) + history_special.get(p, 0) for p in people], "special")
-    expr["holiday"] = range_of(
-        [count(p, lambda d: d["holiday"]) + history_holiday.get(p, 0) for p in people], "holiday"
+    def scaled_range(values, history, terms_name, group):
+        # SCALE ile çarpılmış tam sayılar: kesirli geçmiş farkı modele girebilsin.
+        return range_of(
+            [SCALE * values[p] + int(round(SCALE * history.get(p, 0))) for p in group],
+            terms_name, bound=1000 * SCALE,
+        )
+
+    expr["special"] = scaled_range({p: count(p, _is_special) for p in people}, history_special, "special", people)
+    expr["holiday"] = scaled_range(
+        {p: count(p, lambda d: d["holiday"]) for p in people}, history_holiday, "holiday", people
     ) if any(gun_detaylari[c]["holiday"] for c in columns) else 0
     expr["friday"] = range_of(
         [count(p, is_friday_column) for p in people], "friday"
     ) if any(is_friday_column(gun_detaylari[c]) for c in columns) else 0
-    expr["total_history"] = range_of(
-        [totals[p] + history_total.get(p, 0) for p in free], "total_history"
+    expr["total_history"] = scaled_range(
+        totals, history_total, "total_history", free
     ) if history_total and len(free) >= 2 else 0
 
     weeks = sorted({gun_detaylari[c]["week"] for c in columns if gun_detaylari[c]["weekend"]})
@@ -305,8 +321,11 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
 
     # Öncelikli dengeler mevcut listeden kötü olamaz.
     for name in PRIMARY_METRICS:
-        model.Add(expr[name] <= before[name])
-    model.Minimize(sum(WEIGHTS[name] * expr[name] for name in WEIGHTS))
+        limit = int(round(SCALE * before[name])) if name in SCALED_METRICS else before[name]
+        model.Add(expr[name] <= limit)
+    model.Minimize(sum(
+        (WEIGHTS[name] // SCALE if name in SCALED_METRICS else WEIGHTS[name]) * expr[name] for name in WEIGHTS
+    ))
     for p in people:
         for c in columns:
             model.AddHint(x[p, c], bool(p in current.index and c in current.columns and current.at[p, c]))

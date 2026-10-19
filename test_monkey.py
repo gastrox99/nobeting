@@ -267,7 +267,6 @@ def run_round(page, rnd, seed):
         page.get_by_role("tab", name="🗂️ Tablo Görünümü").click()
 
     def act_redistribute():
-        page.get_by_role("tab", name="📊 Analiz").click()
         history.append("otomatik-dağıt")
         page.get_by_role("button", name="🤖 Görev Yerlerini Otomatik Dağıt").click()
 

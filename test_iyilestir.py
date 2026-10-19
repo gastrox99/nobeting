@@ -156,3 +156,24 @@ def test_kurala_uymayan_nobet_sayilir():
     clean.at["K0", cols[0]] = True
     assert rule_breaking_shifts(clean, names, cols, unwanted, gd, 1) == 0
     assert rule_breaking_shifts(clean, names, cols, unwanted, gd, 1, initial_last_shift={"K0": 0}) == 1
+
+
+def test_kesirli_gecmis_farki_cozucuyu_bozmaz():
+    # Canlıda "Önceki aylarla dengele" açıkken 9 kişide geçmiş farkı 2/9 gibi
+    # kesirli çıkıyordu ve çözücü "Failed to convert integer linear expression" veriyordu.
+    gd, cols, names = _month(team=9)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    history_special = n.history_special_adjustment({p: (3 if p == "K0" else 2) for p in names}, names)
+    history_total = n.history_adjustment([{p: (7 if p in ("K0", "K1") else 6) for p in names}], names)
+    history_holiday = n.history_adjustment([{p: (1 if p == "K2" else 0) for p in names}], names)
+    assert any(v != int(v) for v in history_special.values())
+    random.seed(1)
+    current, _ = n.run_scheduling_core(names, cols, unwanted, gd, 1, 2, simulation_count=10)
+    improved, before, after = improve_schedule(
+        current, names, cols, unwanted, gd, 1, 2, history_special=history_special,
+        history_total=history_total, history_holiday=history_holiday, time_limit=3,
+    )
+    result = improved if improved is not None else current
+    _check_rules(result, names, cols, gd, unwanted, 1, 2, set(), {}, set())
+    for name in PRIMARY_METRICS:
+        assert after[name] <= before[name], name
