@@ -152,7 +152,9 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
     # Kısa adlar elle yazılır: uzun adın ilk 3 harfi "Pazartesi"yi "Paz",
     # "Cumartesi"yi "Cum" yapıp Pazar ve Cuma ile karıştırıyordu.
     cal_day_names = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
-    cal_hdr = st.columns(7)
+    # Telefonda 7 sütun alt alta dizilir: başlık satırı ve ay başındaki boş
+    # kutular gizlenir, her günün kartında gün adı yazar (CSS: nobet_stil.py).
+    cal_hdr = st.container(key="cal-head").columns(7)
     for j, gn in enumerate(cal_day_names):
         with cal_hdr[j]:
             bg = ui["cal_head_we_bg"] if j >= 5 else ui["cal_head_bg"]
@@ -166,15 +168,16 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
     # ── Takvim hücreleri ──────────────────────────────────
     first_weekday = date(yil, ay, 1).weekday()
     cal_day_num = 1
+    cal_grid = st.container(key="cal-grid")
     for week in range(6):
         if cal_day_num > gun_sayisi:
             break
-        week_cols = st.columns(7)
+        week_cols = cal_grid.columns(7)
         for j in range(7):
             with week_cols[j]:
                 abs_pos = week * 7 + j
                 if abs_pos < first_weekday or cal_day_num > gun_sayisi:
-                    st.markdown("<div style='min-height:95px;'></div>", unsafe_allow_html=True)
+                    st.markdown("<div class='cal-empty' style='min-height:95px;'></div>", unsafe_allow_html=True)
                 else:
                     dn = cal_day_num
                     ck = f"{dn} {tr_gunler[date(yil, ay, dn).weekday()]}"
@@ -249,7 +252,8 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
                     st.markdown(
                         f"<div style='background:{cell_bg};border:{border};border-radius:10px;"
                         f"padding:7px;min-height:95px;opacity:{cell_opacity};overflow:hidden;'>"
-                        f"<div style='font-size:15px;font-weight:700;color:{day_c};'>{day_icon}{dn}</div>"
+                        f"<div style='font-size:15px;font-weight:700;color:{day_c};'>{day_icon}{dn}"
+                        f"<span class='cal-gun-adi'> {tr_gunler[date(yil, ay, dn).weekday()]}</span></div>"
                         f"<div style='margin-top:3px;'>{chips}{empty_msg}</div>"
                         f"{color_bar_html}"
                         f"</div>",

@@ -3491,3 +3491,19 @@ class TestIzinVeMusaitDegil(unittest.TestCase):
             _clean_hidden({"Ali": {"shifts": [], "prefs": {"3": 4}}}),
             {"Ali": {"shifts": [], "prefs": {"3": 4}}},
         )
+
+
+class TestHizliGiris(unittest.TestCase):
+    def test_gun_araligi_tek_seferde_yazilir(self):
+        from nobet_tablo import apply_quick_entry
+        gun = build_gun_detaylari(2026, 11, 30, [])
+        pref = pd.DataFrame(0, index=["Ali", "Ayşe"], columns=list(gun))
+        days, invalid = parse_holiday_days("3-9, 15", 30)
+        self.assertEqual(invalid, [])
+        self.assertEqual(apply_quick_entry(pref, "Ali", days, 3, gun), 8)
+        ali = {gun[c]["day_num"] for c in pref.columns if pref.at["Ali", c] == 3}
+        self.assertEqual(ali, {3, 4, 5, 6, 7, 8, 9, 15})
+        self.assertFalse(pref.loc["Ayşe"].any())
+        # Aynı günlere tekrar yazmak değişiklik saymaz; Nötr siler.
+        self.assertEqual(apply_quick_entry(pref, "Ali", days, 3, gun), 0)
+        self.assertEqual(apply_quick_entry(pref, "Ali", {15}, 0, gun), 1)
