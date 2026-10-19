@@ -5,7 +5,6 @@ import random
 import calendar
 import time
 import os
-import zlib
 # Streamlit Cloud yeni kodu çektiğinde db / nobet_core / arayüz modüllerinin
 # eski hâli hafızada kalabiliyor ve yeni fonksiyonlar "ImportError" veriyor.
 # Böyle olursa modülleri tazeleyip yeniden dene (Reboot gerekmesin).
@@ -19,6 +18,7 @@ import nobet_core as _core_module
 _UI_MODULES = (
     "nobet_stil", "nobet_durum", "nobet_paylasim", "nobet_disa_aktar",
     "nobet_yedek", "nobet_tablo", "nobet_takvim", "nobet_analiz",
+    "nobet_ekip",
 )
 
 
@@ -60,10 +60,9 @@ for _attempt in range(2):
             parse_forbidden_pairs,
             parse_person_limits_with_issues,
             unknown_names,
-            pair_label,
-            forbidden_pair_choices,
-            forbidden_pairs_to_text,
-            person_limits_to_text,
+            has_total_limit,
+            special_capped_people,
+            rename_in_pairs_text,
             validate_inputs,
             normalize_owner_email,
             apply_app_settings,
@@ -127,6 +126,7 @@ from nobet_yedek import render_backup_section, run_requested_snapshot
 from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
+from nobet_ekip import render_team_table, render_pair_matrix
 from streamlit_local_storage import LocalStorage
 
 # Veritabanını sunucu başına bir kez hazırla; başarısızsa sonucu kalıcı
@@ -294,25 +294,20 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
     return best_schedule
 
 # --- AYARLAR (Ana Sayfada Açılır Panel) ---
-# Check if team exists to determine if settings should be expanded
 prev_isimler = st.session_state.get('isimler_cache', [])
-settings_expanded = len(prev_isimler) == 0
+# Ekip yoksa Ayarlar açık başlar. Değer oturum boyunca sabit kalır; yoksa
+# ilk isim yazılınca panel kapanıyordu (ekip tablosu satır satır doldurulur).
+if "settings_expanded" not in st.session_state:
+    st.session_state.settings_expanded = not st.session_state.get("isimler_text", "").strip()
+settings_expanded = st.session_state.settings_expanded
 
 with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     set_col1, set_col2, set_col3 = st.columns([2, 1, 1])
     
     with set_col1:
-        # Ayar kutularının sabit bir "key"i var. Eskiden yalnızca value= ile
-        # kurulduklarından her düzenlemede kutu yeniden yaratılıyor ve art arda
-        # yapılan iki düzenlemeden ikincisi sessizce geri dönüyordu.
-        isimler_input = st.text_area(
-            "👥 Ekip (virgülle ayırın):",
-            value=st.session_state.get("isimler_text", ""),
-            key="w_isimler_text",
-            height=100,
-            placeholder="Ali, Ayşe, Mehmet, Fatma"
-        )
-        st.session_state.isimler_text = isimler_input
+        # Ekip tablosu (isim + limitler) ayarlardaki metinleri düzenler (nobet_ekip.py).
+        render_team_table()
+        isimler_input = st.session_state.get("isimler_text", "")
         _raw_isimler = [x.strip() for x in isimler_input.split(",") if x.strip()]
         # Aynı isim iki kez yazılırsa tablo çöküyordu; her ismi bir kez kullan.
         isimler = list(dict.fromkeys(_raw_isimler))
@@ -323,6 +318,9 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         _renames = detect_renames(prev_isimler, isimler)
         if _renames:
             apply_renames(_renames)
+            st.session_state.forbidden_pairs_text = rename_in_pairs_text(
+                st.session_state.get("forbidden_pairs_text", ""), prev_isimler, _renames
+            )
             st.toast("İsim değişikliği uygulandı: " + ", ".join(f"{a} → {b}" for a, b in _renames.items()), icon="✏️")
         st.session_state.isimler_cache = isimler
         
@@ -431,7 +429,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     
     # Additional settings row
     st.divider()
-    adv_col1, adv_col2, adv_col3 = st.columns(3)
+    adv_col1, adv_col2 = st.columns([1, 2])
     
     with adv_col1:
         role_names_input = st.text_input(
@@ -458,49 +456,10 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             ),
         )
     
-    # Ayarlar metin olarak saklanır; seçim kutuları o metinden kurulur. Anahtar
-    # metne bağlı olduğundan geri yükleme gibi dış değişiklikler de görünür.
     with adv_col2:
-        _fp_text = st.session_state.get("forbidden_pairs_text", "")
-        _fp_choices = forbidden_pair_choices(isimler, parse_forbidden_pairs(_fp_text, isimler))
-        _fp_selected = st.multiselect(
-            "🚫 Birlikte Çalışamayan:",
-            list(_fp_choices),
-            default=[pair_label(_pair) for _pair in parse_forbidden_pairs(_fp_text, isimler)],
-            key=f"w_forbidden_pairs_{zlib.crc32(_fp_text.encode('utf-8'))}",
-            placeholder="Aynı gün nöbet tutmayacak ikiliyi seçin",
-        )
-        _fp_new_text = forbidden_pairs_to_text(_fp_choices[_label] for _label in _fp_selected)
-        if _fp_new_text != _fp_text:
-            st.session_state.forbidden_pairs_text = _fp_new_text
-            st.rerun()
-        forbidden_input = _fp_text
-
-    with adv_col3:
+        render_pair_matrix(isimler)
+        forbidden_input = st.session_state.get("forbidden_pairs_text", "")
         limits_text = st.session_state.get("limits_text", "")
-        _lim_key = zlib.crc32(limits_text.encode("utf-8"))
-        _lim_current = parse_person_limits_with_issues(limits_text)[0]
-        _lim_people = st.multiselect(
-            "📊 Kişisel Limitler:",
-            isimler + unknown_names(_lim_current, isimler),
-            default=list(_lim_current),
-            key=f"w_limit_people_{_lim_key}",
-            placeholder="Limiti olacak kişiyi seçin",
-        )
-        _lim_new = {}
-        for _person in _lim_people:
-            # Yalnızca en fazla nöbet girilir; boş = sınırsız.
-            _old_max = _lim_current.get(_person, {}).get("max", 999)
-            _max = st.number_input(
-                f"{_person}: en fazla nöbet", min_value=0, max_value=31, step=1,
-                value=None if _old_max >= 999 else min(31, _old_max),
-                key=f"w_limit_max_{_person}_{_lim_key}", placeholder="sınırsız",
-            )
-            _lim_new[_person] = {"min": 0, "max": 999 if _max is None else int(_max)}
-        _lim_new_text = person_limits_to_text(_lim_new)
-        if _lim_new_text != limits_text:
-            st.session_state.limits_text = _lim_new_text
-            st.rerun()
 
     # Yasak çiftler ve kişisel limitler (ayrıştırma nobet_core'da, test edilir)
     forbidden_pairs = parse_forbidden_pairs(forbidden_input, isimler)
@@ -515,7 +474,8 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     # "Sınırsız" bırakılan kişi (0-999) limitli sayılmaz; yoksa aylar arası
     # toplam dengesinden ve İyileştir'in toplam dengesinden habersizce çıkıyordu.
     person_limits = {
-        _p: _v for _p, _v in person_limits.items() if _v["min"] > 0 or _v["max"] < 999
+        _p: _v for _p, _v in person_limits.items()
+        if has_total_limit(_v) or _v.get("max_special", 999) < 999
     }
     st.session_state.person_limits = person_limits
     st.session_state.lim_unknown_names = _lim_unknown
@@ -848,13 +808,19 @@ if "failed_at" in _prev_ctx:
     )
 prev_last_shift = {p: d for p, d in _prev_ctx["last_shift"].items() if p in isimler}
 _balance_history_on = st.session_state.get("balance_history", True)
+# Hafta sonu sınırı olanlar hafta sonu dengesine (geçmiş dahil) katılmaz.
+_special_capped = special_capped_people(st.session_state.get("person_limits", {}))
 history_special = (
-    history_special_adjustment(_prev_ctx["history_counts"], isimler)
+    history_special_adjustment(
+        _prev_ctx["history_counts"], [_p for _p in isimler if _p not in _special_capped]
+    )
     if _balance_history_on and _prev_ctx["months"]
     else {}
 )
 # Kişisel limiti olanların az/çok nöbeti bilinçli; toplam dengesine katılmaz.
-_limited_people = set(st.session_state.get("person_limits", {}))
+_limited_people = {
+    _p for _p, _v in st.session_state.get("person_limits", {}).items() if has_total_limit(_v)
+}
 history_total = (
     {
         _p: _v for _p, _v in history_adjustment(
@@ -1171,7 +1137,10 @@ for col, assigned in missing_shift_coverage(edited_df, sutunlar, kişi_sayısı)
 
 # Kişisel limit ihlali kontrolü
 _pl = st.session_state.get('person_limits', {})
-limit_msg = build_limit_violation_messages(edited_df, isimler, _pl)
+limit_msg = build_limit_violation_messages(
+    edited_df, isimler, _pl,
+    [c for c in sutunlar if gun_detaylari[c]["weekend"] or gun_detaylari[c]["holiday"]],
+)
 
 # Giriş doğrulama uyarıları (yasak çift / limit — bilinmeyen isimler)
 _fp_unk = st.session_state.get('fp_unknown_names', [])
@@ -1312,7 +1281,7 @@ _analysis_key = (
     schedule_fingerprint(edited_df),
     _rows_key,
     tuple(role_names),
-    tuple(sorted((person, limits.get("min", 0), limits.get("max", 999))
+    tuple(sorted((person, tuple(sorted(limits.items())))
                  for person, limits in st.session_state.get("person_limits", {}).items())),
     zorunlu_saat,
     tuple(sorted(mesai_saatleri.items())),

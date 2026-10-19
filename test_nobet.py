@@ -44,8 +44,13 @@ from nobet_core import (
     on_duty_summary,
     shared_updated_text,
     preference_summary,
-    pair_label,
-    forbidden_pair_choices,
+    compact_team_rows,
+    team_settings_rows,
+    team_settings_texts,
+    rename_in_pairs_text,
+    toggle_pair_text,
+    special_cap,
+    has_total_limit,
     forbidden_pairs_to_text,
     person_limits_to_text,
     parse_forbidden_pairs,
@@ -94,6 +99,7 @@ from nobet_core import (
 APP_FILES = (
     "nobet.py", "nobet_stil.py", "nobet_durum.py", "nobet_paylasim.py", "nobet_disa_aktar.py",
     "nobet_yedek.py", "nobet_tablo.py", "nobet_takvim.py", "nobet_analiz.py",
+    "nobet_ekip.py",
 )
 
 
@@ -2193,13 +2199,19 @@ class TestArifeMesai(unittest.TestCase):
 
 
 class TestSecmeliAyarlar(unittest.TestCase):
-    def test_ikili_secenekleri_ekipten_kurulur(self):
-        choices = forbidden_pair_choices(["Can", "Ali", "Ayşe"], {("Zeki", "Ali")})
-        self.assertEqual(choices["Ali – Can"], ("Ali", "Can"))
-        # Ekipte olmayan isimli kayıtlı ikili de listede (uyarı gösterilir).
-        self.assertIn("Ali – Zeki", choices)
-        self.assertEqual(len(choices), 4)
-        self.assertEqual(pair_label(("Can", "Ali")), "Ali – Can")
+    def test_capraz_tablo_ikiliyi_ekler_ve_cikarir(self):
+        team = ["Ali", "Ayşe", "Can"]
+        text = toggle_pair_text("", team, ("Can", "Ali"))
+        self.assertEqual(text, "Ali-Can")
+        text = toggle_pair_text(text, team, ("Ayşe", "Can"))
+        self.assertEqual(text, "Ali-Can, Ayşe-Can")
+        # Ters yönden tıklamak aynı ikiliyi kaldırır.
+        self.assertEqual(toggle_pair_text(text, team, ("Ali", "Can")), "Ayşe-Can")
+
+    def test_ad_degisikligi_ikililere_tasinir(self):
+        text = "Ali-Ayşe-Nur, Ali-Can"
+        renamed = rename_in_pairs_text(text, ["Ali", "Ayşe-Nur", "Can"], {"Ayşe-Nur": "Ayşe Nur"})
+        self.assertEqual(renamed, "Ali-Ayşe Nur, Ali-Can")
 
     def test_ikili_metni_geri_okunur(self):
         team = ["Ayşe-Nur", "Ali", "Can"]
@@ -2216,11 +2228,61 @@ class TestSecmeliAyarlar(unittest.TestCase):
         self.assertEqual(parse_person_limits_with_issues(text), (limits, [], []))
         self.assertEqual(person_limits_to_text({}), "")
 
-    def test_ayarlar_seçim_kutusuyla_girilir(self):
+    def test_limit_metni_hafta_sonu_siniriyla(self):
+        limits = {"Ali": {"min": 0, "max": 999, "max_special": 2}, "Can": {"min": 0, "max": 6}}
+        text = person_limits_to_text(limits)
+        self.assertEqual(text, "Ali:0-999:2\nCan:0-6")
+        self.assertEqual(parse_person_limits_with_issues(text), (limits, [], []))
+        self.assertEqual(special_cap(limits, "Ali"), 2)
+        self.assertEqual(special_cap(limits, "Can"), 999)
+        self.assertFalse(has_total_limit(limits["Ali"]))
+        self.assertTrue(has_total_limit(limits["Can"]))
+        # Bozuk hafta sonu değeri satırı geçersiz yapar.
+        self.assertEqual(parse_person_limits_with_issues("Ali:0-5:x")[1], ["Ali:0-5:x"])
+        self.assertEqual(len(parse_person_limits_with_issues("Ali:0-5:-1")[2]), 1)
+
+    def test_ekip_tablosu_metinlere_donusur(self):
+        rows = team_settings_rows(
+            ["Ali", "Ayşe", "Can"],
+            {"Ali": {"min": 2, "max": 8}, "Can": {"min": 0, "max": 999, "max_special": 1}},
+        )
+        self.assertEqual(rows[0], {"name": "Ali", "min": 2, "max": 8, "max_special": None})
+        self.assertEqual(rows[1], {"name": "Ayşe", "min": 0, "max": None, "max_special": None})
+        self.assertEqual(rows[2]["max_special"], 1)
+        names, limits = team_settings_texts(rows)
+        self.assertEqual(names, "Ali, Ayşe, Can")
+        self.assertEqual(limits, "Ali:2-8\nCan:0-999:1")
+
+    def test_ekip_tablosu_bos_satir_ve_silme(self):
+        rows = [
+            {"name": "Ali", "min": 0, "max": 5, "max_special": None},
+            {"name": "", "min": 0, "max": 3, "max_special": None},
+            {"name": "Can", "min": 0, "max": None, "max_special": None},
+        ]
+        compacted = compact_team_rows(rows)
+        # Adı silinen satır (limitiyle) gider, sonda tek boş satır kalır.
+        self.assertEqual([r["name"] for r in compacted], ["Ali", "Can", ""])
+        self.assertEqual(compacted[0]["max"], 5)
+        self.assertEqual(compact_team_rows([])[0]["name"], "")
+        # Virgülle yapıştırılan liste satırlara bölünür.
+        pasted = compact_team_rows([{"name": "Ali, Ayşe ,Can", "min": 0, "max": 4, "max_special": None}])
+        self.assertEqual([r["name"] for r in pasted], ["Ali", "Ayşe", "Can", ""])
+        self.assertEqual([r["max"] for r in pasted], [4, None, None, None])
+        # Virgül ismi bölmez; aynı isim tekrar yazılırsa limit ilk satırdan.
+        names, limits = team_settings_texts([
+            {"name": "Ali, Veli", "max": 4},
+            {"name": "Ali, Veli", "max": 9},
+        ])
+        self.assertEqual(names, "Ali Veli, Ali Veli")
+        self.assertEqual(limits, "Ali Veli:0-4")
+
+    def test_ayarlar_tablo_ile_girilir(self):
         source = _app_source()
         self.assertNotIn('st.text_area(\n            "🚫 Birlikte', source)
-        self.assertNotIn('st.text_area(\n            "📊 Kişisel', source)
-        self.assertIn('"🚫 Birlikte Çalışamayan:",\n            list(_fp_choices)', source)
+        self.assertNotIn('st.text_area(\n            "👥 Ekip', source)
+        self.assertNotIn('"📊 Kişisel Limitler:"', source)
+        self.assertIn("render_team_table()", source)
+        self.assertIn("render_pair_matrix(isimler)", source)
 
 
 class TestTercihOzeti(unittest.TestCase):
@@ -2544,7 +2606,7 @@ class TestAppSettingsPersistence(unittest.TestCase):
         # Ayarlar widget'lar çizilmeden önce yüklenmeli.
         self.assertLess(
             source.index("apply_app_settings(st.session_state"),
-            source.index('st.text_area(\n            "👥 Ekip'),
+            source.index("render_team_table()"),
         )
 
 

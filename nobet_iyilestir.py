@@ -2,8 +2,8 @@
 """İyileştir: mevcut çizelgeyi OR-Tools (CP-SAT) ile daha adil hâle getirir.
 
 Simülasyonun yerine geçmez; onun bulduğu listeden başlar. Kurallar
-(izin, dinlenme, günlük kişi sayısı, yasak ikili, en fazla nöbet, kilitli
-nöbetler) aynen uygulanır. Öncelikli dengeler (boş nöbet, toplam, hafta
+(izin, dinlenme, günlük kişi sayısı, yasak ikili, en fazla nöbet, en fazla
+hafta sonu, kilitli nöbetler) aynen uygulanır. Öncelikli dengeler (boş nöbet, toplam, hafta
 sonu/tatil, tatil, Cuma) mevcut listeden kötü olamaz; kişisel limiti
 olanların nöbet sayısı değişmez. Çözücü bunların
 içinde tercihleri, art arda hafta sonlarını ve nöbet aralıklarını da
@@ -13,7 +13,7 @@ import os
 
 import pandas as pd
 
-from nobet_core import is_friday_column
+from nobet_core import has_total_limit, is_friday_column, special_cap
 
 # Önem sırası (kullanıcı: hafta sonu/tatil > Cuma; toplam farkı en fazla 1 kuralı).
 PRIMARY_METRICS = ("unfilled", "min_short", "total", "special", "holiday", "friday", "total_history")
@@ -97,7 +97,9 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
         return round(max(values) - min(values), 2) if values else 0
 
     totals = {p: sum(assigned(p, c) for c in columns) for p in people}
-    free = [p for p in people if p not in person_limits]
+    free = [p for p in people if not has_total_limit(person_limits.get(p, {}))]
+    # Hafta sonu sınırı olanlar hafta sonu dengesine katılmaz (simülasyondaki gibi).
+    sp_people = [p for p in people if special_cap(person_limits, p) >= 999] or list(people)
     has_holiday = any(gun_detaylari[c]["holiday"] for c in columns)
     has_friday = any(is_friday_column(gun_detaylari[c]) for c in columns)
     weeks = sorted({gun_detaylari[c]["week"] for c in columns if gun_detaylari[c]["weekend"]})
@@ -116,7 +118,7 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
         "total": spread([totals[p] for p in free]) if len(free) >= 2 else 0,
         "special": spread([
             sum(assigned(p, c) for c in columns if _is_special(gun_detaylari[c])) + history_special.get(p, 0)
-            for p in people
+            for p in sp_people
         ]),
         "holiday": spread([
             sum(assigned(p, c) for c in columns if gun_detaylari[c]["holiday"]) + history_holiday.get(p, 0)
@@ -228,7 +230,11 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
             for second in columns[i + 1:]:
                 if days[second] - days[first] <= min_bosluk and not ((p, first) in fixed and (p, second) in fixed):
                     model.Add(x[p, first] + x[p, second] <= 1)
-        if p in person_limits:
+        sp_cap = special_cap(person_limits, p)
+        if sp_cap < 999:
+            locked_sp = sum(1 for c in columns if (p, c) in fixed and _is_special(gun_detaylari[c]))
+            model.Add(sum(x[p, c] for c in columns if _is_special(gun_detaylari[c])) <= max(sp_cap, locked_sp))
+        if has_total_limit(person_limits.get(p, {})):
             locked = sum(1 for c in columns if (p, c) in fixed)
             cap = max(person_limits[p].get("max", 999), locked)
             model.Add(sum(x[p, c] for c in columns) <= cap)
@@ -270,7 +276,8 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
             model.Add(short >= limits["min"] - totals[p])
             shorts.append(short)
     expr["min_short"] = sum(shorts)
-    free = [p for p in people if p not in person_limits]
+    free = [p for p in people if not has_total_limit(person_limits.get(p, {}))]
+    sp_people = [p for p in people if special_cap(person_limits, p) >= 999] or list(people)
     expr["total"] = range_of([totals[p] for p in free], "total") if len(free) >= 2 else 0
 
     def count(p, test):
@@ -283,7 +290,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
             terms_name, bound=1000 * SCALE,
         )
 
-    expr["special"] = scaled_range({p: count(p, _is_special) for p in people}, history_special, "special", people)
+    expr["special"] = scaled_range({p: count(p, _is_special) for p in people}, history_special, "special", sp_people)
     expr["holiday"] = scaled_range(
         {p: count(p, lambda d: d["holiday"]) for p in people}, history_holiday, "holiday", people
     ) if any(gun_detaylari[c]["holiday"] for c in columns) else 0

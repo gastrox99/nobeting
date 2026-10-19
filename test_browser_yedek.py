@@ -108,9 +108,10 @@ def _open_app(playwright, app_url, team):
     page.goto(app_url)
     page.get_by_text("⚙️ Ayarlar").wait_for()
     _wait_idle(page)
-    box = page.get_by_role("textbox", name="👥 Ekip (virgülle ayırın):")
+    box = page.get_by_role("textbox", name="1. kişi", exact=True)
     if not box.is_visible():
         page.get_by_text("⚙️ Ayarlar").click()
+    # Virgüllü liste ekip tablosunda satırlara bölünür.
     box.fill(team)
     box.press("Tab")
     page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
