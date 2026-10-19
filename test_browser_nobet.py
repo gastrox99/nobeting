@@ -113,9 +113,7 @@ def test_manual_assignment_updates_visible_total_without_simulation(app_url):
             )
             page = context.new_page()
             page.goto(app_url)
-            team = page.get_by_role("textbox", name="👥 Ekip (virgülle ayırın):")
-            team.fill(f"{PERSON}, Browser Test Ayşe")
-            team.press("Tab")
+            _set_team(page, f"{PERSON}, Browser Test Ayşe")
             # Streamlit hides the native radio input; click its visible label.
             page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
 
@@ -155,10 +153,40 @@ def _settings_box(page, role, name):
     return box
 
 
+def _team_box(page, row):
+    return page.get_by_role("textbox", name=f"{row}. kişi", exact=True)
+
+
+def _team_values(page):
+    _settings_box(page, "textbox", "1. kişi")
+    values = []
+    while _team_box(page, len(values) + 1).count():
+        values.append(_team_box(page, len(values) + 1).input_value())
+    return [v for v in values if v]
+
+
 def _set_team(page, team):
-    box = _settings_box(page, "textbox", "👥 Ekip (virgülle ayırın):")
-    box.fill(team)
-    box.press("Tab")
+    """Ekip tablosunu verilen listeye getirir: boşsa virgüllü liste son satıra
+    yapıştırılır, doluysa satırlar tek tek düzeltilir, fazla satırlar silinir."""
+    names = [n.strip() for n in team.split(",") if n.strip()]
+    current = _team_values(page)
+    if not current:
+        box = _team_box(page, 1)
+        box.fill(team)
+        box.press("Tab")
+        _wait_idle(page, 1.5)
+        return
+    for i, name in enumerate(names, start=1):
+        box = _team_box(page, i)
+        if box.input_value() != name:
+            box.fill(name)
+            box.press("Tab")
+            _wait_idle(page, 1.5)
+    while _team_box(page, len(names) + 1).count() and _team_box(page, len(names) + 1).input_value():
+        box = _team_box(page, len(names) + 1)
+        box.fill("")
+        box.press("Tab")
+        _wait_idle(page, 1.5)
 
 
 def _no_exception(page):
@@ -345,7 +373,7 @@ def test_ayar_kutulari_art_arda_duzenlenebilir(app_url):
             for team in ("Kutu 1, Kutu 2", "Kutu 1, Kutu 2, Kutu 3", "Kutu 1"):
                 _set_team(page, team)
                 _wait_idle(page)
-                assert _settings_box(page, "textbox", "👥 Ekip (virgülle ayırın):").input_value() == team
+                assert ", ".join(_team_values(page)) == team
             for roles in ("A, B", "C, D"):
                 box = _settings_box(page, "textbox", "🏷️ Görev İsimleri:")
                 box.fill(roles)
@@ -357,27 +385,49 @@ def test_ayar_kutulari_art_arda_duzenlenebilir(app_url):
             browser.close()
 
 
-def test_yasak_ikili_ve_kisisel_limit_listeden_secilir(app_url):
+def _pair_checkbox(page, first, second):
+    box = page.get_by_role("checkbox", name=f"{first} ile {second}", exact=True)
+    return box, page.locator("[data-testid='stCheckbox']").filter(has=box).first.locator("label")
+
+
+def test_yasak_ikili_capraz_tablodan_ve_limit_ekip_tablosundan_girilir(app_url):
     with sync_playwright() as playwright:
         browser, page = _open_app(playwright, app_url, "Ayar Ali, Ayar Ayşe, Ayar Can, Ayar Deniz")
         try:
-            pairs = _settings_box(page, "combobox", "🚫 Birlikte Çalışamayan:")
-            pairs.click()
-            page.get_by_role("option", name="Ayar Ali – Ayar Ayşe").click()
-            _wait_idle(page)
-            people = _settings_box(page, "combobox", "📊 Kişisel Limitler:")
-            people.click()
-            page.get_by_role("option", name="Ayar Can").click()
-            _wait_idle(page)
-            most = _settings_box(page, "spinbutton", "Ayar Can: en fazla nöbet")
+            _settings_box(page, "textbox", "1. kişi")
+            box, label = _pair_checkbox(page, "Ayar Ali", "Ayar Ayşe")
+            label.click()
+            _wait_idle(page, 1.5)
+            # Çapraz tablonun öbür yarısı da işaretlenir; tekrar tıklayınca kalkar.
+            expect(_pair_checkbox(page, "Ayar Ayşe", "Ayar Ali")[0]).to_be_checked()
+            _pair_checkbox(page, "Ayar Can", "Ayar Deniz")[1].click()
+            _wait_idle(page, 1.5)
+            _pair_checkbox(page, "Ayar Deniz", "Ayar Can")[1].click()
+            _wait_idle(page, 1.5)
+            expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz")[0]).not_to_be_checked()
+            expect(_pair_checkbox(page, "Ayar Ali", "Ayar Ayşe")[0]).to_be_checked()
+
+            most = page.get_by_role("spinbutton", name="3. kişi en fazla nöbet", exact=True)
             assert most.input_value() == ""
             most.fill("2")
             most.press("Tab")
-            _wait_idle(page)
-            # En az alanı yok; seçim yeniden çizimden sonra yerinde kalır.
-            expect(page.get_by_role("spinbutton", name="Ayar Can: en az")).to_have_count(0)
-            assert _settings_box(page, "spinbutton", "Ayar Can: en fazla nöbet").input_value() == "2"
-            expect(page.get_by_text("Ayar Ali – Ayar Ayşe")).to_be_visible()
+            _wait_idle(page, 1.5)
+            weekend = page.get_by_role("spinbutton", name="3. kişi en fazla hafta sonu", exact=True)
+            weekend.fill("0")
+            weekend.press("Tab")
+            _wait_idle(page, 1.5)
+            assert page.get_by_role("spinbutton", name="3. kişi en fazla nöbet", exact=True).input_value() == "2"
+            assert weekend.input_value() == "0"
+            # Son satır boş durur; isim yazılınca altına yeni satır açılır.
+            _team_box(page, 5).fill("Ayar Ece")
+            _team_box(page, 5).press("Tab")
+            _wait_idle(page, 1.5)
+            expect(_team_box(page, 6)).to_have_value("")
+            # İsim değiştirmek limitleri ve yasak ikiliyi de taşır.
+            _team_box(page, 1).fill("Ayar Alican")
+            _team_box(page, 1).press("Tab")
+            _wait_idle(page, 1.5)
+            expect(_pair_checkbox(page, "Ayar Alican", "Ayar Ayşe")[0]).to_be_checked()
             page.get_by_role("button", name="⚡ Simülasyon").click()
             _wait_idle(page)
             _no_exception(page)

@@ -108,11 +108,31 @@ def grid(page):
 
 
 def ensure_settings(page, role, name):
-    box = page.get_by_role(role, name=name)
+    box = page.get_by_role(role, name=name, exact=True)
     if not box.is_visible():
         page.get_by_text("⚙️ Ayarlar", exact=True).click()
         box.wait_for(timeout=5000)
     return box
+
+
+def team_box(page, row):
+    return page.get_by_role("textbox", name=f"{row}. kişi", exact=True)
+
+
+def set_team(page, names):
+    """Ekip tablosunu listeye getirir: satırları düzeltir, fazlasını siler."""
+    ensure_settings(page, "textbox", "1. kişi")
+    for i, name in enumerate(names, start=1):
+        box = team_box(page, i)
+        if box.input_value() != name:
+            box.fill(name)
+            box.press("Tab")
+            wait_idle(page)
+    while team_box(page, len(names) + 1).count() and team_box(page, len(names) + 1).input_value():
+        box = team_box(page, len(names) + 1)
+        box.fill("")
+        box.press("Tab")
+        wait_idle(page)
 
 
 def share_text(page):
@@ -198,7 +218,7 @@ def run_round(page, rnd, seed):
     history = []
     team = ["Ali", "Ayşe", "Can", "Deniz", "Ece", "Fatih"]
     per_shift = 2
-    box = ensure_settings(page, "textbox", "👥 Ekip (virgülle ayırın):")
+    box = ensure_settings(page, "textbox", "1. kişi")
     box.fill(", ".join(team))
     box.press("Tab")
     wait_idle(page)
@@ -285,9 +305,7 @@ def run_round(page, rnd, seed):
             rnd.shuffle(new)
         new = list(dict.fromkeys(new))
         history.append(f"ekip-{choice}({', '.join(new)})")
-        box = ensure_settings(page, "textbox", "👥 Ekip (virgülle ayırın):")
-        box.fill(", ".join(new))
-        box.press("Tab")
+        set_team(page, new)
         team = new
 
     def act_text(label, values, tag):
@@ -304,41 +322,28 @@ def run_round(page, rnd, seed):
     def act_roles():
         act_text("🏷️ Görev İsimleri:", ["", "AYB, GYB", "AYB, AYB", "Tarih", "A, B, C"], "görev")
 
-    def toggle_choice(label, wanted, tag):
-        """Seçim kutusunda bir seçeneği ekler; seçiliyse çarpısıyla kaldırır."""
-        box = ensure_settings(page, "combobox", label)
-        history.append(f"{tag}={wanted!r}")
-        container = page.locator("[data-testid='stMultiSelect']").filter(has=box)
-        chip = container.locator("[data-baseweb='tag']").filter(has_text=wanted)
-        if chip.count():
-            chip.first.get_by_role("button").last.click()
-            return
-        box.click()
-        option = page.get_by_role("option", name=wanted, exact=True)
-        if option.count():
-            option.first.click()
-        else:
-            page.keyboard.press("Escape")
-
     def act_limits():
         names = [n for n in team if n]
         if not names:
             return
-        person = rnd.choice(names[:2])
-        toggle_choice("📊 Kişisel Limitler:", person, "limit")
-        _wait = page.get_by_role("spinbutton", name=f"{person}: en fazla nöbet")
-        if _wait.count() and _wait.first.is_visible():
-            value = rnd.choice(["", "2", "4", "8"])
-            history.append(f"limit_en_fazla={value!r}")
-            _wait.first.fill(value)
-            _wait.first.press("Tab")
+        row = rnd.randrange(min(2, len(names))) + 1
+        kind = rnd.choice(["en fazla nöbet", "en fazla hafta sonu"])
+        box = ensure_settings(page, "spinbutton", f"{row}. kişi {kind}")
+        value = rnd.choice(["", "1", "2", "4", "8"])
+        history.append(f"limit({names[row - 1]},{kind})={value!r}")
+        box.fill(value)
+        box.press("Tab")
 
     def act_pairs():
-        names = sorted(n for n in team[:4] if n)
+        names = [n for n in team[:4] if n]
         if len(names) < 2:
             return
         first, second = rnd.sample(names, 2)
-        toggle_choice("🚫 Birlikte Çalışamayan:", " – ".join(sorted((first, second))), "yasak")
+        history.append(f"yasak={first!r}-{second!r}")
+        ensure_settings(page, "textbox", "1. kişi")
+        box = page.get_by_role("checkbox", name=f"{first} ile {second}", exact=True)
+        if box.count():
+            page.locator("[data-testid='stCheckbox']").filter(has=box).first.locator("label").click()
 
     def act_month():
         box = ensure_settings(page, "combobox", "📆 Ay")
@@ -350,7 +355,7 @@ def run_round(page, rnd, seed):
 
     def act_people_per_shift():
         nonlocal per_shift
-        ensure_settings(page, "textbox", "👥 Ekip (virgülle ayırın):")
+        ensure_settings(page, "textbox", "1. kişi")
         slider = page.get_by_role("slider").first
         key = rnd.choice(["ArrowRight", "ArrowLeft"])
         slider.focus()

@@ -481,6 +481,16 @@ def explain_missing_day(schedule, col, gun_detaylari, df_unwanted_bool, min_bosl
         if int(schedule.loc[person].sum()) >= max_limit:
             groups["limit"].append(f"{person} (en fazla {max_limit})")
             continue
+        sp_cap = special_cap(limits, person)
+        if sp_cap < 999 and _is_special_day(gun_detaylari[col]):
+            sp_count = sum(
+                1 for other in schedule.columns
+                if other in gun_detaylari and _is_special_day(gun_detaylari[other])
+                and bool(schedule.at[person, other])
+            )
+            if sp_count >= sp_cap:
+                groups["limit"].append(f"{person} (en fazla {sp_cap} hafta sonu)")
+                continue
         mates = [m for m in assigned if tuple(sorted((person, m))) in (forbidden_pairs or [])]
         if mates:
             groups["forbidden"].append(f"{person} ({', '.join(mates)} ile)")
@@ -613,6 +623,15 @@ def assignment_warnings(
     total = int(schedule.loc[person].sum())
     if max_limit < 999 and total > max_limit:
         warnings.append(f"{person}: toplam {total} nöbet, en fazla {max_limit} olmalı.")
+    sp_cap = special_cap(person_limits, person)
+    if sp_cap < 999 and _is_special_day(day_details[column]):
+        sp_total = sum(
+            1 for other in columns
+            if other in schedule.columns and _is_special_day(day_details[other])
+            and bool(schedule.at[person, other])
+        )
+        if sp_total > sp_cap:
+            warnings.append(f"{person}: {sp_total} hafta sonu/tatil nöbeti, en fazla {sp_cap} olmalı.")
 
     if (
         preferences is not None
@@ -944,9 +963,14 @@ def find_person_role(rows_liste, role_names, day_index, person):
     )
 
 
-def build_limit_violation_messages(schedule, names, person_limits):
-    """Return the user-facing messages for personal shift-limit violations."""
+def build_limit_violation_messages(schedule, names, person_limits, special_columns=None):
+    """Return the user-facing messages for personal shift-limit violations.
+
+    ``special_columns`` (hafta sonu/tatil sütunları) verilirse hafta sonu
+    sınırı da denetlenir.
+    """
     messages = []
+    special_columns = [c for c in (special_columns or ()) if c in schedule.columns]
     for name in names:
         limits = person_limits.get(name, {})
         min_limit = limits.get("min", 0)
@@ -960,6 +984,13 @@ def build_limit_violation_messages(schedule, names, person_limits):
             messages.append(
                 f"🔺 **{name}**: Max {max_limit} nöbet aşıldı, şu an {total} atanmış."
             )
+        sp_cap = limits.get("max_special", 999)
+        if sp_cap < 999 and special_columns:
+            sp_total = int(schedule.loc[name, special_columns].sum())
+            if sp_total > sp_cap:
+                messages.append(
+                    f"🔺 **{name}**: En fazla {sp_cap} hafta sonu/tatil nöbeti, şu an {sp_total} atanmış."
+                )
     return messages
 
 
@@ -1437,6 +1468,10 @@ def build_schedule_analysis(
             limit_text = f"≤{max_limit}"
         else:
             limit_text = "-"
+        sp_cap = limits.get("max_special", 999)
+        special_count = int(special_totals.get(isim, 0))
+        if sp_cap < 999:
+            limit_text = (f"{limit_text} · " if limit_text != "-" else "") + f"HS≤{sp_cap}"
 
         stats_load.append({
             "İsim": isim,
@@ -1446,7 +1481,7 @@ def build_schedule_analysis(
             "Tatil": int(holiday_totals.get(isim, 0)),
             **{role: all_role_counts[role].get(isim, 0) for role in role_names},
             "Limit": limit_text,
-            "✓": "🟢" if min_limit <= toplam <= max_limit else "🔴",
+            "✓": "🟢" if min_limit <= toplam <= max_limit and special_count <= sp_cap else "🔴",
         })
         stats_finance.append({
             "İsim": isim,
@@ -1561,9 +1596,10 @@ def parse_forbidden_pairs(forbidden_input, team=None):
 def parse_person_limits_with_issues(limits_text):
     """Kişisel limitleri ayrıştırır: (limitler, hatalı_satırlar, hata_mesajları).
 
-    "İsim:min-max" biçimindeki her satırı okur. Biçimi bozuk satırlar ile
-    negatif / min > max değerler atlanır ve kullanıcıya gösterilmek üzere
-    ayrıca döndürülür.
+    "İsim:min-max" ya da "İsim:min-max:hs" biçimindeki her satırı okur; "hs"
+    en fazla hafta sonu/tatil nöbetidir (``max_special``, yoksa sınırsız).
+    Biçimi bozuk satırlar ile negatif / min > max değerler atlanır ve
+    kullanıcıya gösterilmek üzere ayrıca döndürülür.
     """
     person_limits = {}
     invalid_lines = []
@@ -1576,6 +1612,7 @@ def parse_person_limits_with_issues(limits_text):
             continue
         name_part, separator, range_part = line.partition(':')
         name = name_part.strip()
+        range_part, special_sep, special_part = range_part.strip().partition(':')
         range_part = range_part.strip()
         if not separator or not name or '-' not in range_part:
             invalid_lines.append(line)
@@ -1585,10 +1622,11 @@ def parse_person_limits_with_issues(limits_text):
             min_str, max_str = range_part.rsplit('-', 1)
             min_val = int(min_str)
             max_val = int(max_str)
+            special_val = int(special_part) if special_sep else None
         except ValueError:
             invalid_lines.append(line)
             continue
-        if min_val < 0 or max_val < 0:
+        if min_val < 0 or max_val < 0 or (special_val is not None and special_val < 0):
             errors.append(f"**{name}**: negatif değer ({range_part}) — atlandı")
         elif min_val > max_val:
             errors.append(f"**{name}**: min ({min_val}) > max ({max_val}) — atlandı")
@@ -1598,6 +1636,8 @@ def parse_person_limits_with_issues(limits_text):
                     f"**{name}** birden fazla satırda — son satır ({min_val}-{max_val}) kullanılıyor"
                 )
             person_limits[name] = {'min': min_val, 'max': max_val}
+            if special_val is not None and special_val < 999:
+                person_limits[name]['max_special'] = special_val
     return person_limits, invalid_lines, errors
 
 
@@ -1606,28 +1646,119 @@ def parse_person_limits(limits_text):
     return parse_person_limits_with_issues(limits_text)[0]
 
 
-def pair_label(pair):
-    """Seçim listesinde ikilinin adı: "Ali – Ayşe"."""
-    first, second = sorted(pair)
-    return f"{first} – {second}"
-
-
-def forbidden_pair_choices(team, current_pairs):
-    """Ayarlardaki seçim listesi: {etiket: ikili}. Ekipten olası bütün ikililer
-    ve kayıtlı olup ekipte olmayan isimli ikililer (uyarı gösterilsin diye)."""
-    pairs = {tuple(sorted(pair)) for pair in _combinations(sorted(set(team)), 2)}
-    pairs |= {tuple(sorted(pair)) for pair in current_pairs}
-    return {pair_label(pair): pair for pair in sorted(pairs)}
-
-
 def forbidden_pairs_to_text(pairs):
     """İkilileri ayarlarda saklanan metne çevirir: "Ali-Ayşe, Can-Ece"."""
     return ", ".join(f"{a}-{b}" for a, b in sorted(tuple(sorted(pair)) for pair in pairs))
 
 
 def person_limits_to_text(limits):
-    """Kişisel limitleri saklanan metne çevirir: "Ali:3-8" satırları (999 = sınırsız)."""
-    return "\n".join(f"{name}:{value['min']}-{value['max']}" for name, value in limits.items())
+    """Kişisel limitleri saklanan metne çevirir: "Ali:3-8" ya da hafta sonu
+    sınırı varsa "Ali:0-8:2" satırları (999 = sınırsız)."""
+    lines = []
+    for name, value in limits.items():
+        line = f"{name}:{value['min']}-{value['max']}"
+        if value.get('max_special', 999) < 999:
+            line += f":{value['max_special']}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def special_cap(person_limits, person):
+    """Kişinin bu ay en fazla hafta sonu/tatil nöbeti (999 = sınırsız)."""
+    return (person_limits or {}).get(person, {}).get("max_special", 999)
+
+
+def has_total_limit(limits):
+    """Toplam nöbet limiti (en az / en fazla) var mı? Yalnız hafta sonu sınırı sayılmaz."""
+    return limits.get("min", 0) > 0 or limits.get("max", 999) < 999
+
+
+def special_capped_people(person_limits):
+    """Hafta sonu/tatil sınırı olan kişiler; bu kişiler hafta sonu dengesine katılmaz."""
+    return {p for p, v in (person_limits or {}).items() if v.get("max_special", 999) < 999}
+
+
+def team_settings_rows(names, limits):
+    """Ayarlardaki ekip tablosunun satırları: [{"name", "max", "max_special", "min"}].
+
+    Sınırsız değerler None olur. ``min`` görünmez; eski kayıtlardaki
+    "en az" değeri kaybolmasın diye taşınır.
+    """
+    rows = []
+    for name in names:
+        value = (limits or {}).get(name, {})
+        rows.append({
+            "name": name,
+            "min": value.get("min", 0),
+            "max": None if value.get("max", 999) >= 999 else value["max"],
+            "max_special": None if value.get("max_special", 999) >= 999 else value["max_special"],
+        })
+    return rows
+
+
+def compact_team_rows(rows):
+    """Ekip tablosunu düzenler: adı silinen satırlar çıkar, sonda hep bir boş satır kalır.
+
+    Virgülle yazılan (ya da yapıştırılan) "Ali, Ayşe" ayrı satırlara bölünür;
+    satırdaki limitler ilk isimde kalır.
+    """
+    kept = []
+    for row in rows:
+        names = [part.strip() for part in str(row.get("name") or "").split(",") if part.strip()]
+        for i, name in enumerate(names):
+            if i == 0:
+                kept.append(dict(row, name=name))
+            else:
+                kept.append({"name": name, "min": 0, "max": None, "max_special": None})
+    kept.append({"name": "", "min": 0, "max": None, "max_special": None})
+    return kept
+
+
+def team_settings_texts(rows):
+    """Ekip tablosu satırlarını saklanan metinlere çevirir: (ekip_metni, limit_metni).
+
+    Adı boş satırlar atlanır; virgül adı bölmesin diye boşluğa çevrilir.
+    Aynı ad iki kez yazılırsa limiti ilk satırdan alınır.
+    """
+    names = []
+    limits = {}
+    for row in rows:
+        name = " ".join(str(row.get("name") or "").replace(",", " ").split())
+        if not name:
+            continue
+        names.append(name)
+        if name in limits:
+            continue
+        value = {
+            "min": int(row.get("min") or 0),
+            "max": 999 if row.get("max") is None else int(row["max"]),
+        }
+        if row.get("max_special") is not None:
+            value["max_special"] = int(row["max_special"])
+        if has_total_limit(value) or value.get("max_special", 999) < 999:
+            limits[name] = value
+    return ", ".join(names), person_limits_to_text(limits)
+
+
+def rename_in_pairs_text(text, old_team, renames):
+    """Yasak ikili metnindeki isimleri yeni adlarına çevirir."""
+    if not text or not renames:
+        return text
+    pairs = parse_forbidden_pairs(text, old_team)
+    return forbidden_pairs_to_text(
+        tuple(renames.get(name, name) for name in pair) for pair in pairs
+    )
+
+
+def toggle_pair_text(text, team, pair):
+    """Çapraz tablodan tıklanan ikiliyi yasak listesine ekler ya da çıkarır."""
+    pairs = set(parse_forbidden_pairs(text, team))
+    key = tuple(sorted(pair))
+    if key in pairs:
+        pairs.discard(key)
+    else:
+        pairs.add(key)
+    return forbidden_pairs_to_text(pairs)
 
 
 def unknown_names(names, team):
@@ -1682,7 +1813,7 @@ def _balance_holidays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
 
 def _balance_specials(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                       df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
-                      initial_last_shift, history_special, max_moves=200):
+                      initial_last_shift, history_special, max_moves=200, capped=None):
     """Hafta sonu/tatil sayılarındaki farkı (önceki aylar dahil) takasla azaltır.
 
     Simülasyon seçimi hafta sonu dengesini aya yayma ve bayram takibiyle
@@ -1691,7 +1822,9 @@ def _balance_specials(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
     hafta içi nöbetiyle yer değiştirir. Toplam ve Cuma sayıları değişmez.
     Önce art arda hafta sonu oluşturmayan takaslar denenir; fark yine 2 ya
     da daha fazla kalırsa denge önce gelir (art arda hafta sonu olabilir).
+    Hafta sonu sınırı olan kişiler (``capped``) bu takaslara katılmaz.
     """
+    isimler = [p for p in isimler if p not in (capped or ())]
     special_cols = [c for c in sutunlar if gun_detaylari[c]["weekend"] or gun_detaylari[c]["holiday"]]
     weekday_cols = [
         c for c in sutunlar
@@ -1880,6 +2013,10 @@ def _fill_open_days(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
         max_limit = limits.get(person, {}).get("max")
         if max_limit is not None and int(schedule.loc[person].sum()) >= max_limit:
             return False
+        if special(col) and sum(
+            1 for c in sutunlar if special(c) and bool(schedule.at[person, c])
+        ) >= special_cap(limits, person):
+            return False
         return True
 
     for col in sutunlar:
@@ -1896,6 +2033,11 @@ def _fill_open_days(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
             ))
             schedule.at[best, col] = True
     return schedule
+
+
+def _is_special_day(info):
+    """Hafta sonu ya da tatil günü mü?"""
+    return bool(info.get("weekend") or info.get("holiday"))
 
 
 def is_friday_column(info):
@@ -2012,6 +2154,7 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
             p: sum(1 for c in special_cols if bool(schedule.at[p, c])) + history.get(p, 0)
             for p in isimler
         }
+        month_specials = {p: sum(1 for c in special_cols if bool(schedule.at[p, c])) for p in isimler}
         fridays = {p: sum(1 for c in friday_cols if bool(schedule.at[p, c])) for p in isimler}
         holidays = {
             p: sum(1 for c in holiday_cols if bool(schedule.at[p, c])) + history_holiday.get(p, 0)
@@ -2042,6 +2185,8 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                     if gap == 1 and pref(giver, col) == 1:
                         continue
                     if col in special_cols and specials[giver] <= specials[receiver]:
+                        continue
+                    if col in special_cols and month_specials[receiver] >= special_cap(limits, receiver):
                         continue
                     if col in friday_cols and fridays[giver] <= fridays[receiver]:
                         continue
@@ -2119,10 +2264,17 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
     ideal_gap = len(isimler) / max(1, kisi_sayisi)
     fixed_by_col = {}
     fixed_days = {}
+    fixed_special = {}
     for person, column in (fixed_assignments or ()):
         if person in isimler and column in gun_detaylari:
             fixed_by_col.setdefault(column, []).append(person)
             fixed_days.setdefault(person, set()).add(gun_detaylari[column]["day_num"])
+            if _is_special_day(gun_detaylari[column]):
+                fixed_special[person] = fixed_special.get(person, 0) + 1
+    # Hafta sonu sınırı olanlar sınıra kadar alır; hafta sonu dengesine katılmaz.
+    sp_caps = {p: special_cap(person_limits, p) for p in isimler}
+    capped = {p for p in isimler if sp_caps[p] < 999}
+    balanced = [p for p in isimler if p not in capped] or list(isimler)
     for column in fixed_by_col:
         fixed_by_col[column].sort(key=isimler.index)
     if isinstance(simulation_count, bool) or not isinstance(simulation_count, Integral) or simulation_count <= 0:
@@ -2148,6 +2300,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             {col: [False] * len(isimler) for col in sutunlar}, index=isimler
         )
         future_fixed = {i: len(fixed_days.get(i, ())) for i in isimler}
+        future_fixed_special = {i: fixed_special.get(i, 0) for i in isimler}
 
         def get_decision_score(p, is_sp, col, is_friday=False, is_holiday=False, day=None):
             total = stat_total[p] + history_total.get(p, 0) + (random.random() * 0.5)
@@ -2203,6 +2356,8 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             sabitler = fixed_by_col.get(col, [])
             for k in sabitler:
                 future_fixed[k] -= 1
+                if is_sp:
+                    future_fixed_special[k] -= 1
             needed = max(0, kisi_sayisi - len(sabitler))
 
             adaylar = []
@@ -2221,6 +2376,9 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                     # Kalan sabit nöbetleri için yer bırak.
                     if stat_total[k] + future_fixed[k] >= max_limit:
                         continue
+                # Hafta sonu sınırı: kalan sabit hafta sonları için de yer bırak.
+                if is_sp and stat_special[k] + future_fixed_special[k] >= sp_caps[k]:
+                    continue
                 if forbidden_pairs and any(
                     tuple(sorted((k, f))) in forbidden_pairs for f in sabitler
                 ):
@@ -2262,7 +2420,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                     limit_violations += 1
 
         totals = list(stat_total.values())
-        specials = [stat_special[i] + history_special.get(i, 0) for i in isimler]
+        specials = [stat_special[i] + history_special.get(i, 0) for i in balanced]
         consecutive_weekends = sum(stat_consecutive_weekend.values())
         std_dev_total = np.std(totals)
         std_dev_special = np.std(specials)
@@ -2303,7 +2461,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
             df_preferred, min_bosluk, forbidden_pairs,
             {(p, c) for c, people in fixed_by_col.items() for p in people},
-            initial_last_shift, history_special,
+            initial_last_shift, history_special, capped=capped,
         )
         best_schedule = _balance_fridays(
             best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
