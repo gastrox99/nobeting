@@ -188,6 +188,55 @@ GLOBAL_CSS = """
     }
 }
 
+/* Üstteki ay çubuğu: ‹ Kasım 2026 › telefonda da tek satır. */
+.st-key-month-bar [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+    align-items: center;
+}
+.st-key-month-bar :is([data-testid="column"],[data-testid="stColumn"]) {
+    min-width: 0 !important;
+    width: auto !important;
+}
+.st-key-month-bar :is([data-testid="column"],[data-testid="stColumn"]):is(:first-child, :last-child) {
+    flex: 0 0 56px !important;
+}
+.st-key-month-bar :is([data-testid="column"],[data-testid="stColumn"]):nth-child(2) {
+    flex: 1 1 auto !important;
+}
+.st-key-month-bar .stButton > button { font-size: 1.5rem; line-height: 1; min-height: 44px; }
+.month-bar-title {
+    text-align: center;
+    font-size: 1.75rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+@media (max-width: 768px) {
+    .month-bar-title { font-size: 1.4rem; }
+}
+
+/* Dosya yükleme kutusunun hazır İngilizce yazıları Türkçe. */
+[data-testid="stFileUploaderDropzoneInstructions"] > div > span:first-child { font-size: 0; }
+[data-testid="stFileUploaderDropzoneInstructions"] > div > span:first-child::after {
+    content: "Dosyayı buraya sürükleyin";
+    font-size: 0.875rem;
+}
+[data-testid="stFileUploaderDropzoneInstructions"] > div > span:nth-child(2) { display: none; }
+[data-testid="stFileUploaderDropzone"] [data-testid="stBaseButton-secondary"] { font-size: 0; }
+[data-testid="stFileUploaderDropzone"] [data-testid="stBaseButton-secondary"]::after {
+    content: "Dosya seç";
+    font-size: 0.875rem;
+}
+
+/* Takvim: geniş ekranda gün adı başlık satırında; telefonda sütunlar alt alta
+   dizildiği için başlık ve boş kutular gizlenir, gün adı kartta yazar. */
+.cal-gun-adi { display: none; font-weight: 600; }
+@media (max-width: 640px) {
+    .st-key-cal-head { display: none !important; }
+    .st-key-cal-grid :is([data-testid="column"],[data-testid="stColumn"]):has(.cal-empty) { display: none !important; }
+    .cal-gun-adi { display: inline; }
+}
+
 </style>
 """
 
@@ -253,6 +302,23 @@ def grid_css(ui, name_col_px, col_bg_css):
     background: {ui['name_bg']} !important;
     border-right: 2px solid {ui['name_border']};
     min-width: 80px;
+}}
+/* Yana kaydırınca isim sütunu solda sabit kalır (telefonda satırın kime ait
+   olduğu görünsün); hücrelerin üzerinde durması için opak zemin ve üst katman. */
+.st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1),
+.st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
+    position: sticky;
+    left: 0;
+    z-index: 30;
+    /* Satır boyu kaplasın (hücreler isimden uzun); soldaki kenar boşluğu da örtülsün. */
+    align-self: stretch !important;
+    display: flex;
+    align-items: center;
+    box-shadow: -16px 0 0 {ui['name_bg']};
+}}
+/* Başlık satırında gün adları satırın altına taşar; isim başlığı onları da örter. */
+:is(.st-key-schedule-grid, .st-key-preference-grid) [data-testid="stHorizontalBlock"]:has(.grid-head) > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
+    box-shadow: -16px 0 0 {ui['name_bg']}, -16px 18px 0 {ui['name_bg']}, 0 18px 0 {ui['name_bg']};
 }}
 /* Ayın tüm günleri tek satırda kalsın; sığmazsa tablo yana kayar
    (eskiden son günler alt satıra geniş şeritler olarak düşüyordu). */

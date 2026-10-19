@@ -151,23 +151,19 @@ def render_pair_matrix(isimler):
             st.caption(f"Ekip {PAIR_MATRIX_MAX_PEOPLE} kişiden büyük olduğu için tablo yerine liste kullanılıyor.")
         return
     shown = state.get("_yasak_shown", set())
+    # Tablo simetrik olduğu için her ikili bir kez (üst üçgende) gösterilir.
+    _ikililer = [(a, b) for i, a in enumerate(isimler) for b in isimler[i + 1:]]
     # Son çizimden bu yana tıklanan kutuyu bul ve metne uygula.
-    for a in isimler:
-        for b in isimler:
-            key = _pair_key(a, b)
-            if a != b and key in state and bool(state[key]) != (tuple(sorted((a, b))) in shown):
-                text = toggle_pair_text(text, isimler, (a, b))
-                break
-        else:
-            continue
-        break
+    for a, b in _ikililer:
+        key = _pair_key(a, b)
+        if key in state and bool(state[key]) != (tuple(sorted((a, b))) in shown):
+            text = toggle_pair_text(text, isimler, (a, b))
+            break
     if text != state.get("forbidden_pairs_text", ""):
         state.forbidden_pairs_text = text
     pairs = parse_forbidden_pairs(text, isimler)
-    for a in isimler:
-        for b in isimler:
-            if a != b:
-                state[_pair_key(a, b)] = tuple(sorted((a, b))) in pairs
+    for a, b in _ikililer:
+        state[_pair_key(a, b)] = tuple(sorted((a, b))) in pairs
     state["_yasak_shown"] = {pair for pair in pairs}
 
     with st.container(key="yasak-tablo"):
@@ -175,22 +171,24 @@ def render_pair_matrix(isimler):
         if len(isimler) < 2:
             st.caption("Ekipte en az iki kişi olunca burada işaretlenebilir.")
         else:
-            widths = [3] + [1] * len(isimler)
+            # Satırlar ilk kişiden sondan bir öncekine, sütunlar ikinciden sona.
+            _sutun_kisiler = isimler[1:]
+            widths = [3] + [1] * len(_sutun_kisiler)
             head = st.columns(widths, gap=None, vertical_alignment="bottom")
-            for j, b in enumerate(isimler):
+            for j, b in enumerate(_sutun_kisiler):
                 head[j + 1].markdown(
                     f"<div class='yasak-baslik' title='{escape_html(b)}'>{escape_html(b)}</div>",
                     unsafe_allow_html=True,
                 )
-            for a in isimler:
+            for i, a in enumerate(isimler[:-1]):
                 cols = st.columns(widths, gap=None, vertical_alignment="center")
                 cols[0].markdown(
                     f"<div class='yasak-isim' title='{escape_html(a)}'>{escape_html(a)}</div>",
                     unsafe_allow_html=True,
                 )
-                for j, b in enumerate(isimler):
-                    if a == b:
-                        cols[j + 1].markdown("<div class='yasak-kendi'>·</div>", unsafe_allow_html=True)
+                for j, b in enumerate(_sutun_kisiler):
+                    if j < i:
+                        cols[j + 1].markdown("<div class='yasak-kendi'></div>", unsafe_allow_html=True)
                     else:
                         cols[j + 1].checkbox(f"{a} ile {b}", key=_pair_key(a, b), label_visibility="collapsed")
             st.caption("İşaretlenen ikili aynı gün nöbet tutmaz.")

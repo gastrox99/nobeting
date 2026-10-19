@@ -12,6 +12,7 @@ from nobet_core import (
     get_preference_grid_state,
     name_column_width,
     normalize_preference_grid,
+    parse_holiday_days,
     redo_history_state,
     undo_history_state,
     update_locked_cells,
@@ -89,10 +90,20 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                 st.rerun()
 
     if st.session_state.get("reset_pending", False):
-        st.warning("⚠️ Çizelge ve tüm tercihler silinecek. Devam etmek istediğinizden emin misiniz?")
-        _reset_cols = st.columns(2)
+        # Çoğu zaman istenen, izinler kalırken nöbetleri yeniden dağıtmaktır.
+        st.warning("⚠️ Neyi silmek istiyorsunuz? Geri ile geri alınabilir.")
+        _reset_cols = st.columns(3)
         with _reset_cols[0]:
-            if st.button("🗑️ Evet, çizelgeyi sıfırla", type="primary", width="stretch"):
+            if st.button("🧹 Yalnız nöbetleri sil", type="primary", width="stretch"):
+                save_undo_state()
+                st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+                st.session_state.locked_cells = set()
+                st.session_state.cached_rows_liste = None
+                st.session_state.should_regenerate_assignments = True
+                st.session_state.reset_pending = False
+                st.rerun()
+        with _reset_cols[1]:
+            if st.button("🗑️ Tercih ve izinleri de sil", width="stretch"):
                 save_undo_state()
                 st.session_state.pref_df = pd.DataFrame(0, index=isimler, columns=sutunlar)
                 st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -102,10 +113,13 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.reset_pending = False
                 st.rerun()
-        with _reset_cols[1]:
+        with _reset_cols[2]:
             if st.button("Vazgeç", width="stretch"):
                 st.session_state.reset_pending = False
                 st.rerun()
+
+    if st.session_state.edit_mode == "tercih":
+        _render_quick_entry(isimler, sutunlar, gun_detaylari)
 
     # Dynamic column background CSS
     col_bg_css_parts = []
@@ -147,7 +161,7 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
     def _draw_day_header():
         header_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
         with header_cols[0]:
-            st.markdown(f"<div style='font-size:13px;font-weight:700;color:{ui['muted']};padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='grid-head' style='font-size:13px;font-weight:700;color:{ui['muted']};padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
         for i, col in enumerate(sutunlar):
             with header_cols[i + 1]:
                 day_num = gun_detaylari[col]['day_num']
@@ -322,3 +336,57 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
     )
 
     st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
+
+
+# Hızlı giriş türleri: tablodaki boya düğmeleriyle aynı kodlar.
+QUICK_ENTRY_TYPES = {"İzin": 3, "Müsait Değil": 4, "Tercih": 1, "Kaçın": 2, "Nötr (sil)": 0}
+
+
+def apply_quick_entry(pref_df, person, days, value, gun_detaylari):
+    """Kişinin verilen günlerine tercih kodunu yazar; değişen gün sayısını döner."""
+    _by_day = {gun_detaylari[_c]["day_num"]: _c for _c in pref_df.columns if _c in gun_detaylari}
+    _changed = 0
+    for _day in sorted(days):
+        _col = _by_day.get(_day)
+        if _col is not None and int(pref_df.at[person, _col]) != value:
+            pref_df.at[person, _col] = value
+            _changed += 1
+    return _changed
+
+
+def _render_quick_entry(isimler, sutunlar, gun_detaylari):
+    """Kişi + gün aralığı ile tek seferde izin/tercih girişi (hücre hücre boyamaya ek)."""
+    _notice = st.session_state.pop("quick_entry_notice", None)
+    with st.expander("⚡ Hızlı giriş: kişi + günler", expanded=bool(_notice)):
+        if _notice:
+            getattr(st, _notice[0])(_notice[1])
+        # Form: yazarken sayfa yeniden çizilmez, yalnızca Uygula'da işlenir.
+        with st.form("quick_entry_form", border=False):
+            _cols = st.columns([2, 2, 2, 1], vertical_alignment="bottom")
+            _person = _cols[0].selectbox("Kişi", isimler, key="quick_entry_person")
+            _days_text = _cols[1].text_input("Günler", placeholder="3-9, 15", key="quick_entry_days")
+            _kind = _cols[2].selectbox("Tür", list(QUICK_ENTRY_TYPES), key="quick_entry_kind")
+            _submitted = _cols[3].form_submit_button("Uygula", type="primary", width="stretch")
+        if not _submitted:
+            return
+        _days, _invalid = parse_holiday_days(_days_text, len(sutunlar))
+        if _invalid:
+            st.session_state.quick_entry_notice = (
+                "warning",
+                f"⚠️ Şu günler anlaşılmadı: {', '.join(_invalid)}. Günleri 1-{len(sutunlar)} "
+                "arasında tek gün (5) ya da aralık (3-9) olarak yazın; hiçbir şey değişmedi.",
+            )
+            st.rerun()
+        if not _days or _person not in st.session_state.pref_df.index:
+            st.session_state.quick_entry_notice = ("info", "Gün yazılmadı; hiçbir şey değişmedi.")
+            st.rerun()
+        save_undo_state()
+        _changed = apply_quick_entry(
+            st.session_state.pref_df, _person, _days, QUICK_ENTRY_TYPES[_kind], gun_detaylari,
+        )
+        st.session_state.quick_entry_notice = (
+            "success",
+            f"✅ {_person}: {_changed} gün {_kind.replace(' (sil)', '')} olarak işaretlendi. "
+            "Beğenmezseniz ↩️ Geri ile alabilirsiniz.",
+        )
+        st.rerun()

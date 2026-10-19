@@ -1596,31 +1596,32 @@ def build_schedule_analysis(
         if min_limit > 0 and max_limit < 999:
             limit_text = f"{min_limit}-{max_limit}"
         elif min_limit > 0:
-            limit_text = f"≥{min_limit}"
+            limit_text = f"≥{min_limit} nöbet"
         elif max_limit < 999:
-            limit_text = f"≤{max_limit}"
+            limit_text = f"≤{max_limit} nöbet"
         else:
             limit_text = "-"
         sp_cap = limits.get("max_special", 999)
         special_count = int(special_totals.get(isim, 0))
         if sp_cap < 999:
-            limit_text = (f"{limit_text} · " if limit_text != "-" else "") + f"HS≤{sp_cap}"
+            limit_text = (f"{limit_text} · " if limit_text != "-" else "") + f"≤{sp_cap} hafta sonu"
 
         stats_load.append({
             "İsim": isim,
             "Toplam": toplam,
-            "Özel": int(special_totals.get(isim, 0)),
+            # Hafta sonu sütunu tatil günlerini de sayar (ekip tablosundaki sınır gibi).
+            "Hafta sonu": int(special_totals.get(isim, 0)),
             "Cuma": int(friday_totals.get(isim, 0)),
             "Tatil": int(holiday_totals.get(isim, 0)),
             **{role: all_role_counts[role].get(isim, 0) for role in role_names},
             "Limit": limit_text,
-            "✓": "🟢" if min_limit <= toplam <= max_limit and special_count <= sp_cap else "🔴",
+            "Uygun": "🟢" if min_limit <= toplam <= max_limit and special_count <= sp_cap else "🔴",
         })
         stats_finance.append({
             "İsim": isim,
-            "Nöbet": int(saat),
-            "Mesai": int(mesai),
-            "FM": int(fm_saat),
+            "Nöbet saati": int(saat),
+            "Zorunlu mesai": int(mesai),
+            "Fazla mesai": int(fm_saat),
             "Ücret (TL)": round(ucret, 2),
         })
 
