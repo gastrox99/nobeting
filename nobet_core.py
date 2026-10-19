@@ -1474,6 +1474,7 @@ def build_schedule_analysis(
     nobet_ucreti,
     mesai_saatleri=None,
     tatil_artirimi=0.0,
+    gece_artirimi=0.0,
 ):
     """Çizelge görünümünde kullanılan saf analiz tablolarını üretir.
 
@@ -1505,7 +1506,8 @@ def build_schedule_analysis(
         toplam = int(totals.get(isim, 0))
         mesai = mesai_saatleri.get(isim, zorunlu_saat)
         saat, fm_saat, ucret = nobet_ucreti_hesapla(
-            toplam, int(holiday_totals.get(isim, 0)), mesai, nobet_ucreti, tatil_artirimi
+            toplam, int(holiday_totals.get(isim, 0)), mesai, nobet_ucreti, tatil_artirimi,
+            gece_artirimi,
         )
         limits = person_limits.get(isim, {})
         min_limit = limits.get("min", 0)
@@ -3393,6 +3395,8 @@ MEMUR_AYLIK_KATSAYI = {
 }
 DAMGA_VERGISI = 0.00759
 GECE_ARTIRIMI = 1.10
+# Gece farkı: fazla mesaiye denk gelen gece saatlerine gündüz ücretinin %10'u.
+GECE_FARKI = 0.10
 RISKLI_BIRIM_ARTIRIMI = 1.50
 # Resmi ve dini bayram (tatil) günlerinde tutulan nöbet %25 fazla ödenir.
 TATIL_ARTIRIMI = 0.25
@@ -3424,7 +3428,9 @@ def unvan_saat_ucreti(unvan, yil, ay, riskli=False):
     """Ünvanın o ayki nöbet saat ücretleri (net, TL).
 
     Döner: {"gunduz", "gece", "saatlik", "donem", "tam"}; "saatlik", 24
-    saatlik nöbetin gündüz ve gece saatlerinin ağırlıklı ortalamasıdır.
+    saatlik nöbetin gündüz ve gece saatlerinin ağırlıklı ortalamasıdır
+    (bilgi amaçlı; ücret gündüz ücreti + fazla mesaiyle sınırlı gece farkıyla
+    hesaplanır, bkz. ``nobet_ucreti_hesapla``).
     Bilinmeyen ünvanda None.
     """
     gosterge = NOBET_UNVANLARI.get(unvan)
@@ -3441,17 +3447,23 @@ def unvan_saat_ucreti(unvan, yil, ay, riskli=False):
     return {"gunduz": gunduz, "gece": gece, "saatlik": saatlik, "donem": donem, "tam": tam}
 
 
-def nobet_ucreti_hesapla(toplam_nobet, tatil_nobet, zorunlu_saat, saat_ucreti, tatil_artirimi=0.0):
+def nobet_ucreti_hesapla(toplam_nobet, tatil_nobet, zorunlu_saat, saat_ucreti, tatil_artirimi=0.0,
+                         gece_artirimi=0.0):
     """(nöbet saati, fazla mesai saati, ücret) döner.
 
+    Yalnızca zorunlu mesaiyi aşan saatler (fazla mesai) ödenir; ``saat_ucreti``
+    gündüz saat ücretidir. Her nöbetin 12 saati gecedir ve gece farkı
+    (``gece_artirimi``) en fazla fazla mesai saati kadar saate uygulanır:
+    120 saat gece, 72 saat fazla mesai varsa 72 saat gece ücreti alınır.
     Tatil günleri zorunlu mesaiye girmediğinden tatil nöbetinin saatleri
     hep ücretli fazla mesaidir; bu saatler (fazla mesaiyi aşmadan)
     ``tatil_artirimi`` kadar fazla ödenir.
     """
     saat = toplam_nobet * 24
     fm_saat = max(0, saat - zorunlu_saat)
+    gece_saat = min(toplam_nobet * NOBET_GECE_SAAT, fm_saat)
     tatil_saat = min(tatil_nobet * 24, fm_saat)
-    ucret = fm_saat * saat_ucreti + tatil_saat * saat_ucreti * tatil_artirimi
+    ucret = saat_ucreti * (fm_saat + gece_saat * gece_artirimi + tatil_saat * tatil_artirimi)
     return saat, fm_saat, ucret
 
 

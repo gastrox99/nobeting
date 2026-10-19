@@ -83,6 +83,7 @@ for _attempt in range(2):
             unvan_saat_ucreti,
             donem_adi,
             TATIL_ARTIRIMI,
+            GECE_FARKI,
             religious_holidays_known,
             active_locks,
             locks_to_json,
@@ -424,8 +425,10 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         )
         st.session_state.unvan_val = unvan
         _rate_info = None
-        # Tatil (bayram) nöbetlerinin %25 fazlası yalnızca ünvan seçiliyken eklenir.
+        # Tatil (bayram) nöbetlerinin %25 fazlası ve gece farkı (%10) yalnızca
+        # ünvan seçiliyken eklenir; saat ücreti o zaman gündüz ücretidir.
         tatil_artirimi = TATIL_ARTIRIMI if unvan != ELLE_UNVAN else 0.0
+        gece_artirimi = GECE_FARKI if unvan != ELLE_UNVAN else 0.0
         if unvan != ELLE_UNVAN:
             riskli = st.checkbox(
                 "Riskli birim (%50 artırımlı)",
@@ -435,11 +438,12 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             )
             st.session_state.riskli_birim_val = riskli
             _rate_info = unvan_saat_ucreti(unvan, yil, ay, riskli)
-            _rate_source = f"{unvan}|{_rate_info['donem'][0]}-{_rate_info['donem'][1]}|{int(riskli)}"
+            # "|g": ücret artık gündüz ücreti; eski kayıtlardaki ortalama yenilenir.
+            _rate_source = f"{unvan}|{_rate_info['donem'][0]}-{_rate_info['donem'][1]}|{int(riskli)}|g"
             if st.session_state.get("nobet_ucreti_kaynak") != _rate_source:
                 st.session_state.nobet_ucreti_kaynak = _rate_source
-                st.session_state.nobet_ucreti_val = _rate_info["saatlik"]
-                st.session_state["w_nobet_ucreti_val"] = float(_rate_info["saatlik"])
+                st.session_state.nobet_ucreti_val = _rate_info["gunduz"]
+                st.session_state["w_nobet_ucreti_val"] = float(_rate_info["gunduz"])
         else:
             st.session_state.nobet_ucreti_kaynak = None
         if "w_nobet_ucreti_val" not in st.session_state:
@@ -448,14 +452,16 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         st.session_state.nobet_ucreti_val = nobet_ucreti
         if _rate_info:
             _rate_note = (
-                f"Gündüz {_rate_info['gunduz']:.2f} TL × 12 sa + gece (20-08, %10) "
-                f"{_rate_info['gece']:.2f} TL × 12 sa → {_rate_info['saatlik']:.2f} TL/sa · "
+                f"Gündüz {_rate_info['gunduz']:.2f} TL/sa, gece (20-08, %10) "
+                f"{_rate_info['gece']:.2f} TL/sa · "
                 f"{donem_adi(_rate_info['donem'])} katsayısı, damga vergisi düşülmüş. "
-                "Tatil günü nöbetleri %25 fazla hesaplanır."
+                "Yalnız fazla mesai ödenir: gece ücreti, ayın gece saati ile fazla mesai "
+                "saatinden küçük olanına (her nöbet 12 sa gece), kalan fazla mesaiye "
+                "gündüz ücreti. Tatil günü nöbetleri %25 fazla hesaplanır."
             )
             if not _rate_info["tam"]:
                 _rate_note += " Bu dönemin katsayısı henüz eklenmedi, son bilinen kullanıldı."
-            if abs(nobet_ucreti - _rate_info["saatlik"]) > 0.005:
+            if abs(nobet_ucreti - _rate_info["gunduz"]) > 0.005:
                 _rate_note += " Ücret elle değiştirildi."
             st.caption(_rate_note)
     
@@ -973,7 +979,7 @@ with tab_grid:
 with tab_cal:
     render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, tatil_gunleri,
                         today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, nobet_ucreti,
-                        tatil_artirimi)
+                        tatil_artirimi, gece_artirimi)
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -1414,6 +1420,7 @@ _analysis_key = (
     tuple(sorted(mesai_saatleri.items())),
     nobet_ucreti,
     tatil_artirimi,
+    gece_artirimi,
     tuple((column, gun_detaylari[column]["weekend"], gun_detaylari[column]["holiday"]) for column in sutunlar),
 )
 if (
@@ -1431,6 +1438,7 @@ if (
         nobet_ucreti,
         mesai_saatleri,
         tatil_artirimi,
+        gece_artirimi,
     )
     st.session_state.cached_analysis_key = _analysis_key
 

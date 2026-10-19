@@ -2515,6 +2515,23 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         # Ünvan seçilmemişse artırım yok.
         self.assertEqual(nobet_ucreti_hesapla(8, 1, 160, 100.0)[2], 3200.0)
 
+    def test_gece_farki_fazla_mesai_saatiyle_sinirli(self):
+        # 10 nöbet = 240 saat, 120 saati gece; 168 saat mesai -> 72 saat
+        # fazla mesai. Gece farkı 120 değil 72 saate uygulanır.
+        saat, fm, ucret = nobet_ucreti_hesapla(10, 0, 168, 100.0, 0.25, 0.10)
+        self.assertEqual((saat, fm), (240, 72))
+        self.assertAlmostEqual(ucret, 72 * 110.0)
+        # Gece saati fazla mesaiden azsa yalnız gece saatleri farklı ödenir:
+        # 12 nöbet = 288 saat, 144 gece; 120 saat mesai -> 168 fm.
+        self.assertAlmostEqual(nobet_ucreti_hesapla(12, 0, 120, 100.0, 0.25, 0.10)[2],
+                               144 * 110.0 + 24 * 100.0)
+        # Fazla mesai yoksa ücret yok; elle ücrette gece farkı yok.
+        self.assertEqual(nobet_ucreti_hesapla(6, 0, 160, 100.0, 0.25, 0.10)[2], 0)
+        self.assertEqual(nobet_ucreti_hesapla(10, 0, 168, 100.0)[2], 7200.0)
+        # Tatil artırımı gündüz ücreti üzerinden aynen eklenir.
+        self.assertAlmostEqual(nobet_ucreti_hesapla(10, 1, 168, 100.0, 0.25, 0.10)[2],
+                               72 * 110.0 + 24 * 25.0)
+
     def test_unvan_ayari_saklanir_gecersizi_atlanir(self):
         state = {"unvan_val": "Pratisyen Tabip", "riskli_birim_val": True,
                  "nobet_ucreti_kaynak": "Pratisyen Tabip|2026-2|1"}
