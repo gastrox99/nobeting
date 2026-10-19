@@ -92,6 +92,71 @@ GLOBAL_CSS = """
         min-width: 45% !important;
     }
 }
+/* Ayarlar: ekip tablosu ve birlikte çalışamayanlar çapraz tablosu.
+   Satırlar dar ekranda da yan yana kalır; çapraz tablo yana kayar. */
+[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stHorizontalBlock"],
+[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: 6px;
+}
+[data-testid="stExpander"] .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]) {
+    min-width: 0 !important;
+    flex-basis: auto !important;
+}
+[data-testid="stExpander"] .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+    flex: 3 1 0 !important;
+}
+[data-testid="stExpander"] .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]):not(:first-child) {
+    flex: 2 1 0 !important;
+}
+[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stVerticalBlock"] { gap: 4px; }
+[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stNumberInputStepDown"],
+[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stNumberInputStepUp"] { display: none; }
+[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stCaptionContainer"] { line-height: 1.2; }
+[data-testid="stExpander"] .st-key-yasak-tablo {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stVerticalBlock"] { gap: 0; }
+[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stHorizontalBlock"] {
+    min-width: max-content;
+    gap: 0;
+}
+[data-testid="stExpander"] .st-key-yasak-tablo :is([data-testid="column"],[data-testid="stColumn"]) {
+    flex: 0 0 34px !important;
+    width: 34px !important;
+    min-width: 34px !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+[data-testid="stExpander"] .st-key-yasak-tablo :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+    flex: 0 0 110px !important;
+    width: 110px !important;
+    min-width: 110px !important;
+    justify-content: flex-start;
+}
+[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stCheckbox"] { margin: 0 auto; min-height: 0; }
+[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stCheckbox"] label { margin: 0; padding: 0; }
+.yasak-baslik {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    max-height: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 12px;
+    margin: 0 auto;
+}
+.yasak-isim {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 106px;
+}
+.yasak-kendi { opacity: 0.35; text-align: center; }
+
 </style>
 """
 

@@ -177,3 +177,51 @@ def test_kesirli_gecmis_farki_cozucuyu_bozmaz():
     _check_rules(result, names, cols, gd, unwanted, 1, 2, set(), {}, set())
     for name in PRIMARY_METRICS:
         assert after[name] <= before[name], name
+
+
+def _special_count(schedule, person, cols, gd):
+    return sum(1 for c in cols if schedule.at[person, c] and (gd[c]["weekend"] or gd[c]["holiday"]))
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_hafta_sonu_siniri_simulasyon_ve_iyilestirde_asilmaz(seed):
+    gd, cols, names = _month(team=9)
+    rng = random.Random(seed)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    for p in names:
+        for c in rng.sample(cols, 3):
+            unwanted.at[p, c] = True
+    limits = {"K0": {"min": 0, "max": 999, "max_special": 1}, "K1": {"min": 0, "max": 999, "max_special": 0}}
+    random.seed(seed)
+    current, _ = n.run_scheduling_core(names, cols, unwanted, gd, 1, 2, person_limits=limits,
+                                       simulation_count=20)
+    assert _special_count(current, "K0", cols, gd) <= 1
+    assert _special_count(current, "K1", cols, gd) == 0
+    # Yalnız hafta sonu sınırı olan kişi toplam dengesinde kalır.
+    totals = current.sum(axis=1)
+    assert totals.max() - totals.min() <= 1
+    assert current.sum().min() == 2  # boş gün yok
+    improved, _, _ = improve_schedule(current, names, cols, unwanted, gd, 1, 2, person_limits=limits,
+                                      time_limit=3)
+    result = improved if improved is not None else current
+    assert _special_count(result, "K0", cols, gd) <= 1
+    assert _special_count(result, "K1", cols, gd) == 0
+    others = [_special_count(result, p, cols, gd) for p in names if p not in limits]
+    assert max(others) - min(others) <= 1
+
+
+def test_hafta_sonu_siniri_uyari_ve_neden():
+    gd, cols, names = _month(team=3)
+    weekend = [c for c in cols if gd[c]["weekend"]]
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    schedule.at["K0", weekend[0]] = True
+    schedule.at["K0", weekend[2]] = True
+    limits = {"K0": {"min": 0, "max": 999, "max_special": 1}}
+    messages = n.build_limit_violation_messages(schedule, names, limits, weekend)
+    assert messages and "hafta sonu" in messages[0]
+    warnings = n.assignment_warnings(schedule, "K0", weekend[2], cols, gd, 0, limits)
+    assert any("hafta sonu" in w for w in warnings)
+    schedule.at["K0", weekend[2]] = False
+    reasons = dict(n.explain_missing_day(schedule, weekend[4], gd,
+                                         pd.DataFrame(False, index=names, columns=cols), 0, limits))
+    assert any("K0" in r for r in reasons.get("nöbet limitinde", []))
