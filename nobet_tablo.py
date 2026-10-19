@@ -45,7 +45,7 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
             ]
             if 'paint_color' not in st.session_state:
                 st.session_state.paint_color = 0
-            color_cols = st.columns(len(color_info))
+            color_cols = st.container(key="paint-palette").columns(len(color_info))
             for i, (val, label) in enumerate(color_info):
                 with color_cols[i]:
                     btn_type = "primary" if st.session_state.paint_color == val else "secondary"
@@ -56,7 +56,9 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
             st.info("Tıklayarak nöbet ekle/kaldır. Elle atadığın nöbetler (sarı çerçeve) simülasyonda korunur.")
 
     # Quick actions row
-    action_cols = st.columns(5)
+    # Simülasyon/İyileştir geniş, Sıfırla/Geri/İleri dar; telefonda iki satıra
+    # sığar (CSS: .st-key-grid-actions).
+    action_cols = st.container(key="grid-actions").columns([2, 2, 1, 1, 1])
     with action_cols[0]:
         if st.button("⚡ Simülasyon", type="primary", width="stretch"):
             st.session_state.run_simulation = True
@@ -293,11 +295,13 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
     def _legend_item(_state, _label):
         if _state.get("soft"):
             _bg, _fg, _border = _soft_style[_state["key"]]
+        elif _state["key"] == "assigned_neutral":
+            _bg, _fg, _border = ui["assigned_bg"], ui["assigned_text"], "none"
         else:
             _bg, _fg, _border = _state["color"], "#ffffff", "none"
         return (
             f"<span style='display:inline-flex;align-items:center;gap:6px;margin:2px 12px 2px 0;'>"
-            f"<span class='preference-legend-swatch' style='background:{_bg};color:{_fg} !important;border:{_border};'>"
+            f"<span class='preference-legend-swatch swatch-{_state['key']}' style='background:{_bg};color:{_fg} !important;border:{_border};'>"
             f"{_state['symbol']}</span>"
             f"<span style='color:{ui['legend_text']};font-size:12px;'>{_label}</span></span>"
         )

@@ -147,7 +147,9 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
             )
 
     # ── Takvim başlık satırı (Pzt → Paz) ─────────────────
-    cal_day_names = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+    # Kısa adlar elle yazılır: uzun adın ilk 3 harfi "Pazartesi"yi "Paz",
+    # "Cumartesi"yi "Cum" yapıp Pazar ve Cuma ile karıştırıyordu.
+    cal_day_names = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
     cal_hdr = st.columns(7)
     for j, gn in enumerate(cal_day_names):
         with cal_hdr[j]:
@@ -155,7 +157,7 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
             tc = ui["weekend_text"] if j >= 5 else ui["day_text"]
             st.markdown(
                 f"<div style='text-align:center;background:{bg};border-radius:8px;padding:6px 2px;"
-                f"font-size:12px;font-weight:700;color:{tc};'>{gn[:3]}</div>",
+                f"font-size:12px;font-weight:700;color:{tc};'>{gn}</div>",
                 unsafe_allow_html=True
             )
 
