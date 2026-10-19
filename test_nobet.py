@@ -17,6 +17,7 @@ from nobet_core import (
     NOBET_UNVANLARI,
     katsayi_donemi,
     nobet_ucreti_hesapla,
+    saat_ucretleri,
     unvan_saat_ucreti,
     parse_holiday_days,
     validate_inputs,
@@ -2477,50 +2478,109 @@ class TestGoogleLoginSupport(unittest.TestCase):
 
 
 class TestUnvanSaatUcreti(unittest.TestCase):
-    def test_yayimlanan_tablolarla_ortusur(self):
-        # Ocak-Haziran 2026 net saat ücretleri (sendika tablosu).
-        beklenen = {"Uzman Tabip": 220.37, "Pratisyen Tabip": 199.71,
-                    "Hemşire / Ebe (yüksek öğrenim)": 137.73, "Sağlık Personeli (lise)": 117.07}
+    # 2026 Temmuz-Aralık resmi tablo (net, TL): normal, gece, riskli, riskli
+    # gece, bayram, bayram gece, bayram riskli, bayram riskli gece.
+    TABLO_2026_2 = {
+        "Eğitim Görevlisi": (250.17, 275.19, 375.25, 412.78, 312.71, 343.98, 469.07, 515.97),
+        "Uzman Tabip": (250.17, 275.19, 375.25, 412.78, 312.71, 343.98, 469.07, 515.97),
+        "Tabip": (226.72, 249.39, 340.07, 374.08, 283.39, 311.73, 425.09, 467.60),
+        "Tıpta uzmanlık tüzüğüne göre": (226.72, 249.39, 340.07, 374.08, 283.39, 311.73, 425.09, 467.60),
+        "Diş Tabibi ve Eczacılar": (203.28, 223.59, 304.89, 335.38, 254.08, 279.49, 381.12, 419.23),
+        "Sağlık Personeli (Lisans-Önlisans)": (156.36, 171.99, 234.55, 257.99, 195.44, 214.99, 293.17, 322.48),
+        "Sağlık Personeli (Lise)": (132.90, 146.19, 199.35, 219.29, 166.13, 182.74, 249.19, 274.11),
+        "Diğer Personel": (101.63, 111.78, 152.46, 167.68, 127.04, 139.74, 190.65, 209.61),
+        "4/B Sağlık Personeli (Lisans-Önlisans)": (134.30, 147.73, 201.45, 221.59, 167.87, 184.66, 251.81, 276.99),
+        "4/B Sağlık Personeli (Lise)": (114.15, 125.57, 171.25, 188.35, 142.69, 156.96, 214.04, 235.44),
+        "4/B Diğer Personel": (87.28, 96.02, 130.84, 144.03, 109.12, 120.03, 163.58, 180.04),
+    }
+
+    def test_2026_temmuz_tablosuyla_kurusu_kurusuna_ayni(self):
+        self.assertEqual(set(NOBET_UNVANLARI), set(self.TABLO_2026_2))
+        for unvan, t in self.TABLO_2026_2.items():
+            for riskli, beklenen in ((False, t[0:2] + t[4:6]), (True, t[2:4] + t[6:8])):
+                info = unvan_saat_ucreti(unvan, 2026, 10, riskli)
+                got = (info["gunduz"], info["gece"], info["tatil"], info["tatil_gece"])
+                self.assertEqual(got, beklenen, (unvan, riskli))
+
+    def test_formul_tabloya_yakin(self):
+        # Tablosu olmayan dönemde kullanılan formül tabloya 10 kuruşa kadar yakın
+        # (tablonun kendi yuvarlamaları ve 4/B karşılığı yüzünden tam değil).
+        from nobet_core import NOBET_UCRET_TABLOSU
+        saved = NOBET_UCRET_TABLOSU.pop((2026, 2))
+        try:
+            for unvan, t in self.TABLO_2026_2.items():
+                for riskli, beklenen in ((False, t[0:2] + t[4:6]), (True, t[2:4] + t[6:8])):
+                    info = unvan_saat_ucreti(unvan, 2026, 10, riskli)
+                    got = (info["gunduz"], info["gece"], info["tatil"], info["tatil_gece"])
+                    for g, e in zip(got, beklenen):
+                        self.assertAlmostEqual(g, e, delta=0.1, msg=(unvan, riskli))
+        finally:
+            NOBET_UCRET_TABLOSU[(2026, 2)] = saved
+
+    def test_ocak_haziran_sendika_tablosu(self):
+        beklenen = {"Uzman Tabip": 220.37, "Tabip": 199.71,
+                    "Sağlık Personeli (Lisans-Önlisans)": 137.73, "Sağlık Personeli (Lise)": 117.07}
         for unvan, tutar in beklenen.items():
             self.assertAlmostEqual(unvan_saat_ucreti(unvan, 2026, 3)["gunduz"], tutar, delta=0.02)
-        # Temmuz-Aralık 2026: pratisyen gündüz 226,71, gece 249,39.
-        pratisyen = unvan_saat_ucreti("Pratisyen Tabip", 2026, 10)
-        self.assertAlmostEqual(pratisyen["gunduz"], 226.71, delta=0.02)
-        self.assertAlmostEqual(pratisyen["gece"], 249.39, delta=0.02)
-
-    def test_saatlik_gunduz_ve_gece_ortalamasi(self):
-        for unvan in NOBET_UNVANLARI:
-            info = unvan_saat_ucreti(unvan, 2026, 10)
-            self.assertAlmostEqual(info["saatlik"], (info["gunduz"] + info["gece"]) / 2, delta=0.01)
-            self.assertGreater(info["gece"], info["gunduz"])
-
-    def test_riskli_birim_yuzde_elli(self):
-        normal = unvan_saat_ucreti("Uzman Tabip", 2026, 10)
-        riskli = unvan_saat_ucreti("Uzman Tabip", 2026, 10, riskli=True)
-        self.assertAlmostEqual(riskli["gunduz"], normal["gunduz"] * 1.5, delta=0.02)
 
     def test_bilinmeyen_donem_son_katsayiyi_kullanir(self):
         self.assertEqual(katsayi_donemi(2026, 7), ((2026, 2), True))
         self.assertEqual(katsayi_donemi(2027, 1), ((2026, 2), False))
         self.assertEqual(katsayi_donemi(2025, 12), ((2026, 1), False))
         self.assertIsNone(unvan_saat_ucreti("Profesör", 2026, 10))
+        # Tablo yalnız kendi döneminde; 2027'de formül (son katsayı) kullanılır.
+        self.assertFalse(unvan_saat_ucreti("Tabip", 2027, 3)["tam"])
 
-    def test_tatil_nobeti_yuzde_yirmi_bes_fazla(self):
-        # 8 nöbet = 192 saat, 160 saat mesai düşülür: 32 saat fazla mesai.
-        self.assertEqual(nobet_ucreti_hesapla(8, 0, 160, 100.0, 0.25), (192, 32, 3200.0))
-        # 1 tatil nöbeti: 24 saati %25 fazla -> 32*100 + 24*25.
-        self.assertEqual(nobet_ucreti_hesapla(8, 1, 160, 100.0, 0.25)[2], 3800.0)
-        # Tatil saati fazla mesaiyi aşamaz.
-        self.assertEqual(nobet_ucreti_hesapla(7, 2, 160, 100.0, 0.25)[2], 800.0 + 200.0)
-        # Ünvan seçilmemişse artırım yok.
-        self.assertEqual(nobet_ucreti_hesapla(8, 1, 160, 100.0)[2], 3200.0)
+    UCRET = {"gunduz": 100.0, "gece": 110.0, "tatil": 125.0, "tatil_gece": 137.5}
+
+    def test_gece_ucreti_fazla_mesai_saatiyle_sinirli(self):
+        # 10 nöbet = 240 saat, 120 saati gece; 168 saat mesai -> 72 saat
+        # fazla mesai. Gece ücreti 120 değil 72 saate ödenir.
+        saat, fm, ucret = nobet_ucreti_hesapla(10, 0, 168, self.UCRET)
+        self.assertEqual((saat, fm), (240, 72))
+        self.assertAlmostEqual(ucret, 72 * 110.0)
+        # Gece saati fazla mesaiden azsa kalan fazla mesai gündüz ücretiyle:
+        # 12 nöbet = 288 saat, 144 gece; 120 saat mesai -> 168 fm.
+        self.assertAlmostEqual(nobet_ucreti_hesapla(12, 0, 120, self.UCRET)[2], 144 * 110.0 + 24 * 100.0)
+        # Fazla mesai yoksa ücret yok; tek sayı verilince her saat aynı ücret.
+        self.assertEqual(nobet_ucreti_hesapla(6, 0, 160, self.UCRET)[2], 0)
+        self.assertEqual(nobet_ucreti_hesapla(10, 1, 168, 100.0)[2], 7200.0)
+
+    def test_bayram_nobeti_bayram_ucretiyle(self):
+        # 8 nöbet, 1'i bayram; 160 saat mesai -> 32 fm. Bayramın 24 saati
+        # (12 gündüz, 12 gece) fm'ye girer; kalan 8 saat gece ücretiyle.
+        self.assertAlmostEqual(nobet_ucreti_hesapla(8, 1, 160, self.UCRET)[2],
+                               12 * 125.0 + 12 * 137.5 + 8 * 110.0)
+        # Bayram saati fazla mesaiyi aşamaz; önce gece saatleri: 7 nöbet,
+        # 2 bayram, 8 fm -> 8 saat bayram gece.
+        self.assertAlmostEqual(nobet_ucreti_hesapla(7, 2, 160, self.UCRET)[2], 8 * 137.5)
+
+    def test_elle_gunduz_ucretinden_turetilir(self):
+        self.assertEqual(saat_ucretleri(200.0, 0.25, 0.10),
+                         {"gunduz": 200.0, "gece": 220.0, "tatil": 250.0, "tatil_gece": 275.0})
+
+    def test_elle_eklenen_tatile_bayram_ucreti_yok(self):
+        # 29 Ekim resmi tatil, 30 Ekim elle eklendi; zorunlu mesai 0.
+        days = build_gun_detaylari(2026, 10, 31, [29, 30])
+        schedule = pd.DataFrame(False, index=["Ali"], columns=list(days))
+        schedule.at["Ali", "29 Per"] = True
+        schedule.at["Ali", "30 Cum"] = True
+        _, finance, _ = build_schedule_analysis(
+            schedule, [], [], ["Ali"], days, {}, 0, self.UCRET, None, frozenset({29}))
+        # 48 saat fm; 29 Ekim bayram ücretiyle, 30 Ekim normal ücretle.
+        self.assertAlmostEqual(float(finance["Ücret (TL)"].iloc[0]),
+                               12 * 125.0 + 12 * 137.5 + 12 * 100.0 + 12 * 110.0)
 
     def test_unvan_ayari_saklanir_gecersizi_atlanir(self):
-        state = {"unvan_val": "Pratisyen Tabip", "riskli_birim_val": True,
-                 "nobet_ucreti_kaynak": "Pratisyen Tabip|2026-2|1"}
+        state = {"unvan_val": "Tabip", "riskli_birim_val": True,
+                 "nobet_ucreti_kaynak": "Tabip|2026-2|1|g"}
         restored = {}
         apply_app_settings(restored, json.loads(json.dumps(collect_app_settings(state))))
         self.assertEqual(restored, state)
+        # Eski sürümün ünvan adı yenisine çevrilir.
+        restored = {}
+        apply_app_settings(restored, {"title": "Pratisyen Tabip"})
+        self.assertEqual(restored, {"unvan_val": "Tabip"})
         restored = {}
         apply_app_settings(restored, {"title": "Profesör", "risky_unit": "evet"})
         self.assertEqual(restored, {})
