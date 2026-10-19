@@ -1,10 +1,18 @@
 name: Testler
 
-# Her gönderimde tüm testleri gerçek Streamlit ve Chromium ile çalıştırır.
+# main'e her gönderimde tüm testleri gerçek Streamlit ve Chromium ile çalıştırır.
+# PR'larda tarayıcı testleri (test_browser_*.py) yalnızca arayüz dosyaları
+# değiştiyse çalışır; diğer testler her zaman çalışır.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+# Aynı PR'a yeni gönderim gelince eski çalışmayı durdurur.
+concurrency:
+  group: testler-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Depoyu yalnızca okur; varsayılan jeton yetkisi gerekmez.
 permissions:
@@ -27,6 +35,27 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
+        with:
+          # PR'da birleştirme kaydı ve tabanı; değişen dosyaları bulmak için.
+          fetch-depth: 2
+      - name: Tarayıcı testleri gerekli mi
+        id: tarayici
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "gerekli=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          degisen=$(git diff --name-only HEAD^1 HEAD)
+          echo "$degisen"
+          # Arayüz dosyaları: nobet.py, nobet_*.py (nobet_core.py hariç), tarayıcı testleri,
+          # .streamlit/, paketler ve bu iş akışı.
+          if echo "$degisen" | grep -v '^nobet_core\.py$' \
+             | grep -Eq '^(nobet\.py|nobet_.*\.py|test_browser_.*\.py|\.streamlit/.*|requirements\.txt|\.github/workflows/testler\.yml)$'; then
+            echo "gerekli=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gerekli=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Tarayıcı testleri atlandı::Arayüz dosyası değişmedi; main'de çalışacak."
+          fi
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -34,12 +63,17 @@ jobs:
       - name: Paketleri kur
         run: pip install -r requirements.txt pytest playwright pyflakes
       - name: Chromium kur
+        if: steps.tarayici.outputs.gerekli == 'true'
         run: python -m playwright install --with-deps chromium
       - name: Testleri çalıştır
         shell: bash
         run: |
           set +e
-          python -m pytest -v -p no:cacheprovider --tb=short 2>&1 | tee pytest.log
+          ek=()
+          if [ "${{ steps.tarayici.outputs.gerekli }}" != "true" ]; then
+            for f in test_browser_*.py; do ek+=(--ignore="$f"); done
+          fi
+          python -m pytest -v -p no:cacheprovider --tb=short "${ek[@]}" 2>&1 | tee pytest.log
           status=${PIPESTATUS[0]}
           # Hataları GitHub'da "annotation" olarak da göster.
           python - <<'PY'
