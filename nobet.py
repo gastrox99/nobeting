@@ -84,6 +84,8 @@ for _attempt in range(2):
             donem_adi,
             TATIL_ARTIRIMI,
             GECE_FARKI,
+            UCRET_TURLERI,
+            saat_ucretleri,
             religious_holidays_known,
             active_locks,
             locks_to_json,
@@ -452,15 +454,23 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             st.session_state["w_nobet_ucreti_val"] = float(st.session_state.get("nobet_ucreti_val", 1.0))
         nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", key="w_nobet_ucreti_val")
         st.session_state.nobet_ucreti_val = nobet_ucreti
+        # Ünvan tablosundaki ücretler; gündüz ücreti elle değişirse gece ve
+        # bayram ücretleri ondan türetilir. Elle girişte her saat aynı ücret.
+        if _rate_info and abs(nobet_ucreti - _rate_info["gunduz"]) <= 0.005:
+            saat_ucretleri_secili = {tur: _rate_info[tur] for tur in UCRET_TURLERI}
+        elif unvan != ELLE_UNVAN:
+            saat_ucretleri_secili = saat_ucretleri(nobet_ucreti, tatil_artirimi, gece_artirimi)
+        else:
+            saat_ucretleri_secili = nobet_ucreti
         if _rate_info:
             _rate_note = (
-                f"Gündüz {_rate_info['gunduz']:.2f} TL/sa, gece (20-08, %10) "
-                f"{_rate_info['gece']:.2f} TL/sa · "
-                f"{donem_adi(_rate_info['donem'])} katsayısı, damga vergisi düşülmüş. "
+                f"Gündüz {_rate_info['gunduz']:.2f} · gece (20-08) {_rate_info['gece']:.2f} · "
+                f"bayram {_rate_info['tatil']:.2f} · bayram gece {_rate_info['tatil_gece']:.2f} TL/sa "
+                f"({donem_adi(_rate_info['donem'])}, damga vergisi düşülmüş). "
                 "Yalnız fazla mesai ödenir: gece ücreti, ayın gece saati ile fazla mesai "
                 "saatinden küçük olanına (her nöbet 12 sa gece), kalan fazla mesaiye "
-                "gündüz ücreti. Resmi ve dini bayram nöbetleri %25 fazla hesaplanır "
-                "(elle eklenen tatiller hariç)."
+                "gündüz ücreti. Bayram ücreti yalnız resmi ve dini bayramlara "
+                "(elle eklenen tatillere değil)."
             )
             if not _rate_info["tam"]:
                 _rate_note += " Bu dönemin katsayısı henüz eklenmedi, son bilinen kullanıldı."
@@ -981,8 +991,8 @@ with tab_grid:
 # ═══════════════════════════════════════════════════════
 with tab_cal:
     render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, tatil_gunleri,
-                        today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, nobet_ucreti,
-                        tatil_artirimi, gece_artirimi, resmi_tatil_gunleri)
+                        today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, saat_ucretleri_secili,
+                        resmi_tatil_gunleri)
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -1421,9 +1431,7 @@ _analysis_key = (
                  for person, limits in st.session_state.get("person_limits", {}).items())),
     zorunlu_saat,
     tuple(sorted(mesai_saatleri.items())),
-    nobet_ucreti,
-    tatil_artirimi,
-    gece_artirimi,
+    tuple(sorted(saat_ucretleri_secili.items())) if isinstance(saat_ucretleri_secili, dict) else saat_ucretleri_secili,
     tuple(sorted(resmi_tatil_gunleri)),
     tuple((column, gun_detaylari[column]["weekend"], gun_detaylari[column]["holiday"]) for column in sutunlar),
 )
@@ -1439,10 +1447,8 @@ if (
         gun_detaylari,
         st.session_state.get("person_limits", {}),
         zorunlu_saat,
-        nobet_ucreti,
+        saat_ucretleri_secili,
         mesai_saatleri,
-        tatil_artirimi,
-        gece_artirimi,
         resmi_tatil_gunleri,
     )
     st.session_state.cached_analysis_key = _analysis_key
