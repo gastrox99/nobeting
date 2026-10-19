@@ -83,6 +83,10 @@ for _attempt in range(2):
             unvan_saat_ucreti,
             donem_adi,
             tr_sayi,
+            PENDING_PREFS_KEY,
+            pending_prefs_payload,
+            apply_pending_prefs,
+            is_pending_prefs_for,
             TATIL_ARTIRIMI,
             GECE_FARKI,
             UCRET_TURLERI,
@@ -675,6 +679,23 @@ if 'schedule_bool' not in st.session_state:
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
     # Yüklenen durum zaten veritabanındakiyle aynı; ilk kayıt ilk değişiklikte yapılır.
     st.session_state.autosave_baseline_pending = True
+    # Tercih Belirle'de kaydedilmeden kalan tercihler (sayfa yenilendi ya da
+    # kapandı) tarayıcıda durur; ay o zamandan beri başka yerde kaydedilmediyse
+    # geri getirilip hemen kaydedilir.
+    _pending_raw = local_storage.getItem(PENDING_PREFS_KEY)
+    if _pending_raw and st.session_state.get("autosave_blocked_period") != (yil, ay):
+        _base_pref = st.session_state.get("pref_df")
+        if _base_pref is None:
+            _base_pref = pd.DataFrame(0, index=isimler, columns=sutunlar)
+        _restored_pref = apply_pending_prefs(
+            _pending_raw, current_owner, yil, ay,
+            st.session_state.schedule_version.get("version"), _base_pref,
+        )
+        if _restored_pref is not None:
+            st.session_state.pref_df = _restored_pref
+            st.session_state.autosave_baseline_pending = False
+            st.session_state.save_preferences_now = True
+            st.toast("📝 Kaydedilmemiş tercihler geri getirildi.")
 else:
     # Ensure schedule matches current team and columns
     current_schedule = st.session_state.schedule_bool
@@ -1392,6 +1413,12 @@ elif (
     st.caption("📝 Tercih değişiklikleri henüz kaydedilmedi; mod değişince ya da Simülasyon'da kaydedilir.")
     st.button("💾 Tercihleri Kaydet", key="save_preferences_button",
               on_click=lambda: st.session_state.update(save_preferences_now=True))
+    # Sayfa kaydetmeden yenilenir ya da kapanırsa kaybolmasın: tarayıcıda da tut.
+    _pending_payload = pending_prefs_payload(
+        current_owner, yil, ay, _version_box("schedule_version").get("version"), st.session_state.pref_df,
+    )
+    if local_storage.getItem(PENDING_PREFS_KEY) != _pending_payload:
+        local_storage.setItem(PENDING_PREFS_KEY, _pending_payload, key="pending_prefs_set")
 elif (
     st.session_state.get("autosave_blocked_period") != (yil, ay)
     and _persist_fp != st.session_state.get("last_saved_fingerprint")
@@ -1439,6 +1466,13 @@ elif (
             "❌ Çizelge kaydedilemedi — otomatik kayıt veritabanına yazılamıyor! "
             "Sayfayı yenilemeden önce Excel/PNG olarak indirin.",
         )
+
+# Tercihler kaydedildiyse tarayıcıdaki bekleyen kopya artık gereksiz.
+if (
+    is_pending_prefs_for(local_storage.getItem(PENDING_PREFS_KEY), current_owner, yil, ay)
+    and _persist_fp == st.session_state.get("last_saved_fingerprint")
+):
+    local_storage.deleteItem(PENDING_PREFS_KEY, key="pending_prefs_delete")
 
 if st.session_state.get("persistence_error"):
     st.error(st.session_state.persistence_error)
