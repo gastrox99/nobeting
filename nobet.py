@@ -305,7 +305,7 @@ if _period_revert:
     # Ay/yıl kutuları çizilmeden önce eski değere döndürülür (kutular çizildikten sonra değiştirilemez).
     st.session_state.yil_val, st.session_state.ay_val = _period_revert
     st.session_state.yil_input_direct, st.session_state.ay_input_direct = _period_revert
-    st.session_state.period_revert_notice = True
+    st.session_state.period_revert_notice = st.session_state.pop("period_revert_reason", "db")
 prev_isimler = st.session_state.get('isimler_cache', [])
 # Ekip yoksa Ayarlar açık başlar. Değer oturum boyunca sabit kalır; yoksa
 # ilk isim yazılınca panel kapanıyordu (ekip tablosu satır satır doldurulur).
@@ -498,7 +498,15 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     if _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(_lim_unknown)}** — limit uygulanmayacak.")
 
-if st.session_state.pop("period_revert_notice", False):
+_revert_notice = st.session_state.pop("period_revert_notice", None)
+if _revert_notice == "conflict":
+    st.error(
+        "⚠️ Önceki ay başka bir yerde (telefon ya da başka sekme) değiştirilmiş; bu sekmedeki "
+        "değişiklikler kaydedilmedi ve ay değiştirilmedi. Önce Excel olarak indirebilirsiniz. "
+        "Ayı yine de değiştirirseniz bu sekmedeki değişiklikler atılır; sayfayı yenilemek "
+        "güncel hâli getirir."
+    )
+elif _revert_notice:
     st.error(
         "❌ Önceki ayın son değişiklikleri kaydedilemediği için ay değiştirilmedi. "
         "Veritabanı bağlantısını kontrol edin ya da sayfayı yenileyip tekrar deneyin."
@@ -554,6 +562,14 @@ def _save_outgoing_period(period, schedule, preferences, rows):
     _old_yil, _old_ay = period
     # Okunamayan bir dönemin kaydının üzerine yazma; değişmediyse tekrar yazma.
     if st.session_state.get("autosave_blocked_period") == tuple(period):
+        # Başka yerde değişmiş ay: bu sekmedeki değişiklikler atılacaksa önce bir kez uyar.
+        if (
+            st.session_state.get("autosave_conflict_period") == tuple(period)
+            and st.session_state.get("conflict_leave_ack") != tuple(period)
+        ):
+            st.session_state.conflict_leave_ack = tuple(period)
+            st.session_state.period_revert_reason = "conflict"
+            return False
         return True
     _locks = active_locks(st.session_state.get("locked_cells"), schedule)
     _hidden = st.session_state.get("hidden_people") or {}
@@ -569,6 +585,10 @@ def _save_outgoing_period(period, schedule, preferences, rows):
             expected_version=st.session_state.get("schedule_version"),
         ))
     except SaveConflict:
+        st.session_state.autosave_blocked_period = tuple(period)
+        st.session_state.autosave_conflict_period = tuple(period)
+        st.session_state.conflict_leave_ack = tuple(period)
+        st.session_state.period_revert_reason = "conflict"
         return False
 
 # Ay/yıl değişince eski ayın çizelgesini yeni aya taşımak yerine kaydet ve
@@ -599,6 +619,8 @@ if 'schedule_bool' not in st.session_state:
         )
 
     st.session_state.autosave_blocked_period = None
+    st.session_state.autosave_conflict_period = None
+    st.session_state.conflict_leave_ack = None
     # Sürüm önce okunur; arada başka yerde kayıt olursa ilk kayıtta uyarı verilir.
     st.session_state.schedule_version = get_schedule_version(_auto_name, yil, ay, owner=current_owner) if _db_ready else None
     if not restore_auto_saved_schedule(
@@ -1332,6 +1354,7 @@ elif (
         # Bu ay başka bir yerde (ör. telefonda) değişmiş; onların üzerine yazma.
         _save_conflict = True
         st.session_state.autosave_blocked_period = (yil, ay)
+        st.session_state.autosave_conflict_period = (yil, ay)
         update_persistence_feedback(
             st.session_state,
             False,

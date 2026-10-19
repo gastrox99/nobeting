@@ -198,7 +198,7 @@ def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, y
     result = {
         "format_ok": False, "schedule": None, "rows": None, "matched": 0,
         "skipped_names": [], "date_mismatch": None, "unreadable_rows": 0,
-        "extra_people": 0,
+        "extra_people": 0, "duplicate_day": None,
     }
     role_columns = [column for column in table.columns if column != "Tarih"]
     if "Tarih" not in table.columns or not role_columns:
@@ -232,6 +232,11 @@ def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, y
             continue
         column = column_by_day.get(day)
         if column is None:
+            continue
+        if day in rows_by_day:
+            # Aynı gün iki satır: çizelge ile görev listesi ayrışmasın diye yükleme iptal edilir.
+            if result["duplicate_day"] is None:
+                result["duplicate_day"] = day
             continue
         row = {"Tarih": gun_detaylari[column]["full_date"]}
         for index, role in enumerate(role_names):
@@ -3111,6 +3116,8 @@ def create_print_html(df_liste, df_stats_load, yil, ay):
 BACKUP_FORMAT = "nobeting-yedek"
 BACKUP_VERSION = 1
 BACKUP_MAX_BYTES = 20 * 1024 * 1024
+# Ayarlar sözlüğü gerçekte birkaç KB; büyük içerik reddedilir.
+_BACKUP_MAX_SETTINGS_BYTES = 200 * 1024
 _BACKUP_MAX_SCHEDULES = 1200
 _BACKUP_MAX_PEOPLE = 300
 _BACKUP_MAX_TEXT = 255
@@ -3192,6 +3199,8 @@ def parse_backup(raw):
     settings = data.get("settings")
     if settings is not None and not isinstance(settings, dict):
         return None, ["Yedekteki ayarlar bozuk."]
+    if settings is not None and len(json.dumps(settings, ensure_ascii=False)) > _BACKUP_MAX_SETTINGS_BYTES:
+        return None, ["Yedekteki ayarlar çok büyük."]
     schedules = data.get("schedules")
     if not isinstance(schedules, list) or len(schedules) > _BACKUP_MAX_SCHEDULES:
         return None, ["Yedekteki çizelge listesi bozuk."]
