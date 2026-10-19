@@ -100,7 +100,7 @@ from nobet_core import (
 APP_FILES = (
     "nobet.py", "nobet_stil.py", "nobet_durum.py", "nobet_paylasim.py", "nobet_disa_aktar.py",
     "nobet_yedek.py", "nobet_tablo.py", "nobet_takvim.py", "nobet_analiz.py",
-    "nobet_ekip.py",
+    "nobet_ekip.py", "nobet_talepler.py",
 )
 
 
@@ -2465,7 +2465,8 @@ class TestGoogleLoginSupport(unittest.TestCase):
                 f"{name} kullanıcıya bağlı değil",
             )
         shared = _app_source("nobet_paylasim.py")
-        self.assertEqual(shared.count("owner=_owner"), 1)
+        # Liste (load_schedule) ve talep sekmesindeki ekip (load_app_settings).
+        self.assertEqual(shared.count("owner=_owner"), 2)
         self.assertNotIn("owner=_owner", source.replace(shared, ""))
         # Giriş kontrolü ayarlar yüklenmeden önce yapılmalı.
         self.assertLess(source.index("AUTH_ENABLED = _auth_configured()"),

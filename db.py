@@ -163,6 +163,22 @@ def init_db():
                     CREATE INDEX IF NOT EXISTS backup_snapshots_owner_idx
                     ON backup_snapshots (owner, reason, year, month)
                 ''')
+
+                # Paylaşım linkinden gelen ekip talepleri: kişi başına ayda tek
+                # bekleyen talep (yeniden gönderilen eskisinin yerine geçer).
+                # Liste sahibi onaylayınca ya da reddedince silinir.
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS team_requests (
+                        id SERIAL PRIMARY KEY,
+                        owner VARCHAR(320) NOT NULL DEFAULT '',
+                        year INTEGER NOT NULL,
+                        month INTEGER NOT NULL,
+                        person VARCHAR(255) NOT NULL,
+                        days_json TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (owner, year, month, person)
+                    )
+                ''')
         _last_error = None
         return True
     except Exception as e:
@@ -718,6 +734,93 @@ def resolve_share_token(token):
     except Exception as e:
         _log_error("Resolve share link", e)
         return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# Girişsiz sayfadan doldurulabildiği için bir sahibin bekleyen talepleri sınırlıdır.
+TEAM_REQUEST_LIMIT = 200
+
+
+def submit_team_request(owner, year, month, person, days_by_kind):
+    """Talebi kaydeder (aynı kişinin o ayki bekleyen talebinin yerine geçer).
+
+    "ok", "limit" (bekleyen talep sınırı dolu) ya da "error" döner.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    SELECT COUNT(*) FROM team_requests
+                    WHERE owner = %s AND NOT (year = %s AND month = %s AND person = %s)
+                ''', (owner, year, month, person))
+                if cur.fetchone()[0] >= TEAM_REQUEST_LIMIT:
+                    return "limit"
+                cur.execute('''
+                    INSERT INTO team_requests (owner, year, month, person, days_json)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (owner, year, month, person) DO UPDATE
+                        SET days_json = EXCLUDED.days_json, created_at = CURRENT_TIMESTAMP
+                ''', (owner, year, month, person, json.dumps(days_by_kind)))
+        return "ok"
+    except Exception as e:
+        _log_error("Submit team request", e)
+        return "error"
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_team_requests(owner, raise_on_error=False):
+    """Bekleyen talepler, eskiden yeniye: [{id, year, month, person, days, created_tr}, ...]."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('''
+                SELECT id, year, month, person, days_json,
+                       (created_at AT TIME ZONE current_setting('TimeZone'))
+                           AT TIME ZONE 'Europe/Istanbul' AS created_tr
+                FROM team_requests WHERE owner = %s
+                ORDER BY created_at, id
+            ''', (owner,))
+            rows = cur.fetchall()
+        result = []
+        for row in rows:
+            try:
+                days = json.loads(row['days_json'])
+            except (TypeError, ValueError):
+                days = {}
+            result.append({
+                "id": row['id'], "year": row['year'], "month": row['month'],
+                "person": row['person'], "days": days if isinstance(days, dict) else {},
+                "created_tr": row['created_tr'],
+            })
+        return result
+    except Exception as e:
+        _log_error("List team requests", e)
+        if raise_on_error:
+            raise
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def delete_team_request(owner, request_id):
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute('DELETE FROM team_requests WHERE owner = %s AND id = %s', (owner, request_id))
+        return True
+    except Exception as e:
+        _log_error("Delete team request", e)
+        return False
     finally:
         if conn is not None:
             conn.close()

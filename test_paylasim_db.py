@@ -34,6 +34,7 @@ def owner():
     with conn, conn.cursor() as cur:
         cur.execute("DELETE FROM schedules WHERE owner = %s", (name,))
         cur.execute("DELETE FROM share_links WHERE owner = %s", (name,))
+        cur.execute("DELETE FROM team_requests WHERE owner = %s", (name,))
     conn.close()
 
 
@@ -77,3 +78,28 @@ def test_tum_baglantilar_kapanir(owner):
     assert db.delete_all_share_links(owner)
     assert db.resolve_share_token(monthly) is None
     assert db.resolve_share_token(permanent) is None
+
+
+def test_ekip_talebi_yeniden_gonderilince_yerine_gecer_ve_silinir(owner):
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [5, 6]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 12, "Ali", {"kacin": [1]}) == "ok"
+    requests = db.list_team_requests(owner)
+    assert [(r["person"], r["month"], r["days"]) for r in requests] == [
+        ("Ali", 11, {"izin": [5, 6]}), ("Ali", 12, {"kacin": [1]}),
+    ]
+    assert db.list_team_requests(owner + ".baska") == []
+    # Başka kullanıcının talebi silinemez.
+    assert db.delete_team_request(owner + ".baska", requests[0]["id"])
+    assert len(db.list_team_requests(owner)) == 2
+    assert db.delete_team_request(owner, requests[0]["id"])
+    assert [r["month"] for r in db.list_team_requests(owner)] == [12]
+
+
+def test_ekip_talebi_siniri(owner, monkeypatch):
+    monkeypatch.setattr(db, "TEAM_REQUEST_LIMIT", 2)
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"tercih": [3]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 11, "Can", {"tercih": [3]}) == "limit"
+    # Kendi bekleyen talebini güncellemek sınıra takılmaz.
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [4]}) == "ok"

@@ -71,6 +71,7 @@ def _seed(db):
     _save_month(db, today.year, today.month, days)
     prev_year, prev_month = previous_period(today.year, today.month)
     _save_month(db, prev_year, prev_month, {3: ("Önceki Gül", "Önceki Hasan")})
+    assert db.save_app_settings({"team": "Talep Ali, Talep Ayşe"}, owner=OWNER)
     return {
         "today": today, "tomorrow_in_month": tomorrow.month == today.month,
         "previous": (prev_year, prev_month),
@@ -84,6 +85,8 @@ def _cleanup(db):
     with conn, conn.cursor() as cur:
         cur.execute("DELETE FROM schedules WHERE owner = %s", (OWNER,))
         cur.execute("DELETE FROM share_links WHERE owner = %s", (OWNER,))
+        cur.execute("DELETE FROM team_requests WHERE owner = %s", (OWNER,))
+        cur.execute("DELETE FROM app_settings WHERE key = %s", (db.settings_key(OWNER),))
     conn.close()
 
 
@@ -179,5 +182,42 @@ def test_eski_aylik_baglanti_calismaya_devam_eder(shared):
             expect(page.locator("[data-testid='stDataFrame']")).to_contain_text("Önceki Gül")
             # Aylık bağlantıda ay seçimi yok.
             expect(page.get_by_text("Ay:", exact=True)).to_have_count(0)
+        finally:
+            browser.close()
+
+
+def test_talep_gonderilir_ve_onay_bekler(shared):
+    url, data = shared
+    today = data["today"]
+    next_year, next_month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+    with sync_playwright() as p:
+        browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
+        try:
+            page.get_by_role("tab", name="📝 Talep Gönder").click()
+            page.get_by_text("Adını seç", exact=True).click()
+            page.get_by_role("option", name="Talep Ali").click()
+            _wait_idle(page)
+            # Varsayılan ay sonraki ay.
+            expect(page.get_by_text(f"{TR_AY_ADLARI[next_month]} {next_year}", exact=True)).to_be_visible()
+            page.get_by_label("👍 Nöbet istediğim günler (Tercih)").fill("3,5")
+            page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("5-7,abc")
+            page.get_by_role("button", name="📨 Talebi gönder").click()
+            _wait_idle(page)
+            _no_exception(page)
+            expect(page.get_by_text("Talep gönderilmedi:")).to_be_visible()
+            assert _with_db(lambda db: db.list_team_requests(OWNER)) == []
+
+            page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("10-12")
+            page.get_by_role("button", name="📨 Talebi gönder").click()
+            _wait_idle(page)
+            _no_exception(page)
+            expect(page.get_by_text("Talebin iletildi")).to_be_visible()
+            requests = _with_db(lambda db: db.list_team_requests(OWNER))
+            assert [(r["person"], r["year"], r["month"], r["days"]) for r in requests] == [
+                ("Talep Ali", next_year, next_month, {"tercih": [3, 5], "izin": [10, 11, 12]}),
+            ]
+            # Liste sekmesi yerinde durur.
+            page.get_by_role("tab", name="📋 Nöbet Listesi").click()
+            expect(page.locator("[data-testid='stDataFrame']")).to_contain_text("Bugün Ali")
         finally:
             browser.close()

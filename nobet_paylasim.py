@@ -1,16 +1,26 @@
 # -*- coding: utf-8 -*-
-"""Salt okunur paylaşım sayfası (?paylas=...).
+"""Paylaşım sayfası (?paylas=...).
 
-Ekip arkadaşları giriş yapmadan yalnızca listeyi görür; yalnızca paylaşım
-bağlantısının sahibine ait liste okunur.
+Ekip arkadaşları giriş yapmadan listeyi görür; yalnızca paylaşım bağlantısının
+sahibine ait liste okunur. "Talep Gönder" sekmesinden tercih/izin günlerini
+yazarlar; talepler çizelgeye doğrudan yazılmaz, liste sahibi onaylar.
 """
 from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
 
-from db import list_shared_months, load_schedule, resolve_share_token
+from db import (
+    list_shared_months,
+    list_team_requests,
+    load_app_settings,
+    load_schedule,
+    resolve_share_token,
+    submit_team_request,
+)
 from nobet_core import (
+    TALEP_METIN_SINIRI,
+    TALEP_TURLERI,
     TR_AY_ADLARI,
     TR_GUN_KISA,
     add_overflow_roles,
@@ -19,7 +29,10 @@ from nobet_core import (
     escape_html,
     now_tr,
     on_duty_summary,
+    format_day_ranges,
     parse_schedule_import_date,
+    parse_team_request,
+    request_open_months,
     shared_day_states,
     shared_default_month,
     shared_updated_text,
@@ -64,6 +77,14 @@ def render_shared_view(token, db_ready):
         st.error("Bu paylaşım bağlantısı geçersiz ya da kapatılmış.")
         return
     _owner, _year, _month = _target
+    _tab_list, _tab_request = st.tabs(["📋 Nöbet Listesi", "📝 Talep Gönder"])
+    with _tab_list:
+        _render_list(_owner, _year, _month)
+    with _tab_request:
+        _render_request_form(_owner)
+
+
+def _render_list(_owner, _year, _month):
     _months = _cached_shared_months(_owner)
     _updated = {(_y, _m): _t for _y, _m, _t in _months}
     _today = now_tr().date()
@@ -141,7 +162,76 @@ def render_shared_view(token, db_ready):
             f"nobet_{_year}_{_month:02d}.ics", "text/calendar",
             on_click="ignore", width="stretch",
         )
-    st.caption("Bu sayfa salt okunurdur ve liste sahibi değişiklik yaptıkça güncellenir.")
+    st.caption("Liste, liste sahibi değişiklik yaptıkça güncellenir.")
+
+
+# Kutu başlıkları: ekibin anlayacağı dille, parantezde uygulamadaki adı.
+_REQUEST_LABELS = {
+    "tercih": "👍 Nöbet istediğim günler (Tercih)",
+    "kacin": "🤏 Verilebilir ama kaçınılsın (Kaçın)",
+    "izin": "🏖️ İzinli olduğum günler (İzin)",
+    "musait_degil": "🚫 Nöbet tutamadığım günler (Müsait Değil)",
+}
+
+
+def _render_request_form(_owner):
+    _settings = load_app_settings(owner=_owner) or {}
+    _team = list(dict.fromkeys(
+        _name.strip() for _name in str(_settings.get("team") or "").split(",") if _name.strip()
+    ))
+    if not _team:
+        st.info("Liste sahibi henüz ekibi girmedi; talep gönderilemiyor.")
+        return
+    st.caption(
+        "Günleri virgülle ayırın, aralık için tire kullanın: 3,5,10-14. "
+        "Talebin liste sahibine gider; onaylanınca çizelgeye işlenir."
+    )
+    _today = now_tr().date()
+    _person = st.selectbox("Adın:", _team, index=None, placeholder="Adını seç", key="talep_kisi")
+    _periods = request_open_months(_today)
+    # Çoğunlukla gelecek ayın listesi hazırlanır; o ay önce seçili gelir.
+    _year, _month = st.selectbox(
+        "Hangi ay:", _periods, index=1 if len(_periods) > 1 else 0,
+        format_func=lambda _p: f"{TR_AY_ADLARI[_p[1]]} {_p[0]}", key="talep_ay",
+    )
+    if not _person:
+        return
+    _done = st.session_state.get("talep_gonderildi")
+    if _done == (_person, _year, _month):
+        st.success("✅ Talebin iletildi. Liste sahibi onaylayınca çizelgeye işlenir.")
+    _pending = next((
+        _r for _r in list_team_requests(_owner)
+        if (_r["person"], _r["year"], _r["month"]) == (_person, _year, _month)
+    ), None)
+    if _pending and _done != (_person, _year, _month):
+        st.info("Bu ay için onay bekleyen bir talebin var; yeniden gönderirsen eskisinin yerine geçer.")
+    _prefill = (_pending or {}).get("days") or {}
+    with st.form(f"talep_{_person}_{_year}_{_month}", border=False):
+        _texts = {
+            _key: st.text_input(
+                _REQUEST_LABELS[_key],
+                value=format_day_ranges(_prefill.get(_key) or []).replace(" ", ""),
+                max_chars=TALEP_METIN_SINIRI,
+                placeholder="Örn: 3,5,10-14",
+                key=f"talep_{_key}_{_person}_{_year}_{_month}",
+            )
+            for _key, _, _ in TALEP_TURLERI
+        }
+        _sent = st.form_submit_button("📨 Talebi gönder", type="primary", width="stretch")
+    if not _sent:
+        return
+    _days, _errors = parse_team_request(_texts, _year, _month, now_tr().date())
+    if _errors:
+        st.error("Talep gönderilmedi:\n\n" + "\n\n".join(f"- {_e}" for _e in _errors))
+        return
+    _result = submit_team_request(_owner, _year, _month, _person, _days)
+    if _result == "ok":
+        st.session_state.talep_gonderildi = (_person, _year, _month)
+        st.rerun()
+    elif _result == "limit":
+        st.error("Bekleyen talep sayısı doldu; liste sahibi eski talepleri onaylayınca tekrar deneyin.")
+    else:
+        st.error("Talep kaydedilemedi. Biraz sonra tekrar deneyin.")
 
 
 def _shared_rows(_owner, year, month):
