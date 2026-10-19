@@ -47,3 +47,78 @@ def test_hizli_tiklamada_kayit_cakismasi_cikmaz(app_url):  # noqa: F811
             assert _cell(page, "Hızlı Can", 1) == "✓"
         finally:
             browser.close()
+
+
+def _saved_preferences():
+    """Girişsiz kullanıcının en son kaydedilen tercih tablosu (kişi -> gün -> kod)."""
+    import json
+    import os
+
+    from test_browser_yedek import TEST_DB
+    env_backup = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = TEST_DB
+    try:
+        import db
+        conn = db._connect()
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT pref_json FROM schedules WHERE owner = '' ORDER BY updated_at DESC LIMIT 1")
+            row = cur.fetchone()
+        conn.close()
+    finally:
+        if env_backup is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = env_backup
+    return json.loads(row[0]) if row and row[0] else {}
+
+
+def _pref_button(page, person, day_index):
+    row = page.locator(".st-key-preference-grid [data-testid='stHorizontalBlock']").filter(
+        has=page.locator("b", has_text=person)
+    ).first
+    return row.locator(":scope > [data-testid='stColumn']").nth(day_index + 1).get_by_role("button")
+
+
+def _pref_code(person, day_index):
+    prefs = _saved_preferences()
+    days = list(prefs)
+    return prefs[days[day_index]].get(person, 0) if days else 0
+
+
+def test_tercihler_toplu_kaydedilir(app_url):  # noqa: F811
+    from playwright.sync_api import expect, sync_playwright
+    person = "Tercih Ali"
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, f"{person}, Tercih Ayşe, Tercih Can")
+        try:
+            _wait_idle(page)
+            # Kayıtlı bir başlangıç: çizelgede bir değişiklik hemen kaydedilir.
+            _toggle(page, "Tercih Ayşe", 5, "✓")
+            page.get_by_text("🎨 Tercih Belirle", exact=True).click()
+            _wait_idle(page, 1.0)
+            page.get_by_role("button", name="🟩Tercih").click()
+            _wait_idle(page, 1.0)
+            for day in (0, 1):
+                _pref_button(page, person, day).click()
+                expect(_pref_button(page, person, day)).to_have_text("T")
+            _wait_idle(page, 1.0)
+            # Her dokunuşta yazılmaz; kaydedilmedi notu ve Kaydet tuşu görünür.
+            expect(page.get_by_text("Tercih değişiklikleri henüz kaydedilmedi")).to_be_visible()
+            assert _pref_code(person, 0) == 0
+            page.get_by_role("button", name="💾 Tercihleri Kaydet").click()
+            _wait_idle(page, 1.0)
+            expect(page.get_by_text("Tercih değişiklikleri henüz kaydedilmedi")).to_have_count(0)
+            assert (_pref_code(person, 0), _pref_code(person, 1)) == (1, 1)
+            # Nöbet Ata moduna geçmek bekleyen tercihleri kaydeder.
+            _pref_button(page, person, 2).click()
+            expect(_pref_button(page, person, 2)).to_have_text("T")
+            _wait_idle(page, 1.0)
+            assert _pref_code(person, 2) == 0
+            page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
+            _wait_idle(page, 1.0)
+            assert _pref_code(person, 2) == 1
+            text = page.locator("body").inner_text()
+            assert "başka bir yerde" not in text and "kaydedilemedi" not in text
+            _no_exception(page)
+        finally:
+            browser.close()

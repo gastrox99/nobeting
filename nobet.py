@@ -1359,16 +1359,38 @@ df_liste = pd.DataFrame(liste_rows)
 
 # Auto-save only after role rows have been generated or reconciled with the
 # current schedule, so both database payloads describe the same snapshot.
-# Her değişiklik hemen kaydedilir (eskiden 30 sn bekleniyordu ve son
-# değişiklikler sayfa yenilenince kayboluyordu).
+# Çizelge değişiklikleri hemen kaydedilir (eskiden 30 sn bekleniyordu ve son
+# değişiklikler sayfa yenilenince kayboluyordu). "Tercih Belirle" modunda
+# yalnızca tercihler değiştiyse her dokunuşta yazılmaz: mod değişince, çizelge
+# değişince (Simülasyon vb.), ay değişince, Yedekle ya da Kaydet'e basınca
+# hepsi birlikte kaydedilir.
 _active_locks = active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)
 _hidden_people = st.session_state.get("hidden_people") or {}
 _persist_fp = persistence_fingerprint(
     st.session_state.schedule_bool, st.session_state.get('pref_df'), rows_liste, _active_locks,
     _hidden_people,
 )
+_core_fp = persistence_fingerprint(
+    st.session_state.schedule_bool, None, rows_liste, _active_locks, _hidden_people,
+)
+_save_now = st.session_state.pop("save_preferences_now", False)
+_defer_save = (
+    st.session_state.get("edit_mode") == "tercih"
+    and not _save_now
+    and not st.session_state.get("snapshot_requested")
+    and _core_fp == st.session_state.get("last_saved_core_fingerprint")
+)
 if st.session_state.pop("autosave_baseline_pending", False):
     st.session_state.last_saved_fingerprint = _persist_fp
+    st.session_state.last_saved_core_fingerprint = _core_fp
+elif (
+    st.session_state.get("autosave_blocked_period") != (yil, ay)
+    and _persist_fp != st.session_state.get("last_saved_fingerprint")
+    and _defer_save
+):
+    st.caption("📝 Tercih değişiklikleri henüz kaydedilmedi; mod değişince ya da Simülasyon'da kaydedilir.")
+    st.button("💾 Tercihleri Kaydet", key="save_preferences_button",
+              on_click=lambda: st.session_state.update(save_preferences_now=True))
 elif (
     st.session_state.get("autosave_blocked_period") != (yil, ay)
     and _persist_fp != st.session_state.get("last_saved_fingerprint")
@@ -1403,6 +1425,7 @@ elif (
         pass
     elif _saved_ok:
         st.session_state.last_saved_fingerprint = _persist_fp
+        st.session_state.last_saved_core_fingerprint = _core_fp
         st.session_state.last_auto_save = time.time()
         update_persistence_feedback(st.session_state, True)
         # Yedek bölümü bu çalışmada eski dosyayla çizildi; yeniden çiz.
