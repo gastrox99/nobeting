@@ -123,7 +123,6 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
             # Onay kutuları işaretli kalmasın; ikinci bir geri yükleme kazara yapılmasın.
             st.session_state.snapshot_restore_confirm = False
             st.session_state.backup_restore_confirm = False
-            st.toast(f"✅ Yedek geri yüklendi: {_restored_notice}")
             st.success(
                 f"✅ Yedek geri yüklendi: {_restored_notice}. "
                 "Önceki hâl Yedek bölümünde \"Son geri yüklemeden önceki hâl\" olarak saklandı."

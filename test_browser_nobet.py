@@ -428,11 +428,12 @@ def test_yasak_ikili_capraz_tablodan_ve_limit_ekip_tablosundan_girilir(app_url):
             box, label = _pair_checkbox(page, "Ayar Ali", "Ayar Ayşe")
             label.click()
             _wait_idle(page, 1.5)
-            # Çapraz tablonun öbür yarısı da işaretlenir; tekrar tıklayınca kalkar.
-            expect(_pair_checkbox(page, "Ayar Ayşe", "Ayar Ali")[0]).to_be_checked()
+            # Her ikili bir kez (ekip sırasıyla) gösterilir; tekrar tıklayınca kalkar.
+            expect(box).to_be_checked()
+            assert _pair_checkbox(page, "Ayar Ayşe", "Ayar Ali")[0].count() == 0
             _pair_checkbox(page, "Ayar Can", "Ayar Deniz")[1].click()
             _wait_idle(page, 1.5)
-            _pair_checkbox(page, "Ayar Deniz", "Ayar Can")[1].click()
+            _pair_checkbox(page, "Ayar Can", "Ayar Deniz")[1].click()
             _wait_idle(page, 1.5)
             expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz")[0]).not_to_be_checked()
             expect(_pair_checkbox(page, "Ayar Ali", "Ayar Ayşe")[0]).to_be_checked()
