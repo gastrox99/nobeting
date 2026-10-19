@@ -1,0 +1,300 @@
+# -*- coding: utf-8 -*-
+"""Sayfanın CSS'i ve açık/koyu tema renkleri."""
+
+# --- GLOBAL RESPONSIVE CSS ---
+GLOBAL_CSS = """
+<style>
+/* Keyed Streamlit containers keep day columns usable with horizontal scroll. */
+.st-key-schedule-grid,
+.st-key-preference-grid {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 8px;
+}
+
+/* Mobile hint - hidden on desktop by default */
+.mobile-hint {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    /* Show mobile hint only on mobile */
+    .mobile-hint {
+        display: block !important;
+    }
+    
+    /* Settings panel columns - stack vertically */
+    [data-testid="stExpander"] [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+    }
+    [data-testid="stExpander"] :is([data-testid="column"],[data-testid="stColumn"]) {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+    }
+    
+    /* Grid wrapper - enable scroll */
+    .st-key-schedule-grid {
+        max-width: 100vw;
+        overflow-x: scroll !important;
+    }
+    .st-key-schedule-grid [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        min-width: max-content;
+    }
+    .st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]) {
+        flex-shrink: 0 !important;
+        min-width: 44px !important;
+    }
+    .st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+        min-width: 112px !important;
+    }
+    
+    /* Reduce text sizes */
+    h1 { font-size: 1.8rem !important; }
+    h2 { font-size: 1.4rem !important; }
+    h3 { font-size: 1.2rem !important; }
+    
+    /* Make editor rows larger for better touch/readability */
+    [data-testid="stDataEditor"] div {
+        font-size: 14px !important;
+    }
+    
+    /* Make expander title smaller */
+    [data-testid="stExpander"] summary {
+        font-size: 13px !important;
+    }
+
+    /* Keep preference cells at a comfortable touch size instead of
+       shrinking them until the green/yellow/red states become unclear. */
+    .st-key-preference-grid {
+        max-width: 100vw;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+        padding: 4px 0 12px;
+    }
+    .st-key-preference-grid [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        min-width: max-content;
+    }
+    .st-key-preference-grid :is([data-testid="column"],[data-testid="stColumn"]) {
+        flex-shrink: 0 !important;
+        min-width: 44px !important;
+    }
+    .st-key-preference-grid :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+        min-width: 112px !important;
+    }
+}
+
+/* Tablet adjustments */
+@media (max-width: 1024px) and (min-width: 769px) {
+    [data-testid="stExpander"] :is([data-testid="column"],[data-testid="stColumn"]) {
+        flex: 1 1 45% !important;
+        min-width: 45% !important;
+    }
+}
+</style>
+"""
+
+
+def ui_colors(_dark_theme):
+    """Tablo, takvim ve kişi kartı renkleri; karanlık modda açık renkli yazılar."""
+    return {
+        "name_text": "#e5e7eb" if _dark_theme else "#1f2937",
+        "name_bg": "#1e293b" if _dark_theme else "#f8fafc",
+        "name_border": "#334155" if _dark_theme else "#e2e8f0",
+        "muted": "#9ca3af",
+        "day_text": "#e5e7eb" if _dark_theme else "#374151",
+        "weekend_text": "#93c5fd" if _dark_theme else "#1d4ed8",
+        "holiday_text": "#fca5a5" if _dark_theme else "#c62828",
+        "today_text": "#fcd34d" if _dark_theme else "#b45309",
+        "weekend_bg": "rgba(59,130,246,0.18)" if _dark_theme else "rgba(219,234,254,0.5)",
+        "holiday_bg": "rgba(239,68,68,0.18)" if _dark_theme else "rgba(254,226,226,0.55)",
+        "today_bg": "rgba(245,158,11,0.22)" if _dark_theme else "rgba(254,243,199,0.75)",
+        "legend_text": "#d1d5db" if _dark_theme else "#374151",
+        # Nöbetsiz hücreler: açık zemin + renkli yazı (nöbetliler dolu renk)
+        "free_bg": "rgba(148,163,184,0.10)" if _dark_theme else "#ffffff",
+        "free_border": "#334155" if _dark_theme else "#e2e8f0",
+        "free_text": "#64748b",
+        "soft_green_bg": "rgba(34,197,94,0.16)" if _dark_theme else "#dcfce7",
+        "soft_green_text": "#86efac" if _dark_theme else "#166534",
+        "soft_amber_bg": "rgba(245,158,11,0.16)" if _dark_theme else "#fef3c7",
+        "soft_amber_text": "#fcd34d" if _dark_theme else "#92400e",
+        "soft_red_bg": "rgba(239,68,68,0.18)" if _dark_theme else "#fee2e2",
+        "soft_red_text": "#fca5a5" if _dark_theme else "#991b1b",
+        # Takvim sekmesi ve kişi kartı
+        "card_bg": "#1e293b" if _dark_theme else "#f8fafc",
+        "stat_bg": "#0f172a" if _dark_theme else "#ffffff",
+        "strong_text": "#e5e7eb" if _dark_theme else "#1f2937",
+        "label_text": "#9ca3af" if _dark_theme else "#6b7280",
+        "stat_blue": "#93c5fd" if _dark_theme else "#1d4ed8",
+        "stat_gray": "#e5e7eb" if _dark_theme else "#374151",
+        "stat_red": "#fca5a5" if _dark_theme else "#dc2626",
+        "stat_green": "#4ade80" if _dark_theme else "#16a34a",
+        "stat_purple": "#c084fc" if _dark_theme else "#9333ea",
+        "cal_head_bg": "#1e293b" if _dark_theme else "#f1f5f9",
+        "cal_head_we_bg": "rgba(59,130,246,0.25)" if _dark_theme else "#dbeafe",
+        "cal_cell": ("#111827", "1px solid #334155") if _dark_theme else ("#f8fafc", "1px solid #e2e8f0"),
+        "cal_cell_we": ("rgba(59,130,246,0.15)", "1px solid #1e3a8a") if _dark_theme else ("#dbeafe", "1px solid #bfdbfe"),
+        "cal_cell_hol": ("rgba(239,68,68,0.15)", "1px solid #7f1d1d") if _dark_theme else ("#fee2e2", "1px solid #fca5a5"),
+        "cal_cell_today": ("rgba(245,158,11,0.18)", "2px solid #f59e0b") if _dark_theme else ("#fef3c7", "2px solid #f59e0b"),
+    }
+
+
+def grid_css(ui, name_col_px, col_bg_css):
+    """Tercih/nöbet tablosunun CSS'i (gün sütunu renkleri ``col_bg_css`` ile)."""
+    return f"""
+<style>
+.st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1),
+.st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
+    background: {ui['name_bg']} !important;
+    border-right: 2px solid {ui['name_border']};
+    min-width: 80px;
+}}
+/* Ayın tüm günleri tek satırda kalsın; sığmazsa tablo yana kayar
+   (eskiden son günler alt satıra geniş şeritler olarak düşüyordu). */
+.st-key-schedule-grid [data-testid="stHorizontalBlock"],
+.st-key-preference-grid [data-testid="stHorizontalBlock"] {{
+    flex-wrap: nowrap !important;
+}}
+@media (min-width: 769px) {{
+    /* Masaüstü/tablet: hücreler küçülerek tek satıra sığar (mobil kuralı ayrı). */
+    .st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]),
+    .st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]) {{
+        min-width: 26px !important;
+        flex-shrink: 1 !important;
+    }}
+    .st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1),
+    .st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
+        min-width: 96px !important;
+    }}
+}}
+/* İsim sütunu en uzun isme göre sabit genişlikte (nokta + isim + sayı rozeti);
+   sayı alt satıra kayıp satırı uzatmaz. */
+.st-key-schedule-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1),
+.st-key-preference-grid [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
+    flex: 0 0 {name_col_px}px !important;
+    min-width: {name_col_px}px !important;
+    max-width: {name_col_px}px !important;
+}}
+{col_bg_css}
+.st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]),
+.st-key-preference-grid :is([data-testid="column"],[data-testid="stColumn"]) {{ padding: 0 1px !important; }}
+.st-key-schedule-grid .stButton > button,
+.st-key-preference-grid .stButton > button {{
+    padding: 0px !important;
+    min-height: 30px !important;
+    font-size: 14px !important;
+    border-radius: 5px !important;
+    line-height: 1 !important;
+    width: 100% !important;
+    border: 1px solid #e5e7eb !important;
+    transition: transform 0.1s, box-shadow 0.1s;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}}
+.st-key-schedule-grid .stButton > button:hover,
+.st-key-preference-grid .stButton > button:hover {{
+    transform: scale(1.15);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    z-index: 20;
+    position: relative;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) .preference-state {{
+    display: none !important;
+}}
+/* Renk işaretinin kapsayıcısı da yer kaplamasın: düğmeleri aşağı itip
+   isimlerle hizayı bozuyordu. (Gizli öğe DOM'da kalır; :has() eşleşmeye devam eder.) */
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="stElementContainer"], .element-container):has(.preference-state) {{
+    display: none !important;
+}}
+/* İsim, sayı ve gün düğmeleri satırda dikeyde ortalı */
+:is(.st-key-preference-grid, .st-key-schedule-grid) [data-testid="stHorizontalBlock"] {{
+    align-items: center !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button {{
+    color: #ffffff !important;
+    border-width: 2px !important;
+    font-weight: 800 !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-0) .stButton > button {{
+    background: #475569 !important;
+    border-color: #334155 !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-1) .stButton > button {{
+    background: #166534 !important;
+    border-color: #14532d !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-2) .stButton > button {{
+    background: #92400e !important;
+    border-color: #78350f !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-3) .stButton > button {{
+    background: #991b1b !important;
+    border-color: #7f1d1d !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-0) .stButton > button {{
+    background: {ui['free_bg']} !important;
+    border-color: {ui['free_border']} !important;
+    border-width: 1px !important;
+    color: {ui['free_text']} !important;
+    font-weight: 600 !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-1) .stButton > button {{
+    background: {ui['soft_green_bg']} !important;
+    border-color: transparent !important;
+    color: {ui['soft_green_text']} !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-2) .stButton > button {{
+    background: {ui['soft_amber_bg']} !important;
+    border-color: transparent !important;
+    color: {ui['soft_amber_text']} !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-free-3) .stButton > button {{
+    background: {ui['soft_red_bg']} !important;
+    border-color: transparent !important;
+    color: {ui['soft_red_text']} !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.preference-state-conflict) .stButton > button {{
+    background: #7f1d1d !important;
+    border-color: #450a0a !important;
+}}
+/* Elle atanmış (sabit) nöbet: ince sarı iç çerçeve */
+:is(.st-key-preference-grid, .st-key-schedule-grid) :is([data-testid="column"],[data-testid="stColumn"]):has(.cell-locked) .stButton > button {{
+    box-shadow: inset 0 0 0 2px #fbbf24 !important;
+}}
+:is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button:focus-visible {{
+    outline: 3px solid #0f172a !important;
+    outline-offset: 2px;
+}}
+@media (max-width: 768px) {{
+    /*
+     * This must follow the shared grid-button rule above. Otherwise its
+     * min-height:30px declaration wins in the mobile cascade.
+     */
+    :is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button {{
+        min-width: 44px !important;
+        min-height: 44px !important;
+        width: 44px !important;
+        padding: 0 !important;
+        font-size: 16px !important;
+        font-weight: 800 !important;
+        border-radius: 7px !important;
+    }}
+    :is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button:hover {{
+        transform: none !important;
+    }}
+}}
+.st-key-preference-legend .preference-legend-swatch {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+    color: #ffffff !important;
+    font-weight: 800;
+    line-height: 1;
+}}
+</style>
+"""
