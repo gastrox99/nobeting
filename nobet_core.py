@@ -1269,6 +1269,9 @@ APP_SETTINGS_FIELDS = {
     "rest_days": ("min_bosluk_val", _int_in(0, 3)),
     "holidays_by_period": ("holidays_by_period", _period_texts),
     "hourly_rate": ("nobet_ucreti_val", _non_negative_float),
+    "title": ("unvan_val", lambda value: _unvan(value)),
+    "risky_unit": ("riskli_birim_val", _bool),
+    "hourly_rate_source": ("nobet_ucreti_kaynak", _text),
     "role_names": ("role_names_text", _text),
     "forbidden_pairs": ("forbidden_pairs_text", _text),
     "limits": ("limits_text", _text),
@@ -1423,6 +1426,7 @@ def build_schedule_analysis(
     zorunlu_saat,
     nobet_ucreti,
     mesai_saatleri=None,
+    tatil_artirimi=0.0,
 ):
     """Çizelge görünümünde kullanılan saf analiz tablolarını üretir.
 
@@ -1453,10 +1457,10 @@ def build_schedule_analysis(
     stats_finance = []
     for isim in isimler:
         toplam = int(totals.get(isim, 0))
-        saat = toplam * 24
         mesai = mesai_saatleri.get(isim, zorunlu_saat)
-        fm_saat = max(0, saat - mesai)
-        ucret = fm_saat * nobet_ucreti
+        saat, fm_saat, ucret = nobet_ucreti_hesapla(
+            toplam, int(holiday_totals.get(isim, 0)), mesai, nobet_ucreti, tatil_artirimi
+        )
         limits = person_limits.get(isim, {})
         min_limit = limits.get("min", 0)
         max_limit = limits.get("max", 999)
@@ -3311,3 +3315,94 @@ def backup_reminder(last_backup_text, today=None, days=30):
     if age >= days:
         return f"Son yedek {age} gün önce indirildi."
     return None
+
+
+# ── Ünvana göre nöbet saat ücreti ─────────────────────────────────────────
+# 657 sayılı DMK Ek Madde 33: nöbet ücreti = gösterge × memur aylık katsayısı.
+# 8. Dönem Toplu Sözleşme göstergelere 10 puan ekler (aşağıdakiler eklenmiş
+# hâlidir). 20.00-08.00 arası gece nöbeti %10, acil/yoğun bakım/ameliyathane
+# gibi riskli birimler %50 artırımlıdır. Nöbet ücretinden yalnızca damga
+# vergisi (binde 7,59) kesilir; aşağıdaki tutarlar kesinti sonrası nettir.
+NOBET_UNVANLARI = {
+    "Uzman Tabip": 160,
+    "Pratisyen Tabip": 145,
+    "Diş Tabibi / Eczacı": 130,
+    "Hemşire / Ebe (yüksek öğrenim)": 100,
+    "Sağlık Personeli (lise)": 85,
+    "Diğer Personel": 65,
+}
+ELLE_UNVAN = "Elle gir"
+
+# Memur aylık katsayısı her Ocak ve Temmuz'da Hazine ve Maliye Bakanlığı
+# genelgesiyle değişir; yeni dönem çıkınca buraya bir satır eklenir.
+# Anahtar: (yıl, 1 = Ocak-Haziran, 2 = Temmuz-Aralık).
+MEMUR_AYLIK_KATSAYI = {
+    (2026, 1): 1.387871,
+    (2026, 2): 1.575512,
+}
+DAMGA_VERGISI = 0.00759
+GECE_ARTIRIMI = 1.10
+RISKLI_BIRIM_ARTIRIMI = 1.50
+# Resmi ve dini bayram (tatil) günlerinde tutulan nöbet %25 fazla ödenir.
+TATIL_ARTIRIMI = 0.25
+# 08.00-08.00 tutulan 24 saatlik nöbetin 12 saati gündüz, 12 saati gece.
+NOBET_GUNDUZ_SAAT = 12
+NOBET_GECE_SAAT = 12
+_DONEM_ADI = {1: "Ocak-Haziran", 2: "Temmuz-Aralık"}
+
+
+def katsayi_donemi(yil, ay):
+    """Seçilen ay için kullanılacak katsayı dönemi: (anahtar, tam_eşleşme_mi).
+
+    O dönemin katsayısı tabloda yoksa en yakın önceki (yoksa ilk) dönem
+    kullanılır ve tam_eşleşme False döner.
+    """
+    key = (int(yil), 1 if int(ay) <= 6 else 2)
+    if key in MEMUR_AYLIK_KATSAYI:
+        return key, True
+    known = sorted(MEMUR_AYLIK_KATSAYI)
+    earlier = [k for k in known if k < key]
+    return (earlier[-1] if earlier else known[0]), False
+
+
+def donem_adi(key):
+    return f"{_DONEM_ADI[key[1]]} {key[0]}"
+
+
+def unvan_saat_ucreti(unvan, yil, ay, riskli=False):
+    """Ünvanın o ayki nöbet saat ücretleri (net, TL).
+
+    Döner: {"gunduz", "gece", "saatlik", "donem", "tam"}; "saatlik", 24
+    saatlik nöbetin gündüz ve gece saatlerinin ağırlıklı ortalamasıdır.
+    Bilinmeyen ünvanda None.
+    """
+    gosterge = NOBET_UNVANLARI.get(unvan)
+    if gosterge is None:
+        return None
+    donem, tam = katsayi_donemi(yil, ay)
+    brut = gosterge * MEMUR_AYLIK_KATSAYI[donem]
+    if riskli:
+        brut *= RISKLI_BIRIM_ARTIRIMI
+    gunduz = round(brut * (1 - DAMGA_VERGISI), 2)
+    gece = round(brut * GECE_ARTIRIMI * (1 - DAMGA_VERGISI), 2)
+    toplam_saat = NOBET_GUNDUZ_SAAT + NOBET_GECE_SAAT
+    saatlik = round((gunduz * NOBET_GUNDUZ_SAAT + gece * NOBET_GECE_SAAT) / toplam_saat, 2)
+    return {"gunduz": gunduz, "gece": gece, "saatlik": saatlik, "donem": donem, "tam": tam}
+
+
+def nobet_ucreti_hesapla(toplam_nobet, tatil_nobet, zorunlu_saat, saat_ucreti, tatil_artirimi=0.0):
+    """(nöbet saati, fazla mesai saati, ücret) döner.
+
+    Tatil günleri zorunlu mesaiye girmediğinden tatil nöbetinin saatleri
+    hep ücretli fazla mesaidir; bu saatler (fazla mesaiyi aşmadan)
+    ``tatil_artirimi`` kadar fazla ödenir.
+    """
+    saat = toplam_nobet * 24
+    fm_saat = max(0, saat - zorunlu_saat)
+    tatil_saat = min(tatil_nobet * 24, fm_saat)
+    ucret = fm_saat * saat_ucreti + tatil_saat * saat_ucreti * tatil_artirimi
+    return saat, fm_saat, ucret
+
+
+def _unvan(value):
+    return value if value == ELLE_UNVAN or value in NOBET_UNVANLARI else None

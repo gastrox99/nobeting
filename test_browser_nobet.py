@@ -385,6 +385,35 @@ def test_ayar_kutulari_art_arda_duzenlenebilir(app_url):
             browser.close()
 
 
+def test_unvan_secilince_saat_ucreti_gelir_ve_elle_degisir(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Ücret Ali, Ücret Ayşe")
+        try:
+            _settings_box(page, "combobox", "🩺 Ünvan:").click()
+            page.get_by_role("option", name="Pratisyen Tabip").click()
+            _wait_idle(page)
+            rate = lambda: float(_settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").input_value())
+            auto = rate()
+            assert 200 < auto < 400
+            expect(page.get_by_text("katsayısı, damga vergisi düşülmüş", exact=False)).to_be_visible()
+            # Elle yazılan ücret sonraki yeniden çizimlerde korunur.
+            box = _settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):")
+            box.fill("300")
+            box.press("Tab")
+            _wait_idle(page)
+            _set_team(page, "Ücret Ali, Ücret Ayşe, Ücret Can")
+            _wait_idle(page)
+            assert rate() == 300
+            expect(page.get_by_text("Ücret elle değiştirildi", exact=False)).to_be_visible()
+            # Riskli birim seçilince ücret yeniden otomatik hesaplanır (%50).
+            page.get_by_text("Riskli birim (%50 artırımlı)").click()
+            _wait_idle(page)
+            assert abs(rate() - auto * 1.5) < 0.05
+            _no_exception(page)
+        finally:
+            browser.close()
+
+
 def _pair_checkbox(page, first, second):
     box = page.get_by_role("checkbox", name=f"{first} ile {second}", exact=True)
     return box, page.locator("[data-testid='stCheckbox']").filter(has=box).first.locator("label")

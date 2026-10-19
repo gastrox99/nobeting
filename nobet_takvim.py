@@ -4,12 +4,12 @@ from datetime import date
 
 import streamlit as st
 
-from nobet_core import TR_GUN_KISA, escape_html, find_person_role
+from nobet_core import TR_GUN_KISA, escape_html, find_person_role, nobet_ucreti_hesapla
 from nobet_durum import rotate_roles_for_day
 
 
 def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, tatil_gunleri,
-                        today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, nobet_ucreti):
+                        today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, nobet_ucreti, tatil_artirimi=0.0):
     tr_gunler = TR_GUN_KISA
     # Rol isimleri (Görev1, Görev2 vb.)
     _cal_role_names = st.session_state.get('rol_isimleri', [f"Görev{i+1}" for i in range(kişi_sayısı)])
@@ -50,9 +50,10 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
         dp_we = sum(1 for c in dp_shifts if gun_detaylari[c]['weekend'])
         dp_hol = sum(1 for c in dp_shifts if gun_detaylari[c]['holiday'] and not gun_detaylari[c]['weekend'])
         dp_weekday = len(dp_shifts) - dp_we - dp_hol
-        dp_total_h = len(dp_shifts) * 24
-        dp_fm_h = max(0, dp_total_h - mesai_saatleri.get(dp, 0))
-        dp_pay = dp_fm_h * nobet_ucreti
+        dp_total_h, dp_fm_h, dp_pay = nobet_ucreti_hesapla(
+            len(dp_shifts), sum(1 for c in dp_shifts if gun_detaylari[c]['holiday']),
+            mesai_saatleri.get(dp, 0), nobet_ucreti, tatil_artirimi,
+        )
         _dp_rows = st.session_state.get('cached_rows_liste') or []
         _dp_role_names = st.session_state.get('cached_role_names', _cal_role_names)
         # Tercih istatistikleri (sadece nöbet tutulan günler)
