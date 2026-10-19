@@ -233,7 +233,8 @@ def test_excel_yukleme_bir_kez_islenir_ve_dongu_olmaz(app_url, tmp_path):
         browser, page = _open_app(playwright, app_url, f"{PERSON}, Browser Test Ayşe")
         try:
             assert page.locator("[data-testid='stException']").count() == 0
-            page.get_by_text("📂 Excel Yükle").click()
+            # Excel yükleme sayfanın altındaki Yedek bölümünde.
+            page.locator("summary", has_text="💾 Yedek").click()
             page.locator("[data-testid='stFileUploader'] input[type=file]").set_input_files(str(path))
             page.get_by_text("gün yüklendi").wait_for(timeout=20000)
             _wait_idle(page)

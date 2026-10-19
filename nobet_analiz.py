@@ -9,6 +9,22 @@ from nobet_core import TR_AY_ADLARI, build_person_ics, preference_summary, tr_sa
 from nobet_durum import save_undo_state
 
 
+# Açık ve koyu temada okunur yarı saydam zeminler.
+_EN_COK_ZEMIN = "background-color: rgba(245,158,11,0.28)"
+_EN_AZ_ZEMIN = "background-color: rgba(59,130,246,0.22)"
+
+
+def _highlight_extremes(column):
+    """Sütunun en çoğunu ve en azını boyar; fark 2'den azsa (dengeli) boyamaz."""
+    _high, _low = column.max(), column.min()
+    if _high - _low < 2:
+        return [""] * len(column)
+    return [
+        _EN_COK_ZEMIN if _v == _high else _EN_AZ_ZEMIN if _v == _low else ""
+        for _v in column
+    ]
+
+
 def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_total, history_holiday,
                         df_stats_load, df_stats_finance, pair_display, df_liste, liste_rows, liste_roles,
                         yil, ay, zorunlu_saat, arife_gunleri, edited_df):
@@ -45,10 +61,13 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                 "Bu ayın tatil günleri azı olana verilir."
             )
         st.dataframe(
-            df_stats_load.style.background_gradient(cmap="Blues", subset=["Toplam"] + list(role_names))
-                               .background_gradient(cmap="Oranges", subset=["Özel", "Cuma", "Tatil"]),
+            df_stats_load.style.apply(
+                _highlight_extremes, subset=["Toplam", "Hafta sonu", "Cuma", "Tatil"] + list(role_names),
+            ),
             width="stretch"
         )
+        st.caption("Hafta sonuna tatiller de dahildir. Renkli hücreler sütunun en çoğu (turuncu) "
+                   "ve en azıdır (mavi); fark 2'den azsa renk yoktur.")
         if st.button("🤖 Görev Yerlerini Otomatik Dağıt", width="stretch", help="Mevcut nöbetçileri değiştirmeden sadece görev yerlerini (Rollerini) otomatik olarak dengeler."):
             if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
                 save_undo_state()
@@ -127,8 +146,7 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
         st.caption(_mesai_text + ". İzin işaretli iş günleri kişinin mesaisinden düşer; "
                    "Müsait Değil düşmez.")
         st.dataframe(
-            df_stats_finance.style.background_gradient(cmap="Reds", subset=["FM", "Ücret (TL)"])
-                                  .format({"Ücret (TL)": lambda value: f"{tr_sayi(value)} ₺"}),
+            df_stats_finance.style.format({"Ücret (TL)": lambda value: f"{tr_sayi(value)} ₺"}),
             width="stretch"
         )
 
