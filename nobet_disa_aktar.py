@@ -224,6 +224,10 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                         f"⚠️ Excel tarihleri seçili dönemle uyuşmuyor ({ay:02d}/{yil}). "
                         f"{_imp['date_mismatch']['day']} günü için farklı ay/yıl veya geçersiz gün "
                         "bulundu; yükleme iptal edildi."))
+                elif _imp["duplicate_day"]:
+                    _msgs.append(("warning",
+                        f"⚠️ Excel'de {_imp['duplicate_day']}. gün iki satırda geçiyor; yükleme iptal edildi. "
+                        "Yinelenen satırı silip tekrar yükleyin."))
                 elif _imp["matched"] == 0:
                     _msgs.append(("warning",
                         "Eşleşen gün bulunamadı; Excel tarihleri okunamadı. Tarih sütununda "
