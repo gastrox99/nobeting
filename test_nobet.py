@@ -20,7 +20,6 @@ from nobet_core import (
     parse_person_limits,
     parse_person_limits_with_issues,
     unknown_names,
-    apply_role_edits,
     previous_period,
     last_shift_offsets,
     special_shift_counts,
@@ -88,7 +87,7 @@ from nobet_core import (
 # Arayüz nobet.py ve bölüm dosyalarına ayrıldı; kaynak denetimleri hepsine bakar.
 APP_FILES = (
     "nobet.py", "nobet_stil.py", "nobet_durum.py", "nobet_paylasim.py", "nobet_disa_aktar.py",
-    "nobet_yedek.py", "nobet_tablo.py", "nobet_takvim.py", "nobet_liste.py", "nobet_analiz.py",
+    "nobet_yedek.py", "nobet_tablo.py", "nobet_takvim.py", "nobet_analiz.py",
 )
 
 
@@ -1207,20 +1206,6 @@ class TestAlgorithmFixes(unittest.TestCase):
             )
             self.assertGreaterEqual(int(schedule.loc["Ali"].sum()), 18)
 
-    def test_gorev_duzenleme_yer_degistirir(self):
-        row = {"Tarih": "01.11.2026 Paz", "AYB": "Ali", "Acil Servis": "Ayşe"}
-        roles = ["AYB", "Acil Servis"]
-        new_row, changed = apply_role_edits(row, {"AYB": "Ayşe", "Acil Servis": "Ayşe"}, roles, ["Ali", "Ayşe"])
-        self.assertTrue(changed)
-        self.assertEqual((new_row["AYB"], new_row["Acil Servis"]), ("Ayşe", "Ali"))
-        # İki hücreyi birden çapraz yazmak da aynı sonucu verir.
-        new_row, _ = apply_role_edits(row, {"AYB": "Ayşe", "Acil Servis": "Ali"}, roles, ["Ali", "Ayşe"])
-        self.assertEqual((new_row["AYB"], new_row["Acil Servis"]), ("Ayşe", "Ali"))
-        # O gün nöbeti olmayan isim yok sayılır.
-        same, changed = apply_role_edits(row, {"AYB": "Can", "Acil Servis": "Ayşe"}, roles, ["Ali", "Ayşe"])
-        self.assertFalse(changed)
-        self.assertEqual(same, row)
-
     def test_kayittaki_eksik_hucre_nobet_sayilmaz(self):
         saved = pd.DataFrame({"1 Paz": [True, None]}, index=["Ali", "Ayşe"])
         state = {}
@@ -2048,7 +2033,9 @@ class TestUiCleanup(unittest.TestCase):
     def test_disa_aktar_menusu_ve_sekmeler(self):
         self.assertIn('st.popover("📤 Dışa aktar"', self.source)
         self.assertNotIn("dl1, dl2, dl3, dl4, dl5, dl6", self.source)
-        self.assertIn('tab_liste, tab_analiz = st.tabs(["📋 Günlük Liste", "📊 Analiz"])', self.source)
+        self.assertIn('st.subheader("📊 Analiz")', self.source)
+        self.assertNotIn('"📋 Günlük Liste"', self.source)
+        self.assertNotIn("Görev Yerlerini Düzenle", self.source)
         self.assertNotIn('st.header("📅 Nöbet Çizelgesi")', self.source)
 
 
@@ -2885,15 +2872,6 @@ class TestReviewFixes(unittest.TestCase):
         self.assertEqual(drop_unknown_people_from_rows(rows, ["Ali"]),
                          [{"Tarih": "01.10.2026 Per", "AYB": "-", "GYB": "Ali"}])
 
-    def test_uygulanamayan_gorev_duzenlemesi_bildirilir(self):
-        from nobet_core import ignored_role_edits
-        row = {"Tarih": "1", "AYB": "Ali", "GYB": "Ayşe"}
-        self.assertEqual(ignored_role_edits(row, {"AYB": "Can", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]),
-                         [("AYB", "Can")])
-        self.assertEqual(ignored_role_edits(row, {"AYB": "", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]),
-                         [("AYB", "")])
-        self.assertEqual(ignored_role_edits(row, {"AYB": "Ayşe", "GYB": "Ayşe"}, ["AYB", "GYB"], ["Ali", "Ayşe"]), [])
-
     def test_tireli_isimler_yasak_ciftte_dogru_ayrilir(self):
         team = ["Ayşe-Nur", "Ali", "Can", "Ece"]
         self.assertEqual(parse_forbidden_pairs("Ayşe-Nur-Ali, Can-Ece", team),
@@ -3182,7 +3160,7 @@ class TestFullAppRender(unittest.TestCase):
             at.run()
             self.assertEqual(
                 [t.label for t in at.tabs],
-                ["🗂️ Tablo Görünümü", "📅 Takvim Görünümü", "📋 Günlük Liste", "📊 Analiz"],
+                ["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"],
             )
             self.assertTrue(any(e.label.startswith("💾 Yedek") for e in at.expander))
             steps = [
