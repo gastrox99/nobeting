@@ -389,6 +389,8 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         _holidays_by_period = st.session_state.setdefault("holidays_by_period", {})
         _holiday_period = period_key(yil, ay)
         _official = official_holidays(yil, ay)
+        # %25 tatil artırımı yalnız resmi/dini bayramlara; elle eklenenlere değil.
+        resmi_tatil_gunleri = frozenset(day for day, _ in _official)
         holiday_input = st.text_input(
             "🎉 Tatiller (bu ay):",
             value=holiday_text_for_period(_holidays_by_period, yil, ay),
@@ -457,7 +459,8 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                 f"{donem_adi(_rate_info['donem'])} katsayısı, damga vergisi düşülmüş. "
                 "Yalnız fazla mesai ödenir: gece ücreti, ayın gece saati ile fazla mesai "
                 "saatinden küçük olanına (her nöbet 12 sa gece), kalan fazla mesaiye "
-                "gündüz ücreti. Tatil günü nöbetleri %25 fazla hesaplanır."
+                "gündüz ücreti. Resmi ve dini bayram nöbetleri %25 fazla hesaplanır "
+                "(elle eklenen tatiller hariç)."
             )
             if not _rate_info["tam"]:
                 _rate_note += " Bu dönemin katsayısı henüz eklenmedi, son bilinen kullanıldı."
@@ -979,7 +982,7 @@ with tab_grid:
 with tab_cal:
     render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, tatil_gunleri,
                         today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, nobet_ucreti,
-                        tatil_artirimi, gece_artirimi)
+                        tatil_artirimi, gece_artirimi, resmi_tatil_gunleri)
 
 # Build algorithm inputs from pref_df
 df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
@@ -1421,6 +1424,7 @@ _analysis_key = (
     nobet_ucreti,
     tatil_artirimi,
     gece_artirimi,
+    tuple(sorted(resmi_tatil_gunleri)),
     tuple((column, gun_detaylari[column]["weekend"], gun_detaylari[column]["holiday"]) for column in sutunlar),
 )
 if (
@@ -1439,6 +1443,7 @@ if (
         mesai_saatleri,
         tatil_artirimi,
         gece_artirimi,
+        resmi_tatil_gunleri,
     )
     st.session_state.cached_analysis_key = _analysis_key
 

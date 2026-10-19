@@ -1475,11 +1475,14 @@ def build_schedule_analysis(
     mesai_saatleri=None,
     tatil_artirimi=0.0,
     gece_artirimi=0.0,
+    resmi_tatil_gunleri=None,
 ):
     """Çizelge görünümünde kullanılan saf analiz tablolarını üretir.
 
     ``mesai_saatleri``: (isteğe bağlı) {kişi: zorunlu mesai}; izinli günler
     düşülmüş kişisel mesai. Verilmezse herkes için ``zorunlu_saat``.
+    ``resmi_tatil_gunleri``: %25 artırımlı resmi/dini bayram günleri (gün
+    numaraları); elle eklenen tatiller artırım almaz. Verilmezse tüm tatiller.
     """
     mesai_saatleri = mesai_saatleri or {}
     all_role_counts = {role: {isim: 0 for isim in isimler} for role in role_names}
@@ -1499,6 +1502,13 @@ def build_schedule_analysis(
     special_totals = schedule[special_columns].sum(axis=1) if special_columns else pd.Series(0, index=isimler)
     holiday_columns = [column for column in schedule.columns if gun_detaylari[column]["holiday"]]
     holiday_totals = schedule[holiday_columns].sum(axis=1) if holiday_columns else pd.Series(0, index=isimler)
+    pay_holiday_columns = [
+        column for column in holiday_columns
+        if resmi_tatil_gunleri is None or gun_detaylari[column]["day_num"] in resmi_tatil_gunleri
+    ]
+    pay_holiday_totals = (
+        schedule[pay_holiday_columns].sum(axis=1) if pay_holiday_columns else pd.Series(0, index=isimler)
+    )
 
     stats_load = []
     stats_finance = []
@@ -1506,7 +1516,7 @@ def build_schedule_analysis(
         toplam = int(totals.get(isim, 0))
         mesai = mesai_saatleri.get(isim, zorunlu_saat)
         saat, fm_saat, ucret = nobet_ucreti_hesapla(
-            toplam, int(holiday_totals.get(isim, 0)), mesai, nobet_ucreti, tatil_artirimi,
+            toplam, int(pay_holiday_totals.get(isim, 0)), mesai, nobet_ucreti, tatil_artirimi,
             gece_artirimi,
         )
         limits = person_limits.get(isim, {})

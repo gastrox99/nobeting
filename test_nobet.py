@@ -2532,6 +2532,17 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         self.assertAlmostEqual(nobet_ucreti_hesapla(10, 1, 168, 100.0, 0.25, 0.10)[2],
                                72 * 110.0 + 24 * 25.0)
 
+    def test_elle_eklenen_tatile_yuzde_yirmi_bes_yok(self):
+        # 29 Ekim resmi tatil, 30 Ekim elle eklendi; zorunlu mesai 0.
+        days = build_gun_detaylari(2026, 10, 31, [29, 30])
+        schedule = pd.DataFrame(False, index=["Ali"], columns=list(days))
+        schedule.at["Ali", "29 Per"] = True
+        schedule.at["Ali", "30 Cum"] = True
+        _, finance, _ = build_schedule_analysis(
+            schedule, [], [], ["Ali"], days, {}, 0, 100.0, None, 0.25, 0.0, frozenset({29}))
+        # 48 saat fm; yalnız 29 Ekim'in 24 saati %25 fazla.
+        self.assertAlmostEqual(float(finance["Ücret (TL)"].iloc[0]), 48 * 100 + 24 * 25)
+
     def test_unvan_ayari_saklanir_gecersizi_atlanir(self):
         state = {"unvan_val": "Pratisyen Tabip", "riskli_birim_val": True,
                  "nobet_ucreti_kaynak": "Pratisyen Tabip|2026-2|1"}
