@@ -16,6 +16,7 @@ import db
 from nobet_core import (
     NOBET_UNVANLARI,
     katsayi_donemi,
+    nobet_ucreti_hesapla,
     unvan_saat_ucreti,
     parse_holiday_days,
     validate_inputs,
@@ -2448,6 +2449,16 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         self.assertEqual(katsayi_donemi(2027, 1), ((2026, 2), False))
         self.assertEqual(katsayi_donemi(2025, 12), ((2026, 1), False))
         self.assertIsNone(unvan_saat_ucreti("Profesör", 2026, 10))
+
+    def test_tatil_nobeti_yuzde_yirmi_bes_fazla(self):
+        # 8 nöbet = 192 saat, 160 saat mesai düşülür: 32 saat fazla mesai.
+        self.assertEqual(nobet_ucreti_hesapla(8, 0, 160, 100.0, 0.25), (192, 32, 3200.0))
+        # 1 tatil nöbeti: 24 saati %25 fazla -> 32*100 + 24*25.
+        self.assertEqual(nobet_ucreti_hesapla(8, 1, 160, 100.0, 0.25)[2], 3800.0)
+        # Tatil saati fazla mesaiyi aşamaz.
+        self.assertEqual(nobet_ucreti_hesapla(7, 2, 160, 100.0, 0.25)[2], 800.0 + 200.0)
+        # Ünvan seçilmemişse artırım yok.
+        self.assertEqual(nobet_ucreti_hesapla(8, 1, 160, 100.0)[2], 3200.0)
 
     def test_unvan_ayari_saklanir_gecersizi_atlanir(self):
         state = {"unvan_val": "Pratisyen Tabip", "riskli_birim_val": True,

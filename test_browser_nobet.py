@@ -378,7 +378,7 @@ def test_unvan_secilince_saat_ucreti_gelir_ve_elle_degisir(app_url):
             assert rate() == 300
             expect(page.get_by_text("Ücret elle değiştirildi", exact=False)).to_be_visible()
             # Riskli birim seçilince ücret yeniden otomatik hesaplanır (%50).
-            page.get_by_text("Acil / yoğun bakım / ameliyathane (%50 artırımlı)").click()
+            page.get_by_text("Riskli birim (%50 artırımlı)").click()
             _wait_idle(page)
             assert abs(rate() - auto * 1.5) < 0.05
             _no_exception(page)

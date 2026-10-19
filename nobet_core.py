@@ -1402,6 +1402,7 @@ def build_schedule_analysis(
     person_limits,
     zorunlu_saat,
     nobet_ucreti,
+    tatil_artirimi=0.0,
 ):
     """Çizelge görünümünde kullanılan saf analiz tablolarını üretir."""
     all_role_counts = {role: {isim: 0 for isim in isimler} for role in role_names}
@@ -1427,9 +1428,9 @@ def build_schedule_analysis(
     stats_finance = []
     for isim in isimler:
         toplam = int(totals.get(isim, 0))
-        saat = toplam * 24
-        fm_saat = max(0, saat - zorunlu_saat)
-        ucret = fm_saat * nobet_ucreti
+        saat, fm_saat, ucret = nobet_ucreti_hesapla(
+            toplam, int(holiday_totals.get(isim, 0)), zorunlu_saat, nobet_ucreti, tatil_artirimi
+        )
         limits = person_limits.get(isim, {})
         min_limit = limits.get("min", 0)
         max_limit = limits.get("max", 999)
@@ -3151,6 +3152,8 @@ MEMUR_AYLIK_KATSAYI = {
 DAMGA_VERGISI = 0.00759
 GECE_ARTIRIMI = 1.10
 RISKLI_BIRIM_ARTIRIMI = 1.50
+# Resmi ve dini bayram (tatil) günlerinde tutulan nöbet %25 fazla ödenir.
+TATIL_ARTIRIMI = 0.25
 # 08.00-08.00 tutulan 24 saatlik nöbetin 12 saati gündüz, 12 saati gece.
 NOBET_GUNDUZ_SAAT = 12
 NOBET_GECE_SAAT = 12
@@ -3194,6 +3197,20 @@ def unvan_saat_ucreti(unvan, yil, ay, riskli=False):
     toplam_saat = NOBET_GUNDUZ_SAAT + NOBET_GECE_SAAT
     saatlik = round((gunduz * NOBET_GUNDUZ_SAAT + gece * NOBET_GECE_SAAT) / toplam_saat, 2)
     return {"gunduz": gunduz, "gece": gece, "saatlik": saatlik, "donem": donem, "tam": tam}
+
+
+def nobet_ucreti_hesapla(toplam_nobet, tatil_nobet, zorunlu_saat, saat_ucreti, tatil_artirimi=0.0):
+    """(nöbet saati, fazla mesai saati, ücret) döner.
+
+    Tatil günleri zorunlu mesaiye girmediğinden tatil nöbetinin saatleri
+    hep ücretli fazla mesaidir; bu saatler (fazla mesaiyi aşmadan)
+    ``tatil_artirimi`` kadar fazla ödenir.
+    """
+    saat = toplam_nobet * 24
+    fm_saat = max(0, saat - zorunlu_saat)
+    tatil_saat = min(tatil_nobet * 24, fm_saat)
+    ucret = fm_saat * saat_ucreti + tatil_saat * saat_ucreti * tatil_artirimi
+    return saat, fm_saat, ucret
 
 
 def _unvan(value):
