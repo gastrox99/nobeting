@@ -6,7 +6,7 @@ import calendar
 import re
 import matplotlib.pyplot as plt
 from io import BytesIO
-from datetime import date
+from datetime import date, timedelta
 import time
 import os
 import zlib
@@ -39,6 +39,7 @@ try:
         build_person_ics,
         build_share_text,
         shared_default_month,
+        shared_visible_months,
         shared_day_states,
         on_duty_summary,
         shared_updated_text,
@@ -151,6 +152,7 @@ except ImportError:
         build_person_ics,
         build_share_text,
         shared_default_month,
+        shared_visible_months,
         shared_day_states,
         on_duty_summary,
         shared_updated_text,
@@ -304,8 +306,9 @@ def _render_shared_view(token):
     _updated = {(_y, _m): _t for _y, _m, _t in _months}
     _today = now_tr().date()
     if (_year, _month) == (0, 0):
-        # Kalıcı bağlantı: kayıtlı ayların hepsi gösterilir, bu ay önce açılır.
-        _periods = list(_updated)
+        # Kalıcı bağlantı: geçmiş aylar, bu ay ve sonraki ay gösterilir (daha
+        # ileri aylar taslaktır); bu ay önce açılır.
+        _periods = shared_visible_months(list(_updated), _today)
         if not _periods:
             st.info("Henüz paylaşılan bir nöbet listesi yok.")
             return
@@ -316,40 +319,24 @@ def _render_shared_view(token):
         )
     else:
         st.subheader(f"{TR_AY_ADLARI[_month]} {_year}")
-    _loaded = load_schedule(f"Otomatik_{_year}_{_month:02d}", _year, _month, owner=_owner)
-    _rows = _loaded[4] if _loaded and len(_loaded) > 4 and _loaded[4] else None
-    _schedule = _loaded[1] if _loaded else None
-    if _schedule is not None:
-        _schedule = as_bool_frame(_schedule)
-    if _rows:
-        _roles = []
-        for _row in _rows:
-            for _key in _row:
-                if _key != "Tarih" and _key not in _roles:
-                    _roles.append(_key)
-        if _schedule is not None and not _schedule.empty:
-            # Görev sayısından fazla atanan kişiler de listede görünsün.
-            _day_columns = {}
-            for _col in _schedule.columns:
-                try:
-                    _day_columns[int(str(_col).split()[0])] = _col
-                except (ValueError, IndexError):
-                    continue
-            _row_columns = []
-            for _row in _rows:
-                _parsed = parse_schedule_import_date(_row.get("Tarih"))
-                _row_columns.append(_day_columns.get(_parsed["day"]) if _parsed else None)
-            _rows, _roles = add_overflow_roles(_rows, _roles, _schedule, _row_columns)
-    elif _schedule is not None and not _schedule.empty:
-        _rows = _rows_from_schedule(_schedule, _year, _month)
-        _roles = ["Nöbetçiler"]
-    else:
+    _rows, _roles = _shared_rows(_owner, _year, _month)
+    if not _rows:
         st.info("Bu ay için henüz çizelge yok.")
         return
     _updated_text = shared_updated_text(_updated.get((_year, _month)))
     if _updated_text:
         st.caption(f"Son güncelleme: {_updated_text}")
     _on_duty = on_duty_summary(_rows, _roles, _year, _month, _today)
+    _tomorrow = _today + timedelta(days=1)
+    if (
+        (_today.year, _today.month) == (_year, _month)
+        and _tomorrow.month != _month
+        and (_tomorrow.year, _tomorrow.month) in _updated
+    ):
+        # Ayın son günü: yarının nöbetçisi sonraki ayın listesinde.
+        _next_rows, _next_roles = _shared_rows(_owner, _tomorrow.year, _tomorrow.month)
+        if _next_rows:
+            _on_duty += on_duty_summary(_next_rows, _next_roles, _tomorrow.year, _tomorrow.month, _today)
     if _on_duty:
         for _col, (_label, _text) in zip(st.columns(len(_on_duty)), _on_duty):
             with _col:
@@ -393,6 +380,38 @@ def _render_shared_view(token):
             on_click="ignore", width="stretch",
         )
     st.caption("Bu sayfa salt okunurdur ve liste sahibi değişiklik yaptıkça güncellenir.")
+
+
+def _shared_rows(_owner, year, month):
+    """Paylaşım sayfası için ayın satırları ve görevleri: (satırlar, görevler); yoksa (None, None)."""
+    _loaded = load_schedule(f"Otomatik_{year}_{month:02d}", year, month, owner=_owner)
+    _rows = _loaded[4] if _loaded and len(_loaded) > 4 and _loaded[4] else None
+    _schedule = _loaded[1] if _loaded else None
+    if _schedule is not None:
+        _schedule = as_bool_frame(_schedule)
+    if _rows:
+        _roles = []
+        for _row in _rows:
+            for _key in _row:
+                if _key != "Tarih" and _key not in _roles:
+                    _roles.append(_key)
+        if _schedule is not None and not _schedule.empty:
+            # Görev sayısından fazla atanan kişiler de listede görünsün.
+            _day_columns = {}
+            for _col in _schedule.columns:
+                try:
+                    _day_columns[int(str(_col).split()[0])] = _col
+                except (ValueError, IndexError):
+                    continue
+            _row_columns = []
+            for _row in _rows:
+                _parsed = parse_schedule_import_date(_row.get("Tarih"))
+                _row_columns.append(_day_columns.get(_parsed["day"]) if _parsed else None)
+            _rows, _roles = add_overflow_roles(_rows, _roles, _schedule, _row_columns)
+        return _rows, _roles
+    if _schedule is not None and not _schedule.empty:
+        return _rows_from_schedule(_schedule, year, month), ["Nöbetçiler"]
+    return None, None
 
 
 _share_token = st.query_params.get("paylas")
@@ -993,6 +1012,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
 
     person_limits, _lim_invalid_lines, _lim_errors = parse_person_limits_with_issues(limits_text)
     _lim_unknown = unknown_names(person_limits, isimler)
+    # "Sınırsız" bırakılan kişi (0-999) limitli sayılmaz; yoksa aylar arası
+    # toplam dengesinden ve İyileştir'in toplam dengesinden habersizce çıkıyordu.
+    person_limits = {
+        _p: _v for _p, _v in person_limits.items() if _v["min"] > 0 or _v["max"] < 999
+    }
     st.session_state.person_limits = person_limits
     st.session_state.lim_unknown_names = _lim_unknown
     if _lim_errors:
@@ -2464,7 +2488,7 @@ if sim_clicked:
 if st.session_state.pop("run_improve", False):
     st.session_state.incomplete_simulation = None
     try:
-        from nobet_iyilestir import improve_schedule, improvement_lines
+        from nobet_iyilestir import improve_schedule, improvement_lines, rule_breaking_shifts
     except ImportError:
         improve_schedule = None
     if improve_schedule is None:
@@ -2489,11 +2513,25 @@ if st.session_state.pop("run_improve", False):
                 st.error(f"İyileştirme yapılamadı: {_exc}")
             else:
                 if _improved is None:
-                    st.session_state.improve_notice = ("info", ["Daha iyi bir liste bulunamadı; mevcut liste korundu."])
+                    _breaking = rule_breaking_shifts(
+                        st.session_state.schedule_bool, isimler, sutunlar, df_unwanted, gun_detaylari,
+                        min_bosluk, forbidden_pairs=st.session_state.forbidden_pairs,
+                        fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool),
+                        initial_last_shift=prev_last_shift,
+                    )
+                    if _breaking:
+                        st.session_state.improve_notice = ("info", [
+                            f"Listede kurala uymayan {_breaking} nöbet var (izin günü, dinlenme ya da "
+                            "birlikte çalışamayan ikili). İyileştir bu yüzden çözüm bulamadı; önce bu "
+                            "nöbetleri düzeltin ya da Simülasyon'u çalıştırın. Mevcut liste korundu."
+                        ])
+                    else:
+                        st.session_state.improve_notice = ("info", ["Daha iyi bir liste bulunamadı; mevcut liste korundu."])
                 else:
                     save_undo_state()
                     st.session_state.schedule_bool = _improved
-                    st.session_state.should_regenerate_assignments = True
+                    # Görev yerleri yalnızca değişen günlerde güncellenir (elle
+                    # yapılan görev değişiklikleri korunur).
                     st.session_state.improve_notice = ("success", improvement_lines(_before, _after))
                 st.rerun()
 

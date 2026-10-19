@@ -2642,6 +2642,13 @@ def shared_default_month(months, today):
     return earlier[-1] if earlier else 0
 
 
+def shared_visible_months(months, today):
+    """Kalıcı paylaşım linkinde gösterilecek aylar: geçmiş aylar, bu ay ve
+    sonraki ay. Daha ileri aylar taslak sayılır, ekibe gösterilmez."""
+    next_period = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+    return [period for period in months if tuple(period) <= next_period]
+
+
 def shared_day_states(rows, yil, ay, today):
     """Her satır için "past", "today" ya da "future" (tarihi okunamayan: "future")."""
     states = []
