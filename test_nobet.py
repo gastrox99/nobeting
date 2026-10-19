@@ -14,6 +14,9 @@ import time
 from unittest.mock import patch
 import db
 from nobet_core import (
+    NOBET_UNVANLARI,
+    katsayi_donemi,
+    unvan_saat_ucreti,
     parse_holiday_days,
     validate_inputs,
     parse_forbidden_pairs,
@@ -2415,6 +2418,46 @@ class TestGoogleLoginSupport(unittest.TestCase):
         source = _app_source()
         self.assertIn('st.download_button("🖼️ Resim (PNG)", _png_bytes,', source)
         self.assertNotIn("st.session_state[png_key]", source)
+
+
+class TestUnvanSaatUcreti(unittest.TestCase):
+    def test_yayimlanan_tablolarla_ortusur(self):
+        # Ocak-Haziran 2026 net saat ücretleri (sendika tablosu).
+        beklenen = {"Uzman Tabip": 220.37, "Pratisyen Tabip": 199.71,
+                    "Hemşire / Ebe (yüksek öğrenim)": 137.73, "Sağlık Personeli (lise)": 117.07}
+        for unvan, tutar in beklenen.items():
+            self.assertAlmostEqual(unvan_saat_ucreti(unvan, 2026, 3)["gunduz"], tutar, delta=0.02)
+        # Temmuz-Aralık 2026: pratisyen gündüz 226,71, gece 249,39.
+        pratisyen = unvan_saat_ucreti("Pratisyen Tabip", 2026, 10)
+        self.assertAlmostEqual(pratisyen["gunduz"], 226.71, delta=0.02)
+        self.assertAlmostEqual(pratisyen["gece"], 249.39, delta=0.02)
+
+    def test_saatlik_gunduz_ve_gece_ortalamasi(self):
+        for unvan in NOBET_UNVANLARI:
+            info = unvan_saat_ucreti(unvan, 2026, 10)
+            self.assertAlmostEqual(info["saatlik"], (info["gunduz"] + info["gece"]) / 2, delta=0.01)
+            self.assertGreater(info["gece"], info["gunduz"])
+
+    def test_riskli_birim_yuzde_elli(self):
+        normal = unvan_saat_ucreti("Uzman Tabip", 2026, 10)
+        riskli = unvan_saat_ucreti("Uzman Tabip", 2026, 10, riskli=True)
+        self.assertAlmostEqual(riskli["gunduz"], normal["gunduz"] * 1.5, delta=0.02)
+
+    def test_bilinmeyen_donem_son_katsayiyi_kullanir(self):
+        self.assertEqual(katsayi_donemi(2026, 7), ((2026, 2), True))
+        self.assertEqual(katsayi_donemi(2027, 1), ((2026, 2), False))
+        self.assertEqual(katsayi_donemi(2025, 12), ((2026, 1), False))
+        self.assertIsNone(unvan_saat_ucreti("Profesör", 2026, 10))
+
+    def test_unvan_ayari_saklanir_gecersizi_atlanir(self):
+        state = {"unvan_val": "Pratisyen Tabip", "riskli_birim_val": True,
+                 "nobet_ucreti_kaynak": "Pratisyen Tabip|2026-2|1"}
+        restored = {}
+        apply_app_settings(restored, json.loads(json.dumps(collect_app_settings(state))))
+        self.assertEqual(restored, state)
+        restored = {}
+        apply_app_settings(restored, {"title": "Profesör", "risky_unit": "evet"})
+        self.assertEqual(restored, {})
 
 
 class TestAppSettingsPersistence(unittest.TestCase):
