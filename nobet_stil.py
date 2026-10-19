@@ -228,6 +228,15 @@ GLOBAL_CSS = """
     font-size: 0.875rem;
 }
 
+/* Takvim: geniş ekranda gün adı başlık satırında; telefonda sütunlar alt alta
+   dizildiği için başlık ve boş kutular gizlenir, gün adı kartta yazar. */
+.cal-gun-adi { display: none; font-weight: 600; }
+@media (max-width: 640px) {
+    .st-key-cal-head { display: none !important; }
+    .st-key-cal-grid :is([data-testid="column"],[data-testid="stColumn"]):has(.cal-empty) { display: none !important; }
+    .cal-gun-adi { display: inline; }
+}
+
 </style>
 """
 
