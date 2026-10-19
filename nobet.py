@@ -227,6 +227,22 @@ if not _db_ready:
         f"özellikleri şu an çalışmayabilir.{_db_reason}"
     )
 
+def _version_box(key):
+    """Kaydın son bilinen sürümünü tutan, oturumda saklı değiştirilebilir sözlük.
+
+    Kayıt yeni sürümü bu sözlüğe yerinde yazar (``version_out``). Sürüm kayıttan
+    sonra ``st.session_state``'e ayrıca atansaydı, telefonda hızlı dokunuşların
+    başlattığı yeni çalıştırma betiği tam o atamada kesebiliyordu: veri yazılmış
+    ama sürüm eski kalmış olurdu ve sonraki kayıt kendi değişikliğini "başka
+    yerde değiştirilmiş" sanıp duruyordu.
+    """
+    box = st.session_state.get(key)
+    if not isinstance(box, dict):
+        box = {"version": box}
+        st.session_state[key] = box
+    return box
+
+
 # --- Ekip ve ayarları veritabanından geri yükle (sayfa yenilemesinde) ---
 if 'app_settings_loaded' not in st.session_state:
     st.session_state.app_settings_loaded = True
@@ -237,7 +253,9 @@ if 'app_settings_loaded' not in st.session_state:
         try:
             # Sürüm önce okunur: arada başka yerde kayıt olursa sürüm eski kalır ve
             # ilk kayıtta uyarı verilir (yeni veri sessizce ezilmez).
-            st.session_state.settings_version = get_settings_version(owner=current_owner)
+            # Sürüm değiştirilebilir bir kutuda tutulur: kayıt bu kutuyu yerinde
+            # günceller (bkz. _version_box).
+            st.session_state.settings_version = {"version": get_settings_version(owner=current_owner)}
             _stored_settings = load_app_settings(owner=current_owner, raise_on_error=True)
         except Exception:
             st.session_state.app_settings_load_failed = True
@@ -519,11 +537,11 @@ if (
     # İlk açılışta boş ekip kaydedilmesin (localStorage'dan gelecek ekip ezilmesin).
     and not (_nothing_saved_yet and not st.session_state.get("isimler_text", "").strip())
 ):
-    _settings_version = {}
+    _settings_version = _version_box("settings_version")
     try:
         _settings_saved = save_app_settings(
             _current_settings, owner=current_owner,
-            expected_version=st.session_state.get("settings_version"), version_out=_settings_version,
+            expected_version=_settings_version.get("version"), version_out=_settings_version,
         )
     except SaveConflict:
         # Başka bir yerde (ör. telefonda) ayarlar değişmiş; onların üzerine yazma.
@@ -532,8 +550,6 @@ if (
         st.session_state.settings_conflict = True
     if _settings_saved:
         st.session_state.last_saved_settings = _current_settings
-        if "version" in _settings_version:
-            st.session_state.settings_version = _settings_version["version"]
         # Hazırlanmış yedek artık eski; yeniden hazırlanması gerekir.
         st.session_state.pop("backup_bytes", None)
 if st.session_state.get("settings_conflict"):
@@ -574,12 +590,13 @@ def _save_outgoing_period(period, schedule, preferences, rows):
         return True
     st.session_state.pop("backup_bytes", None)
     # False dönerse ay değişimi durdurulur: son değişiklikler kaybolmasın.
+    _box = _version_box("schedule_version")
     try:
         return bool(save_schedule(
             f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
             schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
             settings_dict={"locked": locks_to_json(_locks), "hidden": _hidden},
-            expected_version=st.session_state.get("schedule_version"),
+            expected_version=_box.get("version"), version_out=_box,
         ))
     except SaveConflict:
         st.session_state.autosave_blocked_period = tuple(period)
@@ -619,7 +636,9 @@ if 'schedule_bool' not in st.session_state:
     st.session_state.autosave_conflict_period = None
     st.session_state.conflict_leave_ack = None
     # Sürüm önce okunur; arada başka yerde kayıt olursa ilk kayıtta uyarı verilir.
-    st.session_state.schedule_version = get_schedule_version(_auto_name, yil, ay, owner=current_owner) if _db_ready else None
+    st.session_state.schedule_version = {
+        "version": get_schedule_version(_auto_name, yil, ay, owner=current_owner) if _db_ready else None
+    }
     if not restore_auto_saved_schedule(
         st.session_state,
         _load_auto_schedule,
@@ -1338,14 +1357,14 @@ elif (
     auto_name = f"Otomatik_{yil}_{ay:02d}"
     _saved_ok = False
     _save_conflict = False
-    _schedule_version = {}
+    _schedule_version = _version_box("schedule_version")
     try:
         _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
                                   pref_df=st.session_state.get('pref_df'),
                                   rows_liste=rows_liste, owner=current_owner,
                                   settings_dict={"locked": locks_to_json(_active_locks),
                                                  "hidden": _hidden_people},
-                                  expected_version=st.session_state.get("schedule_version"),
+                                  expected_version=_schedule_version.get("version"),
                                   version_out=_schedule_version)
     except SaveConflict:
         # Bu ay başka bir yerde (ör. telefonda) değişmiş; onların üzerine yazma.
@@ -1364,8 +1383,6 @@ elif (
     if _save_conflict:
         pass
     elif _saved_ok:
-        if "version" in _schedule_version:
-            st.session_state.schedule_version = _schedule_version["version"]
         st.session_state.last_saved_fingerprint = _persist_fp
         st.session_state.last_auto_save = time.time()
         update_persistence_feedback(st.session_state, True)
