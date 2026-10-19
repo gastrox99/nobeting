@@ -71,6 +71,7 @@ def _seed(db):
     _save_month(db, today.year, today.month, days)
     prev_year, prev_month = previous_period(today.year, today.month)
     _save_month(db, prev_year, prev_month, {3: ("Önceki Gül", "Önceki Hasan")})
+    assert db.save_app_settings({"team": "Bugün Ali, Talep Ali"}, owner=OWNER)
     return {
         "today": today, "tomorrow_in_month": tomorrow.month == today.month,
         "previous": (prev_year, prev_month),
@@ -84,6 +85,8 @@ def _cleanup(db):
     with conn, conn.cursor() as cur:
         cur.execute("DELETE FROM schedules WHERE owner = %s", (OWNER,))
         cur.execute("DELETE FROM share_links WHERE owner = %s", (OWNER,))
+        cur.execute("DELETE FROM team_requests WHERE owner = %s", (OWNER,))
+        cur.execute("DELETE FROM app_settings WHERE key = %s", (db.settings_key(OWNER),))
     conn.close()
 
 
@@ -140,12 +143,41 @@ def _open(playwright, url):
     return browser, page
 
 
+def _choose(page, name, all_rows=True):
+    """Açılışta sorulan adı seçer; istenirse tüm listeyi açar."""
+    page.get_by_text("Adını seç", exact=True).click()
+    page.get_by_role("option", name=name, exact=True).click()
+    _wait_idle(page)
+    if all_rows:
+        page.get_by_text("Tüm listeyi göster", exact=True).click()
+        _wait_idle(page)
+
+
+def test_once_ad_sorulur_sonra_kendi_nobetleri(shared):
+    url, data = shared
+    with sync_playwright() as p:
+        browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
+        try:
+            _no_exception(page)
+            expect(page.get_by_text("Nöbetlerini görmek ve talep göndermek için adını seç.")).to_be_visible()
+            expect(page.locator("[data-testid='stDataFrame']")).to_have_count(0)
+            _choose(page, "Bugün Ali", all_rows=False)
+            _no_exception(page)
+            grid = page.locator("[data-testid='stDataFrame']")
+            expect(grid).to_contain_text("Bugün Ali")
+            if data["tomorrow_in_month"]:
+                expect(grid).not_to_contain_text("Yarın Can")
+        finally:
+            browser.close()
+
+
 def test_kalici_baglanti_bu_ayi_acar_ve_ay_degistirilir(shared):
     url, data = shared
     today = data["today"]
     with sync_playwright() as p:
         browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
         try:
+            _choose(page, "Bugün Ali")
             _no_exception(page)
             expect(page.get_by_text("Son güncelleme:")).to_be_visible()
             expect(page.get_by_text("Bugün nöbetçi")).to_be_visible()
@@ -174,10 +206,66 @@ def test_eski_aylik_baglanti_calismaya_devam_eder(shared):
     with sync_playwright() as p:
         browser, page = _open(p, f"{url}/?paylas={data['monthly']}")
         try:
+            _choose(page, "Bugün Ali")
             _no_exception(page)
             expect(page.get_by_text(f"{TR_AY_ADLARI[prev_month]} {prev_year}")).to_be_visible()
             expect(page.locator("[data-testid='stDataFrame']")).to_contain_text("Önceki Gül")
             # Aylık bağlantıda ay seçimi yok.
             expect(page.get_by_text("Ay:", exact=True)).to_have_count(0)
+        finally:
+            browser.close()
+
+
+def test_talep_gonderilir_ve_onay_bekler(shared):
+    url, data = shared
+    today = data["today"]
+    next_year, next_month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+    with sync_playwright() as p:
+        browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
+        try:
+            _choose(page, "Talep Ali", all_rows=False)
+            page.get_by_role("tab", name="📝 Talep Gönder").click()
+            # Varsayılan ay sonraki ay.
+            expect(page.get_by_text(f"{TR_AY_ADLARI[next_month]} {next_year}", exact=True)).to_be_visible()
+            page.get_by_label("👍 Nöbet istediğim günler (Tercih)").fill("3,5")
+            page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("5-7,abc")
+            page.get_by_role("button", name="📨 Talebi gönder").click()
+            _wait_idle(page)
+            _no_exception(page)
+            expect(page.get_by_text("Talep gönderilmedi:")).to_be_visible()
+            assert _with_db(lambda db: db.list_team_requests(OWNER)) == []
+
+            page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("10-12")
+            page.get_by_role("button", name="📨 Talebi gönder").click()
+            _wait_idle(page)
+            _no_exception(page)
+            expect(page.get_by_text("Talebin iletildi")).to_be_visible()
+            requests = _with_db(lambda db: db.list_team_requests(OWNER))
+            assert [(r["person"], r["year"], r["month"], r["days"]) for r in requests] == [
+                ("Talep Ali", next_year, next_month, {"tercih": [3, 5], "izin": [10, 11, 12]}),
+            ]
+            # Liste sekmesi yerinde durur.
+            page.get_by_role("tab", name="📋 Nöbet Listesi").click()
+            expect(page.get_by_text("listesinde nöbetin yok")).to_be_visible()
+
+            # Sayfa yeniden açılınca ad telefonda saklı olduğu için hazır gelir;
+            # bekleyen talep kutularda durur ve güncellenince yerine geçer.
+            page.reload()
+            page.get_by_role("tab", name="📝 Talep Gönder").wait_for()
+            _wait_idle(page)
+            _no_exception(page)
+            page.get_by_role("tab", name="📝 Talep Gönder").click()
+            expect(page.get_by_label("👍 Nöbet istediğim günler (Tercih)")).to_have_value("3,5")
+            expect(page.get_by_label("🏖️ İzinli olduğum günler (İzin)")).to_have_value("10-12")
+            expect(page.get_by_role("button", name="📨 Talebi gönder")).to_have_count(0)
+            page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("20")
+            page.get_by_role("button", name="🔄 Talebi güncelle").click()
+            _wait_idle(page)
+            _no_exception(page)
+            expect(page.get_by_text("Talebin iletildi")).to_be_visible()
+            requests = _with_db(lambda db: db.list_team_requests(OWNER))
+            assert [(r["person"], r["days"]) for r in requests] == [
+                ("Talep Ali", {"tercih": [3, 5], "izin": [20]}),
+            ]
         finally:
             browser.close()

@@ -8,6 +8,7 @@ import numpy as np
 import random
 import hashlib
 import json
+import calendar
 import math
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -2988,6 +2989,121 @@ def shared_visible_months(months, today):
     sonraki ay. Daha ileri aylar taslak sayılır, ekibe gösterilmez."""
     next_period = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
     return [period for period in months if tuple(period) <= next_period]
+
+
+# --- Ekip talepleri (paylaşım linkinden gelen tercih/izin istekleri) ---
+# (anahtar, kutu adı, tercih değeri). Değerler Tercih Belirle'dekiyle aynı.
+TALEP_TURLERI = (
+    ("tercih", "Tercih", 1),
+    ("kacin", "Kaçın", 2),
+    ("izin", "İzin", 3),
+    ("musait_degil", "Müsait Değil", 4),
+)
+TALEP_METIN_SINIRI = 100
+TALEP_ACIK_AY_SAYISI = 3
+
+
+def request_open_months(today, count=TALEP_ACIK_AY_SAYISI):
+    """Ekibin talep girebileceği aylar: bu ay ve sonraki aylar (geçmiş aylar kapalı)."""
+    periods = []
+    year, month = today.year, today.month
+    for _ in range(count):
+        periods.append((year, month))
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return periods
+
+
+def parse_team_request(texts, year, month, today):
+    """Talep kutularını ({tür: metin}) ayrıştırır: ({tür: [gün, ...]}, [hata, ...]).
+
+    Her kutu tatil kutusuyla aynı biçimdedir ("3,5,10-14"). Geçmiş günler,
+    kapalı aylar, aynı günün iki kutuda yazılması ve boş talep hata sayılır;
+    hata varsa talep gönderilmez.
+    """
+    errors = []
+    if (year, month) not in request_open_months(today):
+        return {}, ["Bu ay için talep gönderilemez."]
+    max_day = calendar.monthrange(year, month)[1]
+    first_open = today.day if (year, month) == (today.year, today.month) else 1
+    days_by_kind = {}
+    owner_of_day = {}
+    for key, label, _ in TALEP_TURLERI:
+        text = str(texts.get(key) or "").strip()
+        if not text:
+            continue
+        if len(text) > TALEP_METIN_SINIRI:
+            errors.append(f"{label}: en fazla {TALEP_METIN_SINIRI} karakter yazılabilir.")
+            continue
+        days, invalid = parse_holiday_days(text, max_day)
+        if invalid:
+            errors.append(
+                f"{label}: " + ", ".join(f"'{part}'" for part in invalid)
+                + f" anlaşılmadı. Günleri 1-{max_day} arasında 5 ya da 10-14 biçiminde, virgülle ayırarak yazın."
+            )
+        past = [day for day in days if day < first_open]
+        if past:
+            errors.append(f"{label}: geçmiş günler yazılamaz ({format_day_ranges(past)}).")
+        days = [day for day in days if day >= first_open]
+        for day in days:
+            if day in owner_of_day:
+                errors.append(f"{day}. gün hem {owner_of_day[day]} hem {label} kutusunda yazılı.")
+            else:
+                owner_of_day[day] = label
+        if days:
+            days_by_kind[key] = days
+    if not errors and not days_by_kind:
+        errors.append("En az bir kutuya gün yazın.")
+    return (days_by_kind if not errors else {}), errors
+
+
+def format_day_ranges(days):
+    """[3, 5, 10, 11, 12] -> "3, 5, 10-12"."""
+    parts = []
+    days = sorted(set(int(day) for day in days))
+    start = prev = None
+    for day in days + [None]:
+        if start is not None and day == prev + 1:
+            prev = day
+            continue
+        if start is not None:
+            parts.append(str(start) if start == prev else f"{start}-{prev}")
+        start = prev = day
+    return ", ".join(parts)
+
+
+def team_request_summary(days_by_kind):
+    """Talep özetini kutu sırasıyla [(kutu adı, "3, 5, 10-12"), ...] olarak döner."""
+    return [
+        (label, format_day_ranges(days_by_kind[key]))
+        for key, label, _ in TALEP_TURLERI
+        if days_by_kind.get(key)
+    ]
+
+
+def apply_team_request(pref_df, person, days_by_kind):
+    """Talebi tercih tablosuna yazar: (yeni tablo, değişen hücre sayısı).
+
+    Yalnızca talepte yazılı günler değişir; kişinin diğer günleri olduğu gibi kalır.
+    """
+    result = pref_df.copy()
+    if person not in result.index:
+        return result, 0
+    columns = {}
+    for column in result.columns:
+        try:
+            columns[int(str(column).split()[0])] = column
+        except (ValueError, IndexError):
+            continue
+    changed = 0
+    for key, _, value in TALEP_TURLERI:
+        for day in days_by_kind.get(key) or []:
+            column = columns.get(int(day))
+            if column is None:
+                continue
+            if int(result.at[person, column]) != value:
+                result.at[person, column] = value
+                changed += 1
+    return result, changed
 
 
 def shared_day_states(rows, yil, ay, today):

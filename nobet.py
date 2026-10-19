@@ -18,7 +18,7 @@ import nobet_core as _core_module
 _UI_MODULES = (
     "nobet_stil", "nobet_durum", "nobet_paylasim", "nobet_disa_aktar",
     "nobet_yedek", "nobet_tablo", "nobet_takvim", "nobet_analiz",
-    "nobet_ekip",
+    "nobet_ekip", "nobet_talepler",
 )
 
 
@@ -139,6 +139,7 @@ from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_ekip import render_team_table, render_pair_matrix
+from nobet_talepler import render_team_requests
 from streamlit_local_storage import LocalStorage
 
 # Veritabanını sunucu başına bir kez hazırla; başarısızsa sonucu kalıcı
@@ -1038,6 +1039,10 @@ ui = ui_colors(_dark_theme)
 mesai_saatleri = personal_work_hours(
     gun_detaylari, official_half_days(yil, ay), st.session_state.pref_df, isimler
 )
+
+# Paylaşım linkinden gelen tercih/izin talepleri onay bekler (nobet_talepler.py).
+if _db_ready:
+    render_team_requests(current_owner, yil, ay, isimler, save_undo_state)
 
 tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"])
 
