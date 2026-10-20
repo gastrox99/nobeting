@@ -359,19 +359,30 @@ def apply_quick_entry(pref_df, person, days, value, gun_detaylari):
     return _changed
 
 
+def _clear_quick_entry_days():
+    # Kutuya yeni anahtar vermek, formda yazılıp gönderilmemiş metni de kesin siler.
+    st.session_state.quick_entry_days_gen = st.session_state.get("quick_entry_days_gen", 0) + 1
+
+
 def _render_quick_entry(isimler, sutunlar, gun_detaylari):
     """Kişi + gün aralığı ile tek seferde izin/tercih girişi (hücre hücre boyamaya ek)."""
     _notice = st.session_state.pop("quick_entry_notice", None)
     with st.expander("⚡ Hızlı giriş: kişi + günler", expanded=bool(_notice)):
         if _notice:
             getattr(st, _notice[0])(_notice[1])
+        _cols = st.columns([2, 5], vertical_alignment="bottom")
+        # Kişi formun dışında: değişince önceki kişinin günleri temizlenir, yanlışlıkla
+        # başka birine kaydedilmez. Tür seçimi bilerek korunur.
+        _person = _cols[0].selectbox(
+            "Kişi", isimler, key="quick_entry_person", on_change=_clear_quick_entry_days,
+        )
         # Form: yazarken sayfa yeniden çizilmez, yalnızca Uygula'da işlenir.
-        with st.form("quick_entry_form", border=False):
-            _cols = st.columns([2, 2, 2, 1], vertical_alignment="bottom")
-            _person = _cols[0].selectbox("Kişi", isimler, key="quick_entry_person")
-            _days_text = _cols[1].text_input("Günler", placeholder="3-9, 15", key="quick_entry_days")
-            _kind = _cols[2].selectbox("Tür", list(QUICK_ENTRY_TYPES), key="quick_entry_kind")
-            _submitted = _cols[3].form_submit_button("Uygula", type="primary", width="stretch")
+        with _cols[1].form("quick_entry_form", border=False):
+            _fcols = st.columns([2, 2, 1], vertical_alignment="bottom")
+            _days_key = f"quick_entry_days_{st.session_state.get('quick_entry_days_gen', 0)}"
+            _days_text = _fcols[0].text_input("Günler", placeholder="3-9, 15", key=_days_key)
+            _kind = _fcols[1].selectbox("Tür", list(QUICK_ENTRY_TYPES), key="quick_entry_kind")
+            _submitted = _fcols[2].form_submit_button("Uygula", type="primary", width="stretch")
         if not _submitted:
             return
         _days, _invalid = parse_holiday_days(_days_text, len(sutunlar))
@@ -389,6 +400,7 @@ def _render_quick_entry(isimler, sutunlar, gun_detaylari):
         _changed = apply_quick_entry(
             st.session_state.pref_df, _person, _days, QUICK_ENTRY_TYPES[_kind], gun_detaylari,
         )
+        _clear_quick_entry_days()
         st.session_state.quick_entry_notice = (
             "success",
             f"✅ {_person}: {_changed} gün {_kind.replace(' (sil)', '')} olarak işaretlendi. "

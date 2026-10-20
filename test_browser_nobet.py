@@ -512,3 +512,31 @@ def test_iyilestir_dugmesi_listeyi_iyilestirir_ve_geri_alinir(app_url):
                 _no_exception(page)
         finally:
             browser.close()
+
+
+def test_hizli_giriste_kisi_degisince_gunler_temizlenir(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Hızlı Giriş Ali, Hızlı Giriş Ayşe")
+        try:
+            page.get_by_text("🎨 Tercih Belirle", exact=True).click()
+            _wait_idle(page, 1.0)
+            page.get_by_text("⚡ Hızlı giriş: kişi + günler").click()
+            days = page.get_by_role("textbox", name="Günler")
+            days.fill("3-8")
+            # Uygula'ya basmadan kişi değişirse önceki kişinin günleri kutuda kalmamalı.
+            page.locator(".st-key-quick_entry_person").get_by_role("combobox").click()
+            page.get_by_role("option", name="Hızlı Giriş Ayşe").click()
+            _wait_idle(page, 1.0)
+            expect(page.get_by_role("textbox", name="Günler")).to_have_value("")
+            # Uygula'dan sonra da kutu boşalır; tür seçimi korunur.
+            page.locator(".st-key-quick_entry_kind").get_by_role("combobox").click()
+            page.get_by_role("option", name="Müsait Değil").click()
+            page.get_by_role("textbox", name="Günler").fill("2-4")
+            page.get_by_role("button", name="Uygula").click()
+            _wait_idle(page, 1.0)
+            expect(page.get_by_text("Hızlı Giriş Ayşe: 3 gün Müsait Değil")).to_be_visible()
+            expect(page.get_by_role("textbox", name="Günler")).to_have_value("")
+            expect(page.locator(".st-key-quick_entry_kind")).to_contain_text("Müsait Değil")
+            _no_exception(page)
+        finally:
+            browser.close()
