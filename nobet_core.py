@@ -2662,6 +2662,28 @@ PAIR_SCORE_WEIGHT = 15
 # gün için ceza. Kesin kural değildir; denge ve kurallar önce gelir.
 TOGETHER_WEIGHT = 400
 TOGETHER_SCORE_WEIGHT = 80
+# Gün aşırı zincir: iki nöbet arası tam 2 gün (nöbet-boş-nöbet). İki nöbet
+# normaldir; üçüncüsü (ve sonrakiler) hem seçimde hem simülasyonlar arasında
+# seçimde cezalanır. Hafta sonu dengesinden (×100) hafif, toplamdan ağırdır.
+ALT_CHAIN_WEIGHT = 40
+ALT_CHAIN_SCORE_WEIGHT = 60
+
+
+def alternate_day_chains(schedule, people, columns, day_of=None):
+    """Gün aşırı zincirde ikiyi aşan nöbet sayısı (d, d+2, d+4 üçlüsü başına 1).
+
+    3 nöbetlik zincir 1, 4 nöbetlik 2 sayılır.
+    """
+    excess = 0
+    for p in people:
+        if p not in schedule.index:
+            continue
+        days = {
+            (day_of[c] if day_of else _column_day(c)) for c in columns
+            if c in schedule.columns and bool(schedule.at[p, c])
+        }
+        excess += sum(1 for d in days if d + 2 in days and d + 4 in days)
+    return excess
 
 
 def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
@@ -2759,6 +2781,8 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         pair_count = {}
         last_weekend_shift = {i: -10 for i in isimler}
         last_shift_day = {i: initial_last_shift.get(i, -10) for i in isimler}
+        prev_shift_day = {i: -10 for i in isimler}
+        alt_chains = 0
 
         temp_schedule = pd.DataFrame(
             {col: [False] * len(isimler) for col in sutunlar}, index=isimler
@@ -2798,6 +2822,9 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                     spread_penalty = (gap_target[p] - gap) * SPREAD_WEIGHT
                 else:
                     spread_penalty = -(gap - gap_target[p]) * long_weight
+                # Üçüncü gün aşırı nöbet (nöbet-boş-nöbet-boş-nöbet) geri itilir.
+                if day - last_shift_day[p] == 2 and last_shift_day[p] - prev_shift_day[p] == 2:
+                    spread_penalty += ALT_CHAIN_WEIGHT
             if is_sp:
                 # Bayram/tatil: son 12 ayda az tutan öne; hafta sonu dengesinden (×100) hafif.
                 holiday_penalty = (
@@ -2880,6 +2907,9 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                     stat_holiday[k] += 1
                 if gun_no - last_shift_day[k] < person_gap[k] * 0.6:
                     short_gaps += 1
+                if gun_no - last_shift_day[k] == 2 and last_shift_day[k] - prev_shift_day[k] == 2:
+                    alt_chains += 1
+                prev_shift_day[k] = last_shift_day[k]
                 last_shift_day[k] = gun_no
                 spread_from[k] = gun_no
                 worst_gap[k] = max(worst_gap[k], gun_no - month_last[k])
@@ -2930,6 +2960,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             (short_gaps * SPREAD_SCORE_WEIGHT) +
             (long_gaps * LONG_GAP_SCORE_WEIGHT) +
             (pair_excess * PAIR_SCORE_WEIGHT) +
+            (alt_chains * ALT_CHAIN_SCORE_WEIGHT) +
             (together_split * TOGETHER_SCORE_WEIGHT) +
             (std_dev_total * 10) +
             (std_dev_special * 5)
