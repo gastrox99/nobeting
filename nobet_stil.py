@@ -82,7 +82,7 @@ GLOBAL_CSS = """
 /* Ayarlar: ekip tablosu ve birlikte çalışamayanlar çapraz tablosu.
    Satırlar dar ekranda da yan yana kalır; çapraz tablo yana kayar. */
 [data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stHorizontalBlock"],
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stHorizontalBlock"] {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stHorizontalBlock"] {
     flex-wrap: nowrap !important;
     gap: 6px;
 }
@@ -100,16 +100,16 @@ GLOBAL_CSS = """
 [data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stNumberInputStepDown"],
 [data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stNumberInputStepUp"] { display: none; }
 [data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stCaptionContainer"] { line-height: 1.2; }
-[data-testid="stExpander"] .st-key-yasak-tablo {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
 }
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stVerticalBlock"] { gap: 0; }
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stHorizontalBlock"] {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stVerticalBlock"] { gap: 0; }
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stHorizontalBlock"] {
     min-width: max-content;
     gap: 0;
 }
-[data-testid="stExpander"] .st-key-yasak-tablo :is([data-testid="column"],[data-testid="stColumn"]) {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) :is([data-testid="column"],[data-testid="stColumn"]) {
     flex: 0 0 34px !important;
     width: 34px !important;
     min-width: 34px !important;
@@ -117,14 +117,14 @@ GLOBAL_CSS = """
     align-items: center;
     justify-content: center;
 }
-[data-testid="stExpander"] .st-key-yasak-tablo :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) :is([data-testid="column"],[data-testid="stColumn"]):first-child {
     flex: 0 0 110px !important;
     width: 110px !important;
     min-width: 110px !important;
     justify-content: flex-start;
 }
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stCheckbox"] { margin: 0 auto; min-height: 0; }
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stCheckbox"] label { margin: 0; padding: 0; }
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stCheckbox"] { margin: 0 auto; min-height: 0; }
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stCheckbox"] label { margin: 0; padding: 0; }
 .yasak-baslik {
     writing-mode: vertical-rl;
     transform: rotate(180deg);

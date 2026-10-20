@@ -62,6 +62,7 @@ for _attempt in range(2):
             special_shift_counts,
             build_gun_detaylari,
             parse_forbidden_pairs,
+            parse_together_pairs,
             parse_person_limits_with_issues,
             unknown_names,
             has_total_limit,
@@ -312,7 +313,7 @@ if AUTH_ENABLED:
         st.button("Çıkış yap", on_click=st.logout, width="stretch")
 
 # --- ANA ALGORİTMA: nobet_core.run_scheduling_core kullanır ---
-def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None, initial_last_shift=None, history_special=None, fixed_assignments=None, history_total=None, history_holiday=None):
+def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, forbidden_pairs=None, person_limits=None, df_preferred=None, initial_last_shift=None, history_special=None, fixed_assignments=None, history_total=None, history_holiday=None, together_pairs=None):
     progress_bar = st.progress(0)
     def _progress(n):
         if n % 10 == 0:
@@ -325,6 +326,7 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
             initial_last_shift=initial_last_shift, history_special=history_special,
             fixed_assignments=fixed_assignments,
             history_total=history_total, history_holiday=history_holiday,
+            together_pairs=together_pairs,
         )
     except ValueError as exc:
         st.error(f"🚨 Simülasyon başlatılamadı: {exc}")
@@ -414,9 +416,10 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         )
         if _renames:
             apply_renames(_renames)
-            st.session_state.forbidden_pairs_text = rename_in_pairs_text(
-                st.session_state.get("forbidden_pairs_text", ""), prev_isimler, _renames
-            )
+            for _pairs_key in ("forbidden_pairs_text", "together_pairs_text"):
+                st.session_state[_pairs_key] = rename_in_pairs_text(
+                    st.session_state.get(_pairs_key, ""), prev_isimler, _renames
+                )
             st.toast("İsim değişikliği uygulandı: " + ", ".join(f"{a} → {b}" for a, b in _renames.items()), icon="✏️")
         st.session_state.isimler_cache = isimler
         _seen_names.update(isimler)
@@ -569,6 +572,8 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
 
     st.divider()
     render_pair_matrix(isimler)
+    st.divider()
+    render_pair_matrix(isimler, "birlikte")
     forbidden_input = st.session_state.get("forbidden_pairs_text", "")
     limits_text = st.session_state.get("limits_text", "")
 
@@ -579,6 +584,12 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     st.session_state.fp_unknown_names = _fp_unknown
     if _fp_unknown:
         st.warning(f"⚠️ Yasak çiftte ekip listesinde olmayan isim(ler): **{', '.join(_fp_unknown)}** — kısıtlama uygulanmayacak.")
+    # Birlikte nöbet isteyenler; aynı ikili yasaksa yasak geçerlidir.
+    st.session_state.together_pairs = {
+        _pair for _pair in parse_together_pairs(
+            st.session_state.get("together_pairs_text", ""), isimler, forbidden_pairs
+        ) if not unknown_names(_pair, isimler)
+    }
 
     person_limits, _lim_invalid_lines, _lim_errors = parse_person_limits_with_issues(limits_text)
     _lim_unknown = unknown_names(person_limits, isimler)
@@ -828,6 +839,8 @@ if 'last_edited_hash' not in st.session_state: st.session_state.last_edited_hash
 if 'should_regenerate_assignments' not in st.session_state: st.session_state.should_regenerate_assignments = False
 if 'forbidden_pairs_text' not in st.session_state: st.session_state.forbidden_pairs_text = ""
 if 'forbidden_pairs' not in st.session_state: st.session_state.forbidden_pairs = set()
+if 'together_pairs_text' not in st.session_state: st.session_state.together_pairs_text = ""
+if 'together_pairs' not in st.session_state: st.session_state.together_pairs = set()
 if 'locked_cells' not in st.session_state: st.session_state.locked_cells = set()
 if 'undo_history' not in st.session_state: st.session_state.undo_history = []
 if 'redo_history' not in st.session_state: st.session_state.redo_history = []
@@ -1118,6 +1131,7 @@ def _simulation_context():
         yil, ay, tuple(isimler), tuple(sutunlar), kişi_sayısı, min_bosluk,
         schedule_fingerprint(df_unwanted), schedule_fingerprint(df_preferred),
         tuple(sorted(st.session_state.forbidden_pairs)),
+        tuple(sorted(st.session_state.get("together_pairs", set()))),
         tuple(sorted((p, tuple(sorted(limits.items())))
                      for p, limits in st.session_state.get('person_limits', {}).items())),
         tuple(sorted(active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool))),
@@ -1142,6 +1156,7 @@ def _auto_improve(schedule):
         fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool),
         initial_last_shift=prev_last_shift, history_special=history_special,
         history_total=history_total, history_holiday=history_holiday,
+        together_pairs=st.session_state.get("together_pairs", set()),
     )
 
 
@@ -1191,6 +1206,7 @@ if sim_clicked:
             fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool),
             history_total=history_total,
             history_holiday=history_holiday,
+            together_pairs=st.session_state.get("together_pairs", set()),
         )
         _auto_improved = False
         if _new_schedule is not None:
@@ -1237,6 +1253,7 @@ if st.session_state.pop("run_improve", False):
                     history_special=history_special,
                     history_total=history_total,
                     history_holiday=history_holiday,
+                    together_pairs=st.session_state.get("together_pairs", set()),
                 )
             except Exception as _exc:
                 _improved = None
