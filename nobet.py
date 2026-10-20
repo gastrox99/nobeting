@@ -47,6 +47,7 @@ for _attempt in range(2):
             get_schedule_version,
             get_settings_version,
             SaveConflict,
+            SCHEMA_VERSION,
         )
         from nobet_core import (
             history_adjustment,
@@ -145,14 +146,15 @@ from streamlit_local_storage import LocalStorage
 # Veritabanını sunucu başına bir kez hazırla; başarısızsa sonucu kalıcı
 # saklama (eskiden "bağlanamadım" önbellekte kalıyor, Secrets'a adres
 # eklense bile yeniden başlatmaya kadar uyarı sürüyordu). Her yeni
-# oturumda bir kez yeniden denenir.
+# oturumda bir kez yeniden denenir. Şema sürümü değişince (yeni tablo)
+# sunucu yeniden başlamasa da hazırlık yeniden çalışır.
 @st.cache_resource
-def _db_init_state():
+def _db_init_state(schema_version):
     return {"ready": False, "error": None}
 
-_db_state = _db_init_state()
-if not _db_state["ready"] and not st.session_state.get("_db_init_attempted"):
-    st.session_state["_db_init_attempted"] = True
+_db_state = _db_init_state(SCHEMA_VERSION)
+if not _db_state["ready"] and st.session_state.get("_db_init_attempted") != SCHEMA_VERSION:
+    st.session_state["_db_init_attempted"] = SCHEMA_VERSION
     _db_state["ready"] = init_db()
     _db_state["error"] = get_last_error()
 _db_ready = _db_state["ready"]

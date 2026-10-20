@@ -103,3 +103,37 @@ def test_ekip_talebi_siniri(owner, monkeypatch):
     assert db.submit_team_request(owner, 2026, 11, "Can", {"tercih": [3]}) == "limit"
     # Kendi bekleyen talebini güncellemek sınıra takılmaz.
     assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [4]}) == "ok"
+
+
+def test_ekran_goruntusundeki_talep_kaydedilir(owner):
+    # Canlıdaki hata: Kasım, Kaçın=9, Müsait Değil=5-8.
+    from nobet_core import parse_team_request
+    days, errors = parse_team_request({"kacin": "9", "musait_degil": "5-8"}, 2026, 11, datetime(2026, 10, 20).date())
+    assert errors == []
+    assert db.submit_team_request(owner, 2026, 11, "Ayşe Yılmaz", days) == "ok"
+    assert db.list_team_requests(owner)[0]["days"] == {"kacin": [9], "musait_degil": [5, 6, 7, 8]}
+
+
+def _drop_team_requests():
+    conn = db._connect()
+    with conn, conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS team_requests")
+    conn.close()
+
+
+def test_tablo_eksikse_talep_gonderilince_kurulur(owner):
+    # Streamlit Cloud yeni kodu sunucuyu yeniden başlatmadan çekince
+    # init_db çalışmıyor, yeni tablo oluşmuyordu.
+    _drop_team_requests()
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"kacin": [9]}) == "ok"
+    assert [r["person"] for r in db.list_team_requests(owner)] == ["Ali"]
+
+
+def test_tablo_eksikse_liste_bos_doner_ve_kurulur(owner):
+    _drop_team_requests()
+    assert db.list_team_requests(owner, raise_on_error=True) == []
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [3]}) == "ok"
+
+
+def test_sema_surumu_init_db_ile_degisir():
+    assert db.SCHEMA_VERSION != "bilinmiyor" and len(db.SCHEMA_VERSION) == 12

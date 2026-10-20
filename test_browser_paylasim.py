@@ -239,6 +239,13 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
             expect(page.get_by_text("Talep gönderilmedi:")).to_be_visible()
             assert _with_db(lambda db: db.list_team_requests(OWNER)) == []
 
+            # Canlıdaki hata: sunucu yeniden başlamadan yeni kod gelince tablo
+            # kurulmamıştı ve her talep "kaydedilemedi" diyordu.
+            import psycopg2
+            conn = psycopg2.connect(TEST_DB)
+            with conn, conn.cursor() as cur:
+                cur.execute("DROP TABLE team_requests")
+            conn.close()
             page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("10-12")
             page.get_by_role("button", name="📨 Talebi gönder").click()
             _wait_idle(page)

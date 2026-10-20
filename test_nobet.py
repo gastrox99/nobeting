@@ -2831,7 +2831,9 @@ class TestDatabaseConnectionDiagnostics(unittest.TestCase):
     def test_basarisiz_baglanti_kalici_onbelleklenmez(self):
         source = _app_source()
         self.assertNotIn("def _init_db_once", source)
-        self.assertIn('if not _db_state["ready"] and not st.session_state.get("_db_init_attempted")', source)
+        self.assertIn(
+            'if not _db_state["ready"] and st.session_state.get("_db_init_attempted") != SCHEMA_VERSION', source)
+        self.assertIn("_db_state = _db_init_state(SCHEMA_VERSION)", source)
 
 
 class TestSchedulePersistence(unittest.TestCase):
