@@ -175,6 +175,40 @@ GLOBAL_CSS = """
     }
 }
 
+/* Hızlı giriş: Kişi · Günler · Tür · Uygula telefonda da tek satır. */
+[data-testid="stExpander"] .st-key-quick-entry [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: 6px !important;
+    align-items: center;
+}
+[data-testid="stExpander"] .st-key-quick-entry :is([data-testid="column"],[data-testid="stColumn"]) {
+    min-width: 0 !important;
+    width: auto !important;
+}
+.st-key-quick-entry [data-testid="stForm"] { padding: 0 !important; }
+@media (max-width: 768px) {
+    /* Dış satır: Kişi | form (Günler · Tür · Uygula). */
+    .st-key-quick-entry > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:first-child { flex: 24 1 0 !important; }
+    .st-key-quick-entry > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:last-child { flex: 76 1 0 !important; }
+    .st-key-quick-entry [data-testid="stForm"] [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:first-child { flex: 4 1 0 !important; }
+    .st-key-quick-entry [data-testid="stForm"] [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:nth-child(2) { flex: 5 1 0 !important; }
+    .st-key-quick-entry [data-testid="stForm"] [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:last-child { flex: 0 0 auto !important; }
+    /* Dar kutularda ok simgesi yer kaplamasın; kutuya dokununca liste yine açılır. */
+    .st-key-quick-entry [data-baseweb="select"] svg { display: none; }
+    .st-key-quick-entry [data-baseweb="select"] div { padding-left: 0 !important; padding-right: 0 !important; margin-left: 0 !important; }
+    .st-key-quick-entry [data-baseweb="select"] > div { padding-left: 8px !important; padding-right: 4px !important; align-items: center; }
+    .st-key-quick-entry [data-testid="stHorizontalBlock"] { gap: 4px !important; }
+    .st-key-quick-entry :is(input, [data-baseweb="select"] div) { font-size: 13px !important; }
+    .st-key-quick-entry input { padding-left: 8px !important; padding-right: 4px !important; }
+    .st-key-quick-entry [data-testid="stFormSubmitButton"] button { padding: 4px 8px; }
+    .st-key-quick-entry [data-testid="stFormSubmitButton"] button p { font-size: 14px; }
+}
+
 /* Üstteki ay çubuğu: ‹ Kasım 2026 › telefonda da tek satır. */
 .st-key-month-bar [data-testid="stHorizontalBlock"] {
     flex-wrap: nowrap !important;

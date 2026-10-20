@@ -390,19 +390,29 @@ def _render_quick_entry(isimler, sutunlar, gun_detaylari):
     with st.expander("⚡ Hızlı giriş: kişi + günler", expanded=bool(_notice)):
         if _notice:
             getattr(st, _notice[0])(_notice[1])
-        _cols = st.columns([2, 5], vertical_alignment="bottom")
-        # Kişi formun dışında: değişince önceki kişinin günleri temizlenir, yanlışlıkla
-        # başka birine kaydedilmez. Tür seçimi bilerek korunur.
-        _person = _cols[0].selectbox(
-            "Kişi", isimler, key="quick_entry_person", on_change=_clear_quick_entry_days,
-        )
-        # Form: yazarken sayfa yeniden çizilmez, yalnızca Uygula'da işlenir.
-        with _cols[1].form("quick_entry_form", border=False):
-            _fcols = st.columns([2, 2, 1], vertical_alignment="bottom")
-            _days_key = f"quick_entry_days_{st.session_state.get('quick_entry_days_gen', 0)}"
-            _days_text = _fcols[0].text_input("Günler", placeholder="3-9, 15", key=_days_key)
-            _kind = _fcols[1].selectbox("Tür", list(QUICK_ENTRY_TYPES), key="quick_entry_kind")
-            _submitted = _fcols[2].form_submit_button("Uygula", type="primary", width="stretch")
+        # Tek satır: etiketler gizli, kutuların içindeki yazı yol gösterir. Telefonda da
+        # alt alta düşmez (nobet_stil .st-key-quick-entry).
+        with st.container(key="quick-entry"):
+            _cols = st.columns([3, 7], gap="small", vertical_alignment="center")
+            # Kişi formun dışında: değişince önceki kişinin günleri temizlenir, yanlışlıkla
+            # başka birine kaydedilmez. Tür seçimi bilerek korunur.
+            _person = _cols[0].selectbox(
+                "Kişi", isimler, key="quick_entry_person", on_change=_clear_quick_entry_days,
+                label_visibility="collapsed",
+            )
+            # Form: yazarken sayfa yeniden çizilmez, yalnızca Uygula'da işlenir.
+            with _cols[1].form("quick_entry_form", border=False):
+                _fcols = st.columns([3, 3, 2], gap="small", vertical_alignment="center")
+                _days_key = f"quick_entry_days_{st.session_state.get('quick_entry_days_gen', 0)}"
+                _days_text = _fcols[0].text_input(
+                    "Günler", placeholder="Gün: 3-9, 15", key=_days_key,
+                    label_visibility="collapsed",
+                )
+                _kind = _fcols[1].selectbox(
+                    "Tür", list(QUICK_ENTRY_TYPES), key="quick_entry_kind",
+                    label_visibility="collapsed",
+                )
+                _submitted = _fcols[2].form_submit_button("Uygula", type="primary", width="stretch")
         if not _submitted:
             return
         _days, _invalid = parse_holiday_days(_days_text, len(sutunlar))
