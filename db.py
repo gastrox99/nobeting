@@ -123,6 +123,9 @@ def init_db():
                 cur.execute('''
                     ALTER TABLE app_settings ALTER COLUMN key TYPE VARCHAR(320)
                 ''')
+                # Son kaydı yapan cihaz/oturum: çakışma uyarısında gösterilir.
+                cur.execute('ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS writer VARCHAR(200)')
+                cur.execute('ALTER TABLE schedules ADD COLUMN IF NOT EXISTS writer VARCHAR(200)')
 
                 # Per-user data (Google login): each schedule belongs to an
                 # owner e-mail. '' is the single-user / pre-login data.
@@ -234,7 +237,15 @@ def settings_key(owner=""):
 
 
 class SaveConflict(Exception):
-    """Kayıt başka bir oturumda (ör. telefon) bu oturum okuduktan sonra değişmiş."""
+    """Kayıt başka bir oturumda (ör. telefon) bu oturum okuduktan sonra değişmiş.
+
+    ``writer`` ve ``saved_at``: kaydı son yapan cihaz/oturum ve zamanı (biliniyorsa).
+    """
+
+    def __init__(self, name, writer=None, saved_at=None):
+        super().__init__(name)
+        self.writer = writer
+        self.saved_at = saved_at
 
 
 def _version_text(moment):
@@ -311,7 +322,7 @@ def get_settings_version(owner=""):
             conn.close()
 
 
-def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None, owner="", expected_version=None, version_out=None):
+def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None, owner="", expected_version=None, version_out=None, writer=None):
     """Save a schedule to database.
 
     ``expected_version`` (``get_schedule_version`` çıktısı) verilirse ve kayıt
@@ -355,28 +366,31 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
             with conn.cursor() as cur:
                 # Beklenmeyen içerik sürümü; yazılan içerik de buna eşit değilse çakışmadır.
                 conflict_version = None
+                conflict_by = (None, None)
                 if expected_version is not None:
                     # Satırı kilitleyip sürümü denetle: aynı anda iki oturum yazmasın.
                     cur.execute(
-                        'SELECT id, updated_at FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s FOR UPDATE',
+                        'SELECT id, updated_at, writer FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s FOR UPDATE',
                         (owner, name, year, month),
                     )
                     current = cur.fetchone()
                     current_version = _schedule_content_version(cur, current[0]) if current else ""
                     if expected_version not in (current_version, _version_text(current[1] if current else None)):
                         conflict_version = current_version
+                        conflict_by = (current[2], current[1]) if current else (None, None)
                 # Insert or update schedule
                 cur.execute('''
-                    INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, owner, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, owner, updated_at, writer)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                     ON CONFLICT (owner, name, year, month) DO UPDATE
                         SET updated_at = CURRENT_TIMESTAMP,
                             team_members = EXCLUDED.team_members,
                             pref_json = EXCLUDED.pref_json,
                             settings_json = EXCLUDED.settings_json,
-                            rows_liste_json = EXCLUDED.rows_liste_json
+                            rows_liste_json = EXCLUDED.rows_liste_json,
+                            writer = EXCLUDED.writer
                     RETURNING id
-                ''', (name, year, month, team_str, pref_json, settings_json_str, rows_liste_json, owner))
+                ''', (name, year, month, team_str, pref_json, settings_json_str, rows_liste_json, owner, writer))
 
                 schedule_id = cur.fetchone()[0]
 
@@ -397,7 +411,7 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
                 saved_version = _schedule_content_version(cur, schedule_id)
                 if conflict_version is not None and conflict_version != saved_version:
                     # Başka yerde farklı içerik yazılmış: geri al (with conn), üzerine yazma.
-                    raise SaveConflict(name)
+                    raise SaveConflict(name, *conflict_by)
 
         if version_out is not None:
             version_out["version"] = saved_version
@@ -579,7 +593,7 @@ def load_auto_saved_assignments(periods, owner="", include_preferences=False):
     return (result, preferences) if include_preferences else result
 
 
-def save_app_settings(settings, owner="", expected_version=None, version_out=None):
+def save_app_settings(settings, owner="", expected_version=None, version_out=None, writer=None):
     """Save the team list and settings as one JSON document.
 
     ``expected_version`` ve ``version_out`` için ``save_schedule`` açıklamasına bakın;
@@ -593,21 +607,22 @@ def save_app_settings(settings, owner="", expected_version=None, version_out=Non
                 value = json.dumps(settings, ensure_ascii=False)
                 saved_version = _settings_content_version(value)
                 if expected_version is not None:
-                    cur.execute('SELECT value, updated_at FROM app_settings WHERE key = %s FOR UPDATE', (settings_key(owner),))
+                    cur.execute('SELECT value, updated_at, writer FROM app_settings WHERE key = %s FOR UPDATE', (settings_key(owner),))
                     current = cur.fetchone()
                     known = (
                         (_settings_content_version(current[0]), _version_text(current[1])) if current else ("",)
                     )
                     # Başka yerde aynı ayarlar yazılmışsa (ör. iki sekme) çakışma sayılmaz.
                     if expected_version not in known and saved_version not in known:
-                        raise SaveConflict("settings")
+                        raise SaveConflict("settings", *((current[2], current[1]) if current else ()))
                 cur.execute('''
-                    INSERT INTO app_settings (key, value, updated_at)
-                    VALUES (%s, %s, CURRENT_TIMESTAMP)
+                    INSERT INTO app_settings (key, value, updated_at, writer)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, %s)
                     ON CONFLICT (key) DO UPDATE
                         SET value = EXCLUDED.value,
-                            updated_at = CURRENT_TIMESTAMP
-                ''', (settings_key(owner), value))
+                            updated_at = CURRENT_TIMESTAMP,
+                            writer = EXCLUDED.writer
+                ''', (settings_key(owner), value, writer))
         if version_out is not None:
             version_out["version"] = saved_version
         return True

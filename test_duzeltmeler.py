@@ -242,3 +242,19 @@ def test_ayar_cakismasinda_ayni_deger_cakisma_degil_farkli_deger_cakisma():
 def test_ayar_cakismasi_uyarisinda_farkli_alanlar_yazilir():
     from nobet_core import settings_difference_labels
     assert settings_difference_labels({"team": "A", "limits": "", "month": 11}, {"team": "A", "limits": "A:2", "month": 12}) == ["nöbet sınırları", "ay"]
+
+
+def test_cakisma_uyarisinda_son_kaydi_yapan_cihaz():
+    from datetime import datetime
+    from nobet_core import conflict_writer_text, device_label, writer_tag
+    iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    home_screen = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+    mac_chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36"
+    assert device_label(iphone) == "iPhone · Safari"
+    assert device_label(home_screen) == "iPhone · Ana Ekran uygulaması"
+    assert device_label(mac_chrome) == "Mac · Chrome"
+    assert writer_tag(iphone, "abcdef123") == "iPhone · Safari · oturum abcdef"
+    text = conflict_writer_text("iPhone · Safari · oturum 111111", datetime(2026, 10, 20, 17, 58), "iPhone · Safari · oturum 222222")
+    assert "Son kaydı yapan: iPhone · Safari · oturum 111111 20:58" in text
+    assert "bu cihaz" in text
+    assert conflict_writer_text(None, None, "x") == ""

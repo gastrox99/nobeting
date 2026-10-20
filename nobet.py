@@ -121,6 +121,8 @@ for _attempt in range(2):
             collect_app_settings,
             merge_app_settings,
             settings_difference_labels,
+            writer_tag,
+            conflict_writer_text,
             persistence_fingerprint,
             build_schedule_analysis,
             changed_schedule_columns,
@@ -290,6 +292,23 @@ def _version_box(key):
         box = {"version": box}
         st.session_state[key] = box
     return box
+
+
+def _own_writer_tag():
+    """Bu oturumun cihaz/oturum etiketi; kayıtla birlikte saklanır, çakışmada gösterilir."""
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        _session = get_script_run_ctx().session_id
+    except Exception:
+        _session = None
+    try:
+        _agent = st.context.headers.get("User-Agent")
+    except Exception:
+        _agent = None
+    return writer_tag(_agent, _session)
+
+
+_writer = _own_writer_tag()
 
 
 # --- Ekip ve ayarları veritabanından geri yükle (sayfa yenilemesinde) ---
@@ -675,8 +694,9 @@ if (
         _settings_saved = save_app_settings(
             _current_settings, owner=current_owner,
             expected_version=_settings_version.get("version"), version_out=_settings_version,
+            writer=_writer,
         )
-    except SaveConflict:
+    except SaveConflict as _conflict:
         # Başka bir yerde (ör. telefonda) ayarlar değişmiş. Öbür yerdeki fark
         # yalnızca bakılan ay ya da bu sekmenin de aynen yaptığı değişiklikse
         # birleştirilip kaydedilir; başka bir ayar değiştiyse onun üzerine yazılmaz.
@@ -694,6 +714,7 @@ if (
                 _settings_saved = save_app_settings(
                     _current_settings, owner=current_owner,
                     expected_version=_their_version, version_out=_settings_version,
+                    writer=_writer,
                 )
         except SaveConflict:
             _settings_saved = False
@@ -703,6 +724,9 @@ if (
             st.session_state.app_settings_load_failed = True
             st.session_state.settings_conflict = (
                 settings_difference_labels(_current_settings, _their_settings) if _their_settings else True
+            )
+            st.session_state.settings_conflict_by = conflict_writer_text(
+                _conflict.writer, _conflict.saved_at, _writer,
             )
     if _settings_saved:
         st.session_state.last_saved_settings = _current_settings
@@ -716,6 +740,7 @@ if _settings_conflict:
     st.error(
         "⚠️ Ekip ve ayarlar başka bir yerde (telefon ya da başka sekme) değiştirilmiş. "
         f"Yeni değişikliklerin üzerine yazmamak için ayarlar kaydedilmiyor. Sayfayı yenileyin.{_conflict_fields}"
+        f"{st.session_state.get('settings_conflict_by', '')}"
     )
 
 # --- YEDEK: tüm aylar ve ayarlar tek dosyada; aynı dosyadan geri yükleme (nobet_yedek.py) ---
@@ -757,7 +782,7 @@ def _save_outgoing_period(period, schedule, preferences, rows):
             f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
             schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
             settings_dict={"locked": locks_to_json(_locks), "hidden": _hidden},
-            expected_version=_box.get("version"), version_out=_box,
+            expected_version=_box.get("version"), version_out=_box, writer=_writer,
         ))
     except SaveConflict:
         st.session_state.autosave_blocked_period = tuple(period)
@@ -1609,8 +1634,8 @@ elif (
                                   settings_dict={"locked": locks_to_json(_active_locks),
                                                  "hidden": _hidden_people},
                                   expected_version=_schedule_version.get("version"),
-                                  version_out=_schedule_version)
-    except SaveConflict:
+                                  version_out=_schedule_version, writer=_writer)
+    except SaveConflict as _conflict:
         # Bu ay başka bir yerde (ör. telefonda) değişmiş; onların üzerine yazma.
         _save_conflict = True
         st.session_state.autosave_blocked_period = (yil, ay)
@@ -1620,7 +1645,8 @@ elif (
             False,
             "⚠️ Bu ayın çizelgesi başka bir yerde (telefon ya da başka sekme) değiştirilmiş. "
             "Yeni değişikliklerin üzerine yazmamak için kayıt durduruldu. Sayfayı yenileyin; "
-            "bu sekmedeki değişiklikleri kaybetmek istemiyorsanız önce Excel olarak indirin.",
+            "bu sekmedeki değişiklikleri kaybetmek istemiyorsanız önce Excel olarak indirin."
+            + conflict_writer_text(_conflict.writer, _conflict.saved_at, _writer),
         )
     except Exception:
         _saved_ok = False

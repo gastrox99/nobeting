@@ -1594,6 +1594,41 @@ def settings_difference_labels(mine, theirs):
     ]
 
 
+def device_label(user_agent):
+    """Tarayıcı bilgisinden kısa cihaz adı: "iPhone · Safari", "Mac · Chrome"."""
+    ua = str(user_agent or "")
+    device = next((name for key, name in (
+        ("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
+        ("Macintosh", "Mac"), ("Windows", "Windows"), ("Linux", "Linux"),
+    ) if key in ua), "Bilinmeyen cihaz")
+    browser = next((name for key, name in (
+        ("Edg/", "Edge"), ("CriOS", "Chrome"), ("FxiOS", "Firefox"), ("Firefox/", "Firefox"),
+        ("Chrome/", "Chrome"), ("Safari/", "Safari"),
+    ) if key in ua), "")
+    if device in ("iPhone", "iPad") and "Safari/" not in ua and not browser:
+        browser = "Ana Ekran uygulaması"
+    return f"{device} · {browser}" if browser else device
+
+
+def writer_tag(user_agent, session_id):
+    """Kaydı yapan oturumun etiketi (veritabanına yazılır, en çok 200 karakter)."""
+    return f"{device_label(user_agent)} · oturum {str(session_id or '?')[:6]}"[:200]
+
+
+def conflict_writer_text(writer, saved_at, own_tag):
+    """Çakışma uyarısına eklenen "son kaydı kim yaptı" cümlesi."""
+    if not writer:
+        return ""
+    when = ""
+    if saved_at is not None:
+        try:
+            when = " " + saved_at.replace(tzinfo=timezone.utc).astimezone(TR_TZ).strftime("%H:%M")
+        except (AttributeError, ValueError, TypeError):
+            when = ""
+    same = " (bu cihaz, başka bir sekme ya da pencere)" if writer.split(" · oturum")[0] == own_tag.split(" · oturum")[0] else ""
+    return f" Son kaydı yapan: {writer}{when}{same}. Bu sekme: {own_tag}."
+
+
 # Son bakılan ay her sekmenin kendisine aittir; başka sekmenin ayı bu sekmeye alınmaz.
 SETTINGS_VIEW_KEYS = ("year", "month")
 

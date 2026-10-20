@@ -145,3 +145,16 @@ def test_paylasim_okumasi_tercih_verisini_okumaz(owner):
     assert _save(owner, "Ali", pref_df=prefs)
     assert db.load_schedule("Otomatik_2026_10", 2026, 10, owner=owner)[2] is not None
     assert db.load_schedule("Otomatik_2026_10", 2026, 10, owner=owner, include_preferences=False)[2] is None
+
+
+def test_cakismada_son_kaydi_yapan_bilinir(owner):
+    phone = {}
+    assert _save(owner, "Ali", expected_version="", version_out=phone, writer="iPhone · Safari · oturum aaaaaa")
+    with pytest.raises(db.SaveConflict) as exc:
+        _save(owner, "Ayşe", expected_version="", writer="Mac · Chrome · oturum bbbbbb")
+    assert exc.value.writer == "iPhone · Safari · oturum aaaaaa"
+    assert exc.value.saved_at is not None
+    assert db.save_app_settings({"a": 1}, owner=owner, expected_version="", writer="iPhone · Safari · oturum aaaaaa")
+    with pytest.raises(db.SaveConflict) as exc:
+        db.save_app_settings({"a": 2}, owner=owner, expected_version="", writer="Mac")
+    assert exc.value.writer == "iPhone · Safari · oturum aaaaaa"
