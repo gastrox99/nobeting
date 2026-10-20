@@ -12,7 +12,7 @@ import calendar
 import math
 import re
 from datetime import date, datetime, timedelta, timezone
-from itertools import combinations as _combinations
+from itertools import combinations as _combinations, permutations as _permutations
 from html import escape as _escape_html
 from numbers import Integral
 
@@ -612,19 +612,22 @@ def apply_fixed_roles(row, role_names, fixed_roles):
 
 
 def distribute_roles(dates, day_people, role_names, fixed_roles=None, rng=random):
-    """Nöbetçileri görev yerlerine dağıtır; ilk görev herkese eşit gelmeye çalışır.
+    """Nöbetçileri görev yerlerine dağıtır; her kişinin görevleri kendi nöbet sayısına göre eşitlenir.
 
     ``day_people``: her gün o gün nöbetçi olanların listesi. Sabit görevi
-    olan kişi kendi görevine yerleşir ve ilk görev sayımına katılmaz.
+    olan kişi kendi görevine yerleşir. Diğerlerinin her görevdeki sayısı, o ana
+    kadar tuttuğu nöbetlerin payıyla karşılaştırılır (2 görevde 4 nöbetin
+    yarısı gibi). Böylece ayın bir kısmında hiç nöbeti olmayan kişi, sonradan
+    gelince ilk göreve yığılmaz.
     Dönüş: (satırlar, ilk_görev_sayıları).
     """
     fixed_roles = fixed_roles or {}
     first_role_counts = {}
-    rows = []
+    counts, expected = {}, {}
+    rows, day_open_roles = [], []
     for day_date, people in zip(dates, day_people):
         people = list(people)
         rng.shuffle(people)
-        people.sort(key=lambda person: first_role_counts.get(person, 0))
         row = {"Tarih": day_date}
         row.update({role: "-" for role in role_names})
         rest = []
@@ -634,16 +637,108 @@ def distribute_roles(dates, day_people, role_names, fixed_roles=None, rng=random
                 row[target] = person
             else:
                 rest.append(person)
+        open_roles = [role for role in role_names if row[role] == "-"][:len(rest)]
         for person in rest:
-            for role in role_names:
-                if row[role] == "-":
-                    row[role] = person
-                    break
+            counts.setdefault(person, {})
+            expected.setdefault(person, {})
+
+        def _gap(person, role):
+            # Kişi bu görevi alırsa görevlerindeki sapmaların kare toplamı.
+            share = 1 / len(open_roles)
+            return sum(
+                (counts[person].get(other, 0) + (other == role)
+                 - expected[person].get(other, 0.0) - share) ** 2
+                for other in open_roles
+            )
+
+        if len(rest) <= 6:
+            # Görevini en az almış olanlar o göreve; eşitlikte karışık sıradaki ilki.
+            chosen = min(
+                _permutations(rest, len(open_roles)),
+                key=lambda perm: sum(_gap(p, r) for p, r in zip(perm, open_roles)),
+            ) if open_roles else ()
+        else:
+            chosen, remaining = [], list(rest)
+            for role in open_roles:
+                pick = min(remaining, key=lambda p: _gap(p, role))
+                chosen.append(pick)
+                remaining.remove(pick)
+        for person, role in zip(chosen, open_roles):
+            row[role] = person
+            counts[person][role] = counts[person].get(role, 0) + 1
+            for other in open_roles:
+                expected[person][other] = expected[person].get(other, 0.0) + 1 / len(open_roles)
+        rows.append(row)
+        day_open_roles.append(open_roles)
+    _improve_role_balance(rows, day_open_roles, counts, expected, role_names)
+    for row in rows:
         if role_names and row[role_names[0]] != "-":
             first = row[role_names[0]]
             first_role_counts[first] = first_role_counts.get(first, 0) + 1
-        rows.append(row)
     return rows, first_role_counts
+
+
+def _improve_role_balance(rows, day_open_roles, counts, expected, role_names, max_rounds=500):
+    """Gün gün dağıtımın kalan dengesizliğini ay bütününe bakarak giderir.
+
+    İki görev (r1, r2) için zincir arar: fazlası olan kişi bir günde r1'i
+    yanındakine verir, o kişi başka bir günde r1'i bir sonrakine verir...
+    Zincirin sonundaki kişi eksikliği olan biridir; aradakilerin sayısı
+    değişmez. Kimin hangi gün nöbetçi olduğu değişmez, yalnız görevler değişir.
+    """
+    def _diff(person, r1, r2):
+        return ((counts[person].get(r1, 0) - expected[person].get(r1, 0.0))
+                - (counts[person].get(r2, 0) - expected[person].get(r2, 0.0)))
+
+    def _find_chain(start, r1, r2):
+        # Genişlik öncelikli arama: kişi -> (önceki kişi, gün).
+        parent = {start: None}
+        queue = [start]
+        base = _diff(start, r1, r2)
+        while queue:
+            person = queue.pop(0)
+            for day, row in enumerate(rows):
+                roles = day_open_roles[day]
+                if row.get(r1) != person or r1 not in roles or r2 not in roles:
+                    continue
+                other = row.get(r2)
+                if other in (None, "-") or other in parent:
+                    continue
+                parent[other] = (person, day)
+                if base - _diff(other, r1, r2) > 2 + 1e-9:
+                    chain, node = [], other
+                    while parent[node] is not None:
+                        prev, prev_day = parent[node]
+                        chain.append(prev_day)
+                        node = prev
+                    return chain
+                queue.append(other)
+        return None
+
+    pairs = [(r1, r2) for r1 in role_names for r2 in role_names if r1 != r2]
+    for _ in range(max_rounds):
+        improved = False
+        for r1, r2 in pairs:
+            for start in sorted(counts, key=lambda p: -_diff(p, r1, r2)):
+                if _diff(start, r1, r2) <= 1 + 1e-9:
+                    break
+                chain = _find_chain(start, r1, r2)
+                if not chain:
+                    continue
+                for day in chain:
+                    row = rows[day]
+                    a, b = row[r1], row[r2]
+                    row[r1], row[r2] = b, a
+                    counts[a][r1] -= 1
+                    counts[a][r2] = counts[a].get(r2, 0) + 1
+                    counts[b][r2] -= 1
+                    counts[b][r1] = counts[b].get(r1, 0) + 1
+                improved = True
+                break
+            if improved:
+                break
+        if not improved:
+            break
 
 
 def fixed_role_conflicts(schedule, day_columns, fixed_roles):
