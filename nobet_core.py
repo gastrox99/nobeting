@@ -1441,6 +1441,7 @@ APP_SETTINGS_FIELDS = {
     "role_names": ("role_names_text", _text),
     "forbidden_pairs": ("forbidden_pairs_text", _text),
     "fixed_roles": ("fixed_roles", _fixed_roles),
+    "together_pairs": ("together_pairs_text", _text),
     "limits": ("limits_text", _text),
     "balance_history": ("balance_history", _bool),
     "name_aliases": ("name_aliases", _aliases),
@@ -1847,6 +1848,41 @@ def parse_forbidden_pairs(forbidden_input, team=None):
     return forbidden_pairs
 
 
+def parse_together_pairs(together_input, team=None, forbidden_pairs=None):
+    """Birlikte nöbet tutmak isteyen ikililer (yasak ikili metniyle aynı biçim).
+
+    Aynı ikili hem yasak hem birlikte işaretliyse yasak geçerlidir."""
+    pairs = parse_forbidden_pairs(together_input, team)
+    return pairs - set(forbidden_pairs or ())
+
+
+def together_partners(together_pairs):
+    """{kişi: {birlikte tutmak istediği kişiler}}."""
+    partners = {}
+    for a, b in together_pairs or ():
+        partners.setdefault(a, set()).add(b)
+        partners.setdefault(b, set()).add(a)
+    return partners
+
+
+def together_split_count(schedule, together_pairs, columns):
+    """Birlikte ikilisinden yalnız birinin nöbetçi olduğu gün sayısı (az = iyi)."""
+    split = 0
+    for a, b in together_pairs or ():
+        if a not in schedule.index or b not in schedule.index:
+            continue
+        for c in columns:
+            if c in schedule.columns and bool(schedule.at[a, c]) != bool(schedule.at[b, c]):
+                split += 1
+    return split
+
+
+def _together_count(people, together_pairs):
+    """Aynı gündeki kişilerden kaç birlikte ikilisi oluşur."""
+    people = set(people)
+    return sum(1 for a, b in together_pairs or () if a in people and b in people)
+
+
 def parse_person_limits_with_issues(limits_text):
     """Kişisel limitleri ayrıştırır: (limitler, hatalı_satırlar, hata_mesajları).
 
@@ -2027,7 +2063,7 @@ TR_GUN_KISA = {0: "Pzt", 1: "Sal", 2: "Çar", 3: "Per", 4: "Cum", 5: "Cmt", 6: "
 
 def _balance_fridays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                      df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
-                     initial_last_shift, max_moves=200):
+                     initial_last_shift, max_moves=200, together_pairs=None):
     """Cuma sayılarındaki farkı takasla azaltır; toplamlar değişmez.
 
     Çok Cuması olan kişinin bir Cuma nöbeti, az Cuması olan kişinin bir hafta
@@ -2041,13 +2077,13 @@ def _balance_fridays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_boo
     return _balance_by_swaps(
         schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
         min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
-        friday_cols, weekday_cols, max_moves=max_moves,
+        friday_cols, weekday_cols, max_moves=max_moves, together_pairs=together_pairs,
     )
 
 
 def _balance_holidays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                       df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
-                      initial_last_shift, history_holiday, max_moves=200):
+                      initial_last_shift, history_holiday, max_moves=200, together_pairs=None):
     """Bayram/tatil sayılarındaki farkı (varsa son 12 ay dahil) takasla azaltır.
 
     Çok tatil nöbeti olanın bir tatil nöbeti, az olanın tatil olmayan bir
@@ -2063,12 +2099,14 @@ def _balance_holidays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
         min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
         holiday_cols, weekend_cols, extra_counts=history_holiday, max_moves=max_moves,
         swap_ok=_no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari),
+        together_pairs=together_pairs,
     )
 
 
 def _balance_specials(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                       df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
-                      initial_last_shift, history_special, max_moves=200, capped=None):
+                      initial_last_shift, history_special, max_moves=200, capped=None,
+                      together_pairs=None):
     """Hafta sonu/tatil sayılarındaki farkı (önceki aylar dahil) takasla azaltır.
 
     Simülasyon seçimi hafta sonu dengesini aya yayma ve bayram takibiyle
@@ -2090,11 +2128,13 @@ def _balance_specials(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
         min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
         special_cols, weekday_cols, extra_counts=history_special, max_moves=max_moves,
         swap_ok=_no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari),
+        together_pairs=together_pairs,
     )
     return _balance_by_swaps(
         schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
         min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
         special_cols, weekday_cols, extra_counts=history_special, max_moves=max_moves,
+        together_pairs=together_pairs,
     )
 
 
@@ -2122,7 +2162,7 @@ def _no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari):
 def _balance_by_swaps(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                       df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
                       initial_last_shift, target_cols, partner_cols, extra_counts=None,
-                      max_moves=200, swap_ok=None):
+                      max_moves=200, swap_ok=None, together_pairs=None):
     """``target_cols`` sayılarındaki farkı takasla azaltır; toplamlar değişmez.
 
     Çok sayısı olan kişinin bir hedef gün nöbeti, az olanın bir eş gün
@@ -2130,7 +2170,29 @@ def _balance_by_swaps(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
     aylardan gelen farktır. İkisi de yeni gününde müsait olmalı, kaçınma
     günü olmamalı, dinlenme kuralına ve yasak çiftlere uymalı; sabit
     nöbetler yerinden oynamaz.
+
+    ``together_pairs`` verilirse önce birlikte ikilileri ayırmayan takaslar
+    denenir; fark yine 2 ya da daha fazla kalırsa denge önce gelir.
     """
+    if together_pairs:
+        def _keeps_together(giver, receiver, apply_swap, undo_swap):
+            cols = [c for c in sutunlar if bool(schedule.at[giver, c]) != bool(schedule.at[receiver, c])]
+
+            def together():
+                return sum(_together_count(schedule.index[schedule[c]], together_pairs) for c in cols)
+
+            before = together()
+            apply_swap()
+            after = together()
+            undo_swap()
+            return after >= before and (swap_ok is None or swap_ok(giver, receiver, apply_swap, undo_swap))
+
+        schedule = _balance_by_swaps(
+            schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
+            min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
+            target_cols, partner_cols, extra_counts=extra_counts, max_moves=max_moves,
+            swap_ok=_keeps_together,
+        )
     fixed = set(fixed_assignments or ())
     initial = initial_last_shift or {}
     extra = extra_counts or {}
@@ -2227,16 +2289,18 @@ def _balance_by_swaps(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
 
 def _fill_open_days(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                     df_preferred, min_bosluk, forbidden_pairs, person_limits,
-                    initial_last_shift, kisi_sayisi):
+                    initial_last_shift, kisi_sayisi, together_pairs=None):
     """Dengeleme takaslarından sonra doldurulabilir hâle gelen boş yerleri doldurur.
 
     Takas birini bir günden çekince o kişi, daha önce kimsenin alamadığı
     bir güne uygun hâle gelebilir. Aday izinli olmamalı, dinlenme kuralına,
     yasak çiftlere ve max limitine uymalı. Kaçınma günü olmayan ve en az
     nöbeti olan önce gelir; kaçınma günü yalnızca başka aday yoksa verilir.
+    O gün nöbetçi olanla birlikte tutmak isteyen (``together_pairs``) öne alınır.
     """
     initial = initial_last_shift or {}
     limits = person_limits or {}
+    partners = together_partners(together_pairs)
     day_of = {col: gun_detaylari[col]["day_num"] for col in sutunlar}
 
     def avoided(person, col):
@@ -2280,8 +2344,10 @@ def _fill_open_days(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
             if not candidates:
                 break
             sp = special(col)
+            on_duty = set(schedule.index[schedule[col]])
             best = min(candidates, key=lambda p: (
                 avoided(p, col),
+                -len(partners.get(p, set()) & on_duty),
                 int(schedule.loc[p].sum()),
                 sum(1 for c in sutunlar if special(c) and bool(schedule.at[p, c])) if sp else 0,
                 isimler.index(p),
@@ -2354,22 +2420,35 @@ def _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs):
     return secilenler
 
 
-def _pick_varied_group(adaylar, needed, scores, sabitler, pair_count, forbidden_pairs):
+def _pick_varied_group(adaylar, needed, scores, sabitler, pair_count, forbidden_pairs, partners=None):
     """Sıralı adaylardan ``needed`` kişi seçer; aynı gün nöbet tutanlarla daha
     önce çok birlikte tutmuş adayın puanı PAIR_WEIGHT kadar kötüleşir (aynı
     ikili her nöbette yan yana düşmesin). Yasak ikililer seçilmez; seçim
-    tıkanırsa eski yöntem (_find_valid_group) kullanılır."""
+    tıkanırsa eski yöntem (_find_valid_group) kullanılır.
+
+    ``partners`` birlikte nöbet isteyenlerdir: eşi o gün nöbetçi olan aday
+    TOGETHER_WEIGHT kadar öne alınır; eşi o güne gelemeyecek aday aynı kadar
+    geri itilir. Birlikte ikililere tekrar cezası uygulanmaz."""
+    partners = partners or {}
     secilenler = []
     havuz = list(adaylar)
     while len(secilenler) < needed:
         yanindakiler = list(sabitler) + secilenler
+        kalan_yer = needed - len(secilenler) - 1
         en_iyi, en_iyi_puan = None, None
         for aday in havuz:
             if forbidden_pairs and any(tuple(sorted((aday, y))) in forbidden_pairs for y in yanindakiler):
                 continue
+            esler = partners.get(aday, ())
             puan = scores[aday] + PAIR_WEIGHT * sum(
-                pair_count.get(tuple(sorted((aday, y))), 0) for y in yanindakiler
+                pair_count.get(tuple(sorted((aday, y))), 0) for y in yanindakiler if y not in esler
             )
+            if esler:
+                gelen = sum(1 for y in yanindakiler if y in esler)
+                if gelen:
+                    puan -= TOGETHER_WEIGHT * gelen
+                elif not (kalan_yer > 0 and any(e in havuz and e != aday for e in esler)):
+                    puan += TOGETHER_WEIGHT
             if en_iyi_puan is None or puan < en_iyi_puan:
                 en_iyi, en_iyi_puan = aday, puan
         if en_iyi is None:
@@ -2383,12 +2462,14 @@ def _pick_varied_group(adaylar, needed, scores, sabitler, pair_count, forbidden_
     return secilenler
 
 
-def pair_repeat_excess(schedule, people, columns, kisi_sayisi):
+def pair_repeat_excess(schedule, people, columns, kisi_sayisi, exempt=None):
     """Aynı ikilinin beklenenden fazla birlikte nöbet tutma sayısı.
 
     Her ikiliye düşen ortak nöbetin yukarı yuvarlanmış ortalaması (en az 1)
     "normal" sayılır; bunu aşan her ortak nöbet 1 puandır (az = iyi).
+    ``exempt`` (birlikte nöbet isteyen ikililer) sayılmaz.
     """
+    exempt = {tuple(sorted(p)) for p in (exempt or ())}
     people = list(people)
     if len(people) < 2 or kisi_sayisi < 2:
         return 0
@@ -2398,7 +2479,7 @@ def pair_repeat_excess(schedule, people, columns, kisi_sayisi):
         who = [p for p in people if p in schedule.index and c in schedule.columns and schedule.at[p, c]]
         for a, b in _combinations(sorted(who), 2):
             counts[(a, b)] = counts.get((a, b), 0) + 1
-    return sum(max(0, v - allowed) for v in counts.values())
+    return sum(max(0, v - allowed) for pair, v in counts.items() if pair not in exempt)
 
 
 def pair_repeat_allowed(n_people, n_days, kisi_sayisi):
@@ -2434,7 +2515,8 @@ def spread_targets(isimler, n_days, kisi_sayisi, person_limits=None):
 def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                     df_preferred, min_bosluk, forbidden_pairs, person_limits,
                     fixed_assignments, initial_last_shift, history_special,
-                    max_moves=500, history_total=None, history_holiday=None):
+                    max_moves=500, history_total=None, history_holiday=None,
+                    together_pairs=None):
     """Toplam nöbet farkını kurallara uyarak en fazla 1'e indirir.
 
     Gün gün ilerleyen seçim ay sonunda toplamlarda kayma bırakabiliyordu
@@ -2449,7 +2531,8 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
     geçmişiyle birlikte 2 ya da daha fazla önde olan kişinin fazla nöbeti,
     geçmişi az olana geçer. Bu ayın farkı yine 1'i aşmaz.
     Tatil günü aktarılırken son 12 ayın tatil sayısı (``history_holiday``)
-    bozulmaz.
+    bozulmaz. Birlikte nöbet isteyen ikiliyi (``together_pairs``) ayıran
+    aktarım en sona kalır; yalnızca geçmiş yüzünden yapılacaksa hiç yapılmaz.
     """
     limits = person_limits or {}
     history_total = history_total or {}
@@ -2529,9 +2612,16 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                         continue
                     if not rest_ok(receiver, col):
                         continue
+                    breaks = 0
+                    if together_pairs:
+                        breaks = (_together_count(others + [giver], together_pairs)
+                                  - _together_count(others + [receiver], together_pairs))
+                        if breaks > 0 and gap == 1:
+                            continue
                     # Önce hafta içi; verenin tercih ettiği gün en son, alanın tercih ettiği gün önce.
                     score = (
-                        (10 if col in special_cols else 0)
+                        (50 * max(0, breaks))
+                        + (10 if col in special_cols else 0)
                         + (4 if col in friday_cols else 0)
                         + (5 if pref(giver, col) == 1 else 0)
                         - (3 if pref(receiver, col) == 1 else 0)
@@ -2566,6 +2656,12 @@ LONG_GAP_LIMIT = 1.5
 # nöbet başına ceza. Hafta sonu/Cuma dengesinden hafiftir.
 PAIR_WEIGHT = 12
 PAIR_SCORE_WEIGHT = 15
+# Birlikte nöbet isteyenler: eşi o gün nöbetçiyse seçimde öncelik (tercih
+# edilen gün -500'den hafif, hafta sonu dengesindeki 1 farktan ağır) ve
+# simülasyonlar arasında seçimde ikiliden yalnız birinin nöbetçi olduğu her
+# gün için ceza. Kesin kural değildir; denge ve kurallar önce gelir.
+TOGETHER_WEIGHT = 400
+TOGETHER_SCORE_WEIGHT = 80
 
 
 def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
@@ -2574,7 +2670,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                         simulation_count=10, progress_callback=None,
                         initial_last_shift=None, history_special=None,
                         fixed_assignments=None, history_total=None,
-                        history_holiday=None):
+                        history_holiday=None, together_pairs=None):
     """
     Saf zamanlama algoritması (Streamlit bağımsız).
     progress_callback(int) isteğe bağlı ilerleme bildirimi için kullanılır.
@@ -2598,7 +2694,16 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
     Nöbetler aya yayılır: kişinin son nöbetinden bu yana geçen gün,
     beklenen aralıktan (spread_targets) kısaysa hafif ceza alır, uzunsa
     her fazla gün için öne alınır. Bunlar denge kurallarından hafiftir.
+
+    together_pairs: {(kişi, kişi)} birlikte nöbet tutmak isteyenler; mümkün
+        olduğunca aynı güne konur (güçlü tercih, kesin kural değil).
     """
+    together_pairs = {tuple(sorted(p)) for p in (together_pairs or ()) if p[0] in isimler and p[1] in isimler}
+    if forbidden_pairs:
+        together_pairs -= set(forbidden_pairs)
+    if kisi_sayisi < 2:
+        together_pairs = set()
+    partners = together_partners(together_pairs)
     initial_last_shift = initial_last_shift or {}
     history_special = history_special or {}
     history_total = history_total or {}
@@ -2757,7 +2862,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             # Yeterli aday yoksa günü tamamen boş bırakma: uyan adayları ata,
             # eksik kalan her nöbetçiyi say (eskiden 1 kişi müsaitken gün boştu).
             secilenler = (
-                _pick_varied_group(adaylar, needed, scores, sabitler, pair_count, forbidden_pairs)
+                _pick_varied_group(adaylar, needed, scores, sabitler, pair_count, forbidden_pairs, partners)
                 if adaylar and needed else []
             )
             empty_shifts += needed - len(secilenler)
@@ -2809,7 +2914,10 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             max(0, max(worst_gap[p], len(sutunlar) + 1 - month_last[p]) - LONG_GAP_LIMIT * person_gap[p])
             for p in isimler if month_last[p]
         )
-        pair_excess = sum(max(0, v - allowed_pairs) for v in pair_count.values())
+        pair_excess = sum(
+            max(0, v - allowed_pairs) for pair, v in pair_count.items() if pair not in together_pairs
+        )
+        together_split = together_split_count(temp_schedule, together_pairs, sutunlar)
 
         score = (
             (empty_shifts * 10000) +
@@ -2822,6 +2930,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             (short_gaps * SPREAD_SCORE_WEIGHT) +
             (long_gaps * LONG_GAP_SCORE_WEIGHT) +
             (pair_excess * PAIR_SCORE_WEIGHT) +
+            (together_split * TOGETHER_SCORE_WEIGHT) +
             (std_dev_total * 10) +
             (std_dev_special * 5)
         )
@@ -2840,30 +2949,31 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             {(p, c) for c, people in fixed_by_col.items() for p in people},
             initial_last_shift, history_special,
             history_total=history_total, history_holiday=history_holiday,
+            together_pairs=together_pairs,
         )
         best_schedule = _balance_specials(
             best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
             df_preferred, min_bosluk, forbidden_pairs,
             {(p, c) for c, people in fixed_by_col.items() for p in people},
-            initial_last_shift, history_special, capped=capped,
+            initial_last_shift, history_special, capped=capped, together_pairs=together_pairs,
         )
         best_schedule = _balance_fridays(
             best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
             df_preferred, min_bosluk, forbidden_pairs,
             {(p, c) for c, people in fixed_by_col.items() for p in people},
-            initial_last_shift,
+            initial_last_shift, together_pairs=together_pairs,
         )
         if any(gun_detaylari[c]["holiday"] for c in sutunlar):
             best_schedule = _balance_holidays(
                 best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                 df_preferred, min_bosluk, forbidden_pairs,
                 {(p, c) for c, people in fixed_by_col.items() for p in people},
-                initial_last_shift, history_holiday,
+                initial_last_shift, history_holiday, together_pairs=together_pairs,
             )
         best_schedule = _fill_open_days(
             best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
             df_preferred, min_bosluk, forbidden_pairs, person_limits,
-            initial_last_shift, kisi_sayisi,
+            initial_last_shift, kisi_sayisi, together_pairs=together_pairs,
         )
     return best_schedule, best_score
 

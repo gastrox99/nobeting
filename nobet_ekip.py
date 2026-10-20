@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Ayarlar: ekip tablosu (isim + kişisel limitler), sabit görev yerleri ve birlikte çalışamayanlar çapraz tablosu.
+"""Ayarlar: ekip tablosu (isim + kişisel limitler), birlikte çalışamayanlar ve
+birlikte çalışmak isteyenler çapraz tabloları, sabit görev yerleri.
 
-İkisi de ayarlarda saklanan metinleri (``isimler_text``, ``limits_text``,
-``forbidden_pairs_text``) düzenler; kayıt, yedek ve Excel aynı metinleri
+Hepsi ayarlarda saklanan metinleri (``isimler_text``, ``limits_text``,
+``forbidden_pairs_text``, ``together_pairs_text``) düzenler; kayıt, yedek ve Excel aynı metinleri
 kullanmaya devam eder.
 """
 import streamlit as st
@@ -149,72 +150,102 @@ def render_fixed_roles(isimler, role_names):
                    "değiştirmez, yalnız görev yerini belirler.")
 
 
-def _pair_key(a, b):
-    return f"w_yasak::{a}::{b}"
+# İki çapraz tablo aynı kodla çizilir: birlikte çalışamayanlar ve birlikte
+# nöbet tutmak isteyenler. Her biri kendi metnini ve kutu anahtarlarını kullanır.
+PAIR_TABLES = {
+    "yasak": {
+        "text": "forbidden_pairs_text",
+        "title": "**🚫 Birlikte Çalışamayan**",
+        "list_label": "Aynı gün nöbet tutamayan ikililer",
+        "caption": "İşaretlenen ikili aynı gün nöbet tutmaz.",
+        "box": "{} ile {}",
+    },
+    "birlikte": {
+        "text": "together_pairs_text",
+        "title": "**🤝 Birlikte Çalışmak İsteyen**",
+        "list_label": "Mümkünse aynı gün nöbet tutacak ikililer",
+        "caption": ("İşaretlenen ikili mümkün olduğunca aynı gün nöbet tutar. Kesin kural "
+                    "değildir: izin, dinlenme ve hafta sonu/toplam dengesi önce gelir. "
+                    "Birlikte çalışamayan olarak da işaretli ikili için yasak geçerlidir."),
+        "box": "{} ile {} birlikte",
+    },
+}
+
+
+def _pair_key(a, b, kind="yasak"):
+    return f"w_{kind}::{a}::{b}"
 
 
 # Çapraz tablo kişi sayısının karesi kadar kutu çizer; büyük ekipte tek bir seçim listesi kullanılır.
 PAIR_MATRIX_MAX_PEOPLE = 25
-_PAIR_LIST = "w_yasak_liste"
+
+
+def _pair_list_key(kind):
+    return f"w_{kind}_liste"
 
 
 def _pair_label(pair):
     return f"{pair[0]} + {pair[1]}"
 
 
-def _render_pair_list(isimler, text):
+def _render_pair_list(isimler, text, kind="yasak"):
     """Büyük ekip için ikililer tek çoklu seçim kutusunda işaretlenir; yeni metni döner."""
     state = st.session_state
+    list_key = _pair_list_key(kind)
+    shown_key = f"_{kind}_liste_shown"
     options = {
         _pair_label(tuple(sorted((a, b)))): tuple(sorted((a, b)))
         for i, a in enumerate(isimler) for b in isimler[i + 1:]
     }
-    shown = state.get("_yasak_liste_shown")
-    if shown is not None and _PAIR_LIST in state and set(state[_PAIR_LIST]) != set(shown):
-        chosen = {options[label] for label in state[_PAIR_LIST] if label in options}
+    shown = state.get(shown_key)
+    if shown is not None and list_key in state and set(state[list_key]) != set(shown):
+        chosen = {options[label] for label in state[list_key] if label in options}
         outside = {p for p in parse_forbidden_pairs(text, isimler) if unknown_names(p, isimler)}
         text = forbidden_pairs_to_text(chosen | outside)
     pairs = parse_forbidden_pairs(text, isimler)
     current = [_pair_label(p) for p in sorted(pairs) if p in options.values()]
-    state[_PAIR_LIST] = current
-    state["_yasak_liste_shown"] = list(current)
+    state[list_key] = current
+    state[shown_key] = list(current)
     return text, options
 
 
-def render_pair_matrix(isimler):
-    """Birlikte çalışamayanlar: kişi × kişi çapraz tablo, bir tıkla işaretlenir."""
+def render_pair_matrix(isimler, kind="yasak"):
+    """Kişi × kişi çapraz tablo, bir tıkla işaretlenir (``kind``: yasak / birlikte)."""
     state = st.session_state
-    text = state.get("forbidden_pairs_text", "")
+    table = PAIR_TABLES[kind]
+    text_key = table["text"]
+    text = state.get(text_key, "")
     if len(isimler) > PAIR_MATRIX_MAX_PEOPLE:
-        text, options = _render_pair_list(isimler, text)
-        if text != state.get("forbidden_pairs_text", ""):
-            state.forbidden_pairs_text = text
-        with st.container(key="yasak-tablo"):
-            st.markdown("**🚫 Birlikte Çalışamayan**")
+        text, options = _render_pair_list(isimler, text, kind)
+        if text != state.get(text_key, ""):
+            state[text_key] = text
+        with st.container(key=f"{kind}-tablo"):
+            st.markdown(table["title"])
             st.multiselect(
-                "Aynı gün nöbet tutamayan ikililer", list(options), key=_PAIR_LIST,
+                table["list_label"], list(options), key=_pair_list_key(kind),
                 placeholder="İkili seçin (ör. Ali + Ayşe)",
             )
             st.caption(f"Ekip {PAIR_MATRIX_MAX_PEOPLE} kişiden büyük olduğu için tablo yerine liste kullanılıyor.")
         return
-    shown = state.get("_yasak_shown", set())
+    shown_key = f"_{kind}_shown"
+    shown = state.get(shown_key, set())
     # Tablo simetrik olduğu için her ikili bir kez (üst üçgende) gösterilir.
     _ikililer = [(a, b) for i, a in enumerate(isimler) for b in isimler[i + 1:]]
     # Son çizimden bu yana tıklanan kutuyu bul ve metne uygula.
     for a, b in _ikililer:
-        key = _pair_key(a, b)
+        key = _pair_key(a, b, kind)
         if key in state and bool(state[key]) != (tuple(sorted((a, b))) in shown):
             text = toggle_pair_text(text, isimler, (a, b))
             break
-    if text != state.get("forbidden_pairs_text", ""):
-        state.forbidden_pairs_text = text
+    if text != state.get(text_key, ""):
+        state[text_key] = text
     pairs = parse_forbidden_pairs(text, isimler)
     for a, b in _ikililer:
-        state[_pair_key(a, b)] = tuple(sorted((a, b))) in pairs
-    state["_yasak_shown"] = {pair for pair in pairs}
+        state[_pair_key(a, b, kind)] = tuple(sorted((a, b))) in pairs
+    state[shown_key] = {pair for pair in pairs}
 
-    with st.container(key="yasak-tablo"):
-        st.markdown("**🚫 Birlikte Çalışamayan**")
+    with st.container(key=f"{kind}-tablo"):
+        st.markdown(table["title"])
         if len(isimler) < 2:
             st.caption("Ekipte en az iki kişi olunca burada işaretlenebilir.")
         else:
@@ -237,12 +268,12 @@ def render_pair_matrix(isimler):
                     if j < i:
                         cols[j + 1].markdown("<div class='yasak-kendi'></div>", unsafe_allow_html=True)
                     else:
-                        cols[j + 1].checkbox(f"{a} ile {b}", key=_pair_key(a, b), label_visibility="collapsed")
-            st.caption("İşaretlenen ikili aynı gün nöbet tutmaz.")
+                        cols[j + 1].checkbox(table["box"].format(a, b), key=_pair_key(a, b, kind), label_visibility="collapsed")
+            st.caption(table["caption"])
         _outside = [p for p in parse_forbidden_pairs(text, isimler)
                     if unknown_names(p, isimler)]
-        if _outside and st.button("Ekipte olmayanların ikililerini sil", key="w_yasak_temizle"):
-            state.forbidden_pairs_text = forbidden_pairs_to_text(
+        if _outside and st.button("Ekipte olmayanların ikililerini sil", key=f"w_{kind}_temizle"):
+            state[text_key] = forbidden_pairs_to_text(
                 p for p in parse_forbidden_pairs(text, isimler) if p not in _outside
             )
             st.rerun()
