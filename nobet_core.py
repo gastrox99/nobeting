@@ -416,13 +416,13 @@ def get_preference_grid_state(is_assigned, preference_value, has_conflict=False)
     return dict(_PREFERENCE_GRID_STATE_BY_KEY[state_key])
 
 
-def name_column_width(names, char_px=9, minimum=96, maximum=220):
+def name_column_width(names, char_px=9, minimum=96, maximum=220, badge_px=30):
     """İsim sütunu genişliği (px): renk noktası + en uzun isim + sayı rozeti.
 
     Çok uzun isimler ``maximum``'da kesilir ve "…" ile kısaltılır.
     """
     longest = max((len(str(name)) for name in names), default=0)
-    width = 11 + 4 + longest * char_px + 4 + 30 + 10  # nokta, boşluk, isim, boşluk, rozet, kenar
+    width = 11 + 4 + longest * char_px + 4 + badge_px + 10  # nokta, boşluk, isim, boşluk, rozet, kenar
     return int(max(minimum, min(maximum, width)))
 
 
@@ -3320,6 +3320,149 @@ def on_duty_summary(rows, role_names, yil, ay, today):
             parts.append(str(value) if role == "Nöbetçiler" else f"{value} ({role})")
         found[row_date] = " · ".join(parts) or "boş"
     return [(wanted[d], found[d]) for d in sorted(found)]
+
+
+TR_AY_KISA = {1: "Oca", 2: "Şub", 3: "Mar", 4: "Nis", 5: "May", 6: "Haz",
+              7: "Tem", 8: "Ağu", 9: "Eyl", 10: "Eki", 11: "Kas", 12: "Ara"}
+TR_GUN_UZUN = {0: "Pazartesi", 1: "Salı", 2: "Çarşamba", 3: "Perşembe", 4: "Cuma",
+               5: "Cumartesi", 6: "Pazar"}
+
+
+def shared_date_label(row, yil, ay):
+    """Paylaşım tablosundaki kısa tarih: "4 Kas Çar" (okunamazsa olduğu gibi)."""
+    day, weekday = _row_day_and_weekday(row)
+    if not day:
+        return str(row.get("Tarih", ""))
+    return f"{day} {TR_AY_KISA[ay]} {weekday}".strip()
+
+
+def shared_day_kinds(rows, yil, ay):
+    """Her satır için "holiday", "weekend" ya da "" (resmi tatil ve hafta sonu)."""
+    holidays = {d for d, _ in official_holidays(yil, ay)}
+    kinds = []
+    for row in rows:
+        day, _ = _row_day_and_weekday(row)
+        try:
+            row_date = date(yil, ay, day) if day else None
+        except ValueError:
+            row_date = None
+        if row_date is None:
+            kinds.append("")
+        elif day in holidays:
+            kinds.append("holiday")
+        elif row_date.weekday() >= 5:
+            kinds.append("weekend")
+        else:
+            kinds.append("")
+    return kinds
+
+
+def next_shift(periods, person, today):
+    """Kişinin bugün ya da sonraki ilk nöbeti.
+
+    ``periods``: [((yıl, ay), satırlar, görev_adları), ...]. Dönen değer
+    {"date", "roles", "partners"} ya da nöbet yoksa None.
+    """
+    found = None
+    for (yil, ay), rows, roles in periods:
+        for row in rows or ():
+            day, _ = _row_day_and_weekday(row)
+            try:
+                row_date = date(yil, ay, day) if day else None
+            except ValueError:
+                continue
+            if row_date is None or row_date < today or (found and row_date >= found["date"]):
+                continue
+            mine = [r for r in roles if r != "Nöbetçiler" and row.get(r) == person]
+            if "Nöbetçiler" in roles:
+                together = [n.strip() for n in str(row.get("Nöbetçiler") or "").split(",") if n.strip()]
+                if person not in together:
+                    together = None
+            else:
+                together = [row.get(r) for r in roles if row.get(r) not in (None, "", "-")] if mine else None
+            if together is None:
+                continue
+            found = {
+                "date": row_date,
+                "roles": mine,
+                "partners": [n for n in together if n != person],
+            }
+    return found
+
+
+def next_shift_text(shift, today):
+    """"4 Kasım Çarşamba · 3 gün sonra · Elif ile" biçiminde kart metni."""
+    when = shift["date"]
+    days = (when - today).days
+    relative = "bugün" if days == 0 else "yarın" if days == 1 else f"{days} gün sonra"
+    parts = [f"{when.day} {TR_AY_ADLARI[when.month]} {TR_GUN_UZUN[when.weekday()]}", relative]
+    if shift["roles"]:
+        parts.append(", ".join(shift["roles"]))
+    if shift["partners"]:
+        parts.append(", ".join(shift["partners"]) + " ile")
+    return " · ".join(parts)
+
+
+def short_display_names(names):
+    """Dar ekran için kısa adlar: "Ayşe Yılmaz" → "Ayşe Y.".
+
+    Kısalınca iki kişi aynı görünecekse soyadından bir harf daha eklenir;
+    yine ayırt edilemiyorsa tam ad kalır. Tek kelimelik ad değişmez.
+    """
+    names = list(names)
+
+    def _short(name, letters):
+        parts = str(name).split()
+        if len(parts) < 2:
+            return str(name)
+        return f"{' '.join(parts[:-1])} {parts[-1][:letters]}."
+
+    result = {}
+    for name in names:
+        for letters in range(1, 6):
+            candidate = _short(name, letters)
+            clash = any(_short(other, letters) == candidate for other in names if other != name)
+            if not clash:
+                result[name] = candidate
+                break
+        else:
+            result[name] = str(name)
+    return result
+
+
+def most_paired(schedule, people, columns, limit=3):
+    """En çok birlikte nöbet tutan ikililer: [(a, b, sayı), ...] (çoktan aza)."""
+    counts = {}
+    for c in columns:
+        if c not in schedule.columns:
+            continue
+        who = [p for p in people if p in schedule.index and bool(schedule.at[p, c])]
+        for a, b in _combinations(who, 2):
+            counts[(a, b)] = counts.get((a, b), 0) + 1
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [(a, b, n) for (a, b), n in ordered[:limit]]
+
+
+def simulation_summary(schedule, people, columns, gun_detaylari, person_limits=None):
+    """Simülasyon bildirimi için kısa denge özeti (bu ayın farkları)."""
+    person_limits = person_limits or {}
+    free = [p for p in people if not has_total_limit(person_limits.get(p, {}))]
+    sp_people = [p for p in people if special_cap(person_limits, p) >= 999]
+
+    def _range(group, test):
+        values = [sum(1 for c in columns if test(gun_detaylari[c]) and bool(schedule.at[p, c]))
+                  for p in group if p in schedule.index]
+        return max(values) - min(values) if len(values) >= 2 else 0
+
+    parts = [
+        f"hafta sonu farkı {_range(sp_people, lambda d: d['weekend'] or d['holiday'])}",
+        f"Cuma farkı {_range(people, is_friday_column)}",
+        f"toplam farkı {_range(free, lambda d: True)}",
+    ]
+    pairs = most_paired(schedule, people, columns, limit=1)
+    if pairs:
+        parts.append(f"en çok birlikte {pairs[0][2]} nöbet")
+    return "Bu ay: " + ", ".join(parts) + "."
 
 
 def shared_updated_text(moment):

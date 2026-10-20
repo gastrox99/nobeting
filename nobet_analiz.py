@@ -5,7 +5,7 @@ import random
 import pandas as pd
 import streamlit as st
 
-from nobet_core import TR_AY_ADLARI, build_person_ics, preference_summary, tr_sayi
+from nobet_core import TR_AY_ADLARI, build_person_ics, escape_html, most_paired, preference_summary, tr_sayi
 from nobet_durum import save_undo_state
 
 
@@ -60,16 +60,21 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                 f"🎉 Son 12 aydaki bayram/tatil nöbetleri: {_holiday_text}. "
                 "Bu ayın tatil günleri azı olana verilir."
             )
+        # Günde tek nöbetçi varsa görev sütunu Toplam'ın aynısıdır; gösterilmez.
+        _single_role = len(role_names) < 2
+        _load_table = df_stats_load.drop(
+            columns=[r for r in role_names if r in df_stats_load.columns]) if _single_role else df_stats_load
         st.dataframe(
-            df_stats_load.style.apply(
-                _highlight_extremes, subset=["Toplam", "Hafta sonu", "Cuma", "Tatil"] + list(role_names),
+            _load_table.style.apply(
+                _highlight_extremes,
+                subset=["Toplam", "Hafta sonu", "Cuma", "Tatil"] + ([] if _single_role else list(role_names)),
             ),
             width="stretch"
         )
         st.caption("Hafta sonuna tatiller de dahildir. Renkli hücreler sütunun en çoğu (turuncu) "
                    "ve en azıdır (mavi); fark 2'den azsa renk yoktur.")
         # Düğme görev adlarını kullanır (ör. "AYB / GYB sayılarını eşitle").
-        if st.button(f"🤖 {' / '.join(role_names)} sayılarını eşitle", width="stretch",
+        if not _single_role and st.button(f"🤖 {' / '.join(role_names)} sayılarını eşitle", width="stretch",
                      help="Nöbetçileri değiştirmeden yalnızca kimin hangi görev yerinde olduğunu "
                           "herkese eşit dağıtır."):
             if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
@@ -154,8 +159,20 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
         )
 
     with an4:
-        st.markdown("**Eşleşme Matrisi**")
-        st.dataframe(pair_display, width="stretch")
+        st.markdown("**En çok birlikte tutanlar**")
+        _pairs = most_paired(st.session_state.schedule_bool, isimler, list(st.session_state.schedule_bool.columns))
+        if _pairs and _pairs[0][2] <= 1:
+            st.caption("Hiçbir ikili bu ay birden fazla birlikte nöbet tutmuyor.")
+        elif _pairs:
+            st.markdown(
+                "".join(f"<div>{escape_html(_a)} – {escape_html(_b)}: <b>{_n}</b> nöbet</div>"
+                        for _a, _b, _n in _pairs),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Henüz birlikte nöbet yok.")
+        with st.expander("Eşleşme Matrisi (herkes)"):
+            st.dataframe(pair_display, width="stretch")
 
     # Satır 3: Ekip tercih özeti (tercih/kaçın/izin işaretlerinin sonucu)
     st.markdown("**Tercih Özeti**")

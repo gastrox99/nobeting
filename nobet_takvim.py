@@ -260,7 +260,7 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
                         unsafe_allow_html=True
                     )
                     if len(all_nobetciler) >= 2:
-                        if st.button("🔄", key=f"cal_swap_{dn}", help="Görev yerlerini değiştir", width="stretch"):
+                        if st.button("🔄", key=f"cal_swap_{dn}", help="Görev yerlerini değiştir"):
                             st.session_state['cal_swap_day'] = dn
                             st.rerun()
                     cal_day_num += 1

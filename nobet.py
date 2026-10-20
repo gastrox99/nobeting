@@ -124,6 +124,7 @@ for _attempt in range(2):
             stash_removed_people,
             take_back_people,
             drop_unknown_people_from_rows,
+            simulation_summary,
         )
         _load_ui_modules()
         break
@@ -160,7 +161,16 @@ if not _db_state["ready"] and st.session_state.get("_db_init_attempted") != SCHE
 _db_ready = _db_state["ready"]
 
 # Sayfa Ayarları
-st.set_page_config(page_title="Adil Nöbet", layout="wide")
+_APP_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "ikon-64.png")
+st.set_page_config(page_title="Adil Nöbet", page_icon=_APP_ICON, layout="wide")
+# Safari "Ana Ekrana Ekle" simgesi (Streamlit kendisi eklemiyor; yoksa sayfa
+# görüntüsü kullanılıyordu). Dosya config.toml enableStaticServing ile sunulur.
+st.html(
+    "<script>if(!document.querySelector('link[rel=apple-touch-icon]')){"
+    "const l=document.createElement('link');l.rel='apple-touch-icon';"
+    "l.href='app/static/ikon-180.png';document.head.appendChild(l);}</script>",
+    unsafe_allow_javascript=True,
+)
 
 # --- SALT OKUNUR PAYLAŞIM SAYFASI (?paylas=...) ---
 # Ekip arkadaşları giriş yapmadan yalnızca listeyi görür (nobet_paylasim.py).
@@ -424,6 +434,8 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         ay = st.selectbox("📆 Ay", ay_options, index=ay_options.index(st.session_state.get('ay_val', current_month)), key='ay_input_direct',
                           format_func=lambda m: TR_AY_ADLARI[m])
         st.session_state.ay_val = ay
+        # Tarayıcı sekmesinde/Ana Ekranda hangi ayın açık olduğu görünsün.
+        st.set_page_config(page_title=f"{TR_AY_ADLARI[ay]} {yil} · Adil Nöbet")
         
         gun_sayisi = calendar.monthrange(yil, ay)[1]
         kişi_sayısı = st.slider("👤 Nöbet Başına Kişi:", 1, 5, value=st.session_state.get('kisi_sayisi_val', 2), key='kisi_slider_direct')
@@ -839,7 +851,10 @@ for _stale in [k for k in list(st.session_state.person_preferences.keys()) if k 
     del st.session_state.person_preferences[_stale]
 
 if st.session_state.pop("simulation_success_pending", False):
-    st.toast("En adil sonuç seçildi.", icon="🧠")
+    st.toast("En adil sonuç seçildi. " + simulation_summary(
+        st.session_state.schedule_bool, isimler, sutunlar, gun_detaylari,
+        st.session_state.get("person_limits", {}),
+    ), icon="🧠")
     if st.session_state.pop("auto_improved_pending", False):
         st.toast("Eksik ya da toplam farkı vardı; ✨ İyileştir çözücüsü düzeltti.", icon="✨")
 
