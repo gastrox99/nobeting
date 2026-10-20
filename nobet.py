@@ -140,7 +140,7 @@ from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_ekip import render_team_table, render_pair_matrix
-from nobet_talepler import render_team_requests
+from nobet_talepler import finish_approved_requests, render_team_requests
 from streamlit_local_storage import LocalStorage
 
 # Veritabanını sunucu başına bir kez hazırla; başarısızsa sonucu kalıcı
@@ -1539,6 +1539,12 @@ elif (
             "❌ Çizelge kaydedilemedi — otomatik kayıt veritabanına yazılamıyor! "
             "Sayfayı yenilemeden önce Excel/PNG olarak indirin.",
         )
+
+# Onaylanan ekip talepleri ancak ay kaydedildiyse silinir.
+if _db_ready:
+    finish_approved_requests(
+        current_owner, yil, ay, _persist_fp == st.session_state.get("last_saved_fingerprint"),
+    )
 
 # Tercihler kaydedildiyse tarayıcıdaki bekleyen kopya artık gereksiz.
 if (

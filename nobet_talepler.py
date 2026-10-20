@@ -19,6 +19,8 @@ from nobet_core import (
 
 _CACHE_KEY = "team_requests_cache"
 _CACHE_SECONDS = 60
+# Onaylanıp tercihlere işlenen, ay kaydedilince silinecek talepler: [(id, yıl, ay)].
+_APPROVED_KEY = "team_requests_approved"
 
 
 def _requests(owner):
@@ -34,10 +36,18 @@ def _approve(owner, request, person, save_undo_state):
     st.session_state.pref_df, _changed = apply_team_request(
         st.session_state.pref_df, person, request["days"]
     )
-    # Tercih Belirle modunda da bekletmeden kaydedilsin.
-    st.session_state.save_preferences_now = True
-    delete_team_request(owner, request["id"])
-    st.session_state.pop(_CACHE_KEY, None)
+    if _changed:
+        # Tercih Belirle modunda da bekletmeden kaydedilsin. Talep, ay gerçekten
+        # kaydedilince silinir (finish_approved_requests); kayıt başka yerdeki
+        # bir değişiklik yüzünden durursa talep kaybolmaz, yeniden onaylanabilir.
+        st.session_state.save_preferences_now = True
+        st.session_state.setdefault(_APPROVED_KEY, []).append(
+            (request["id"], request["year"], request["month"])
+        )
+    else:
+        # Tercihler zaten talep gibiymiş; kaydedilecek bir şey yok.
+        delete_team_request(owner, request["id"])
+        st.session_state.pop(_CACHE_KEY, None)
     st.toast(f"{person} talebi onaylandı ({_changed} gün işlendi).", icon="✅")
 
 
@@ -47,8 +57,26 @@ def _reject(owner, request):
     st.toast(f"{request['person']} talebi reddedildi.", icon="🗑️")
 
 
+def finish_approved_requests(owner, yil, ay, saved):
+    """Kayıt denendikten sonra çağrılır: kaydedildiyse onaylanan talepleri siler,
+    kaydedilemediyse talepler listede yeniden görünür."""
+    _approved = st.session_state.pop(_APPROVED_KEY, None)
+    if not _approved:
+        return
+    st.session_state.pop(_CACHE_KEY, None)
+    if saved:
+        for _id, _y, _m in _approved:
+            if (_y, _m) == (yil, ay):
+                delete_team_request(owner, _id)
+    else:
+        # Liste bu çalışmada talep gizlenerek çizildi; yeniden çiz ki görünsün.
+        st.rerun()
+
+
 def render_team_requests(owner, yil, ay, isimler, save_undo_state):
-    _all = _requests(owner)
+    # Onaylanıp kaydı beklenenler listede ikinci kez görünmesin.
+    _approved_ids = {_id for _id, _, _ in st.session_state.get(_APPROVED_KEY) or []}
+    _all = [_r for _r in _requests(owner) if _r["id"] not in _approved_ids]
     if not _all:
         return
     _here = [_r for _r in _all if (_r["year"], _r["month"]) == (yil, ay)]
