@@ -137,7 +137,9 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
 
     _share_cache = st.session_state.setdefault("share_token_cache", {})
     # Excel yükleme seyrek kullanıldığı için Yedek bölümünde (render_excel_import).
-    _export_col, _share_col, _pref_col, _snapshot_col, _ = st.columns([1, 1, 1, 1, 2])
+    # Kapsayıcı anahtarı (bottom-actions) telefonda dört düğmeyi tek satırda tutar (nobet_stil.py).
+    _toolbar = st.container(key="bottom-actions")
+    _export_col, _share_col, _pref_col, _snapshot_col, _ = _toolbar.columns([1, 1, 1, 1, 2])
     with _export_col:
         with st.popover("📤 Dışa aktar", width="stretch"):
             st.download_button("📊 Excel", _excel_bytes, f"nobet_{yil}_{ay:02d}.xlsx",

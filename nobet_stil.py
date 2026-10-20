@@ -175,6 +175,33 @@ GLOBAL_CSS = """
     }
 }
 
+/* Alttaki Dışa aktar · Paylaş · Tercihler · Yedekle: yazılar kırılmaz;
+   telefonda dördü tek satırda, eşit genişlik ve aynı yükseklikte. */
+.st-key-bottom-actions :is(.stButton, [data-testid="stPopover"]) button p { white-space: nowrap; }
+@media (max-width: 768px) {
+    .st-key-bottom-actions [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        gap: 4px !important;
+    }
+    .st-key-bottom-actions :is([data-testid="column"],[data-testid="stColumn"]) {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        width: auto !important;
+    }
+    .st-key-bottom-actions :is([data-testid="column"],[data-testid="stColumn"]):last-child { display: none; }
+    .st-key-bottom-actions :is(.stButton, [data-testid="stPopover"]) button {
+        padding: 4px 2px !important;
+        min-height: 40px;
+        gap: 0;
+    }
+    .st-key-bottom-actions :is(.stButton, [data-testid="stPopover"]) button p { font-size: 13px; }
+    /* Açılır menü oku yer kaplamasın; düğmeye dokununca menü yine açılır. */
+    .st-key-bottom-actions [data-testid="stPopover"] button div:has(> span > [data-testid="stIconMaterial"]) { display: none; }
+}
+@media (max-width: 340px) {
+    .st-key-bottom-actions :is(.stButton, [data-testid="stPopover"]) button p { font-size: 11px; }
+}
+
 /* Hızlı giriş: Kişi · Günler · Tür · Uygula telefonda da tek satır. */
 [data-testid="stExpander"] .st-key-quick-entry [data-testid="stHorizontalBlock"] {
     flex-wrap: nowrap !important;
