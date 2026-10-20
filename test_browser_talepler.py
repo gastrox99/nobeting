@@ -90,3 +90,36 @@ def test_talep_onaylanir_ve_reddedilir(app_url):  # noqa: F811
                 browser.close()
     finally:
         _with_db(_clear_requests)
+
+
+def _bump_schedule(db, year, month):
+    """Ayı başka bir yerden (ör. telefondan) kaydedilmiş gibi yapar."""
+    import pandas as pd
+    frame = pd.DataFrame(False, index=[ALI, AYSE], columns=["1 Per"])
+    assert db.save_schedule(f"Otomatik_{year}_{month:02d}", year, month, [ALI, AYSE], frame, owner="")
+
+
+def test_kaydedilemeyen_onayda_talep_kaybolmaz(app_url):  # noqa: F811
+    today = now_tr().date()
+    year, month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+    _with_db(_clear_requests)
+    _with_db(lambda db: db.submit_team_request("", year, month, ALI, {"izin": [7]}))
+    try:
+        with sync_playwright() as p:
+            browser, page = _open_app(p, app_url, f"{ALI}, {AYSE}")
+            try:
+                _wait_idle(page)
+                expect(page.get_by_text("📥 Ekip talepleri (1)")).to_be_visible()
+                # Sayfa açıkken ay başka yerde kaydedilir; onay kaydı çakışmaya düşer.
+                _with_db(lambda db: _bump_schedule(db, year, month))
+                page.get_by_role("button", name="✅ Onayla").click()
+                _wait_idle(page)
+                _no_exception(page)
+                expect(page.get_by_text("başka bir yerde", exact=False).first).to_be_visible()
+                # Talep silinmedi; listede yeniden görünür.
+                assert [r["person"] for r in _with_db(lambda db: db.list_team_requests(""))] == [ALI]
+                expect(page.get_by_text("📥 Ekip talepleri (1)")).to_be_visible()
+            finally:
+                browser.close()
+    finally:
+        _with_db(_clear_requests)
