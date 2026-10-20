@@ -19,6 +19,10 @@ from nobet_core import (
     together_split_count,
 )
 
+# Yüklendiği andaki dosya zamanı: nobet.py bu farklılaşınca modülü yeniden yükler
+# (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
+_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
+
 # Önem sırası (kullanıcı: hafta sonu/tatil > Cuma; toplam farkı en fazla 1 kuralı).
 PRIMARY_METRICS = ("unfilled", "min_short", "total", "special", "holiday", "friday", "total_history")
 SECONDARY_METRICS = (

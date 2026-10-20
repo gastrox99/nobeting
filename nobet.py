@@ -4,12 +4,15 @@ import pandas as pd
 import calendar
 import time
 import os
-# Streamlit Cloud yeni kodu çektiğinde db / nobet_core / arayüz modüllerinin
-# eski hâli hafızada kalabiliyor ve yeni fonksiyonlar "ImportError" veriyor.
-# Böyle olursa modülleri tazeleyip yeniden dene (Reboot gerekmesin).
+# Streamlit Cloud yeni kodu çektiğinde db / nobet_core / nobet_iyilestir'in
+# eski hâli hafızada kalabiliyor: yeni fonksiyonlar "ImportError" veriyor ya da
+# eski kod sessizce çalışıyordu (İyileştir "ortools yüklü değil" diyordu).
+# Her çalışmada dosyası değişen modül (ve ona bağlı olanlar) yeniden yüklenir.
 import importlib
-import db as _db_module
-import nobet_core as _core_module
+import importlib.util
+import sys
+import db as _db_module  # noqa: F401
+import nobet_core as _core_module  # noqa: F401
 
 # Arayüz bölümleri ayrı dosyalarda. Küçük oldukları için her çalışmada
 # yeniden okunurlar; böylece sunucuda eski bir kopya kalıp yeni nobet.py ile
@@ -21,9 +24,27 @@ _UI_MODULES = (
 )
 
 
-def _fresh_modules():
-    for _module in (_db_module, _core_module):
-        importlib.reload(_module)
+# Sıra önemli: nobet_iyilestir nobet_core'dan isim alır, core tazelenirse o da tazelenir.
+_FRESH_MODULES = ("db", "nobet_core", "nobet_iyilestir")
+
+
+def _fresh_modules(force=False):
+    """Dosyası diskte değişmiş (ya da bu sunucuda hiç denetlenmemiş) modülleri yeniden yükler."""
+    reloaded = False
+    for _name in _FRESH_MODULES:
+        _module = sys.modules.get(_name)
+        if _module is None:
+            continue
+        try:
+            _stamp = os.stat(_module.__file__).st_mtime_ns
+        except (OSError, TypeError):
+            continue
+        if force or reloaded or getattr(_module, "_nobet_loaded_stamp", None) != _stamp:
+            importlib.reload(_module)  # modül kendi _nobet_loaded_stamp'ini yeniden yazar
+            reloaded = True
+
+
+_fresh_modules()
 
 
 def _load_ui_modules():
@@ -135,7 +156,7 @@ for _attempt in range(2):
     except ImportError:
         if _attempt:
             raise
-        _fresh_modules()
+        _fresh_modules(force=True)
 from nobet_stil import GLOBAL_CSS, ui_colors
 from nobet_durum import apply_renames, save_undo_state
 from nobet_paylasim import render_shared_view
@@ -1248,10 +1269,15 @@ if st.session_state.pop("run_improve", False):
     st.session_state.incomplete_simulation = None
     try:
         from nobet_iyilestir import improve_schedule, improvement_lines, rule_breaking_shifts
-    except ImportError:
+    except ImportError as _exc:
         improve_schedule = None
+        _import_error = _exc
     if improve_schedule is None:
-        st.error("İyileştir için gereken çözücü (ortools) yüklü değil.")
+        if importlib.util.find_spec("ortools") is None:
+            st.error("İyileştir için gereken çözücü (ortools) yüklü değil.")
+        else:
+            # Çözücü yüklü; sorun uygulamanın kendi dosyalarında (ör. yarım güncelleme).
+            st.error(f"İyileştir açılamadı: {_import_error}. Sayfayı yenileyip tekrar deneyin.")
     else:
         with st.spinner("Daha adil liste aranıyor (birkaç saniye)..."):
             try:

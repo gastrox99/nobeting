@@ -2201,12 +2201,21 @@ class TestStaleModuleRecovery(unittest.TestCase):
     def test_eski_modul_kalirsa_yenilenip_tekrar_denenir(self):
         source = _app_source("nobet.py")
         recovery = source[source.index("for _attempt in range(2):"):source.index("from streamlit_local_storage")]
-        self.assertIn("except ImportError:\n        if _attempt:\n            raise\n        _fresh_modules()", recovery)
+        self.assertIn("except ImportError:\n        if _attempt:\n            raise\n        _fresh_modules(force=True)", recovery)
         # İçe aktarma listesi tek yerde (eskiden iki kopya elle eş tutuluyordu).
         self.assertEqual(recovery.count("from db import ("), 1)
         self.assertEqual(recovery.count("from nobet_core import ("), 1)
         # Arayüz bölümleri de her çalışmada yeniden okunur.
         self.assertIn("_load_ui_modules()", recovery)
+
+    def test_degisen_cekirdek_moduller_her_calismada_tazelenir(self):
+        source = _app_source("nobet.py")
+        listed = re.search(r"_FRESH_MODULES = \((.*?)\)", source, flags=re.S).group(1)
+        # nobet_iyilestir eskiyken İyileştir "ortools yüklü değil" diyordu.
+        self.assertEqual(re.findall(r'"(\w+)"', listed), ["db", "nobet_core", "nobet_iyilestir"])
+        self.assertLess(source.index("\n_fresh_modules()\n"), source.index("for _attempt in range(2):"))
+        for name in ("db.py", "nobet_core.py", "nobet_iyilestir.py"):
+            self.assertIn("_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns", _app_source(name))
 
     def test_tum_arayuz_dosyalari_yeniden_okunur(self):
         source = _app_source("nobet.py")

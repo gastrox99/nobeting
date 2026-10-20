@@ -10,11 +10,16 @@ import hashlib
 import json
 import calendar
 import math
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from itertools import combinations as _combinations, permutations as _permutations
 from html import escape as _escape_html
 from numbers import Integral
+
+# Yüklendiği andaki dosya zamanı: nobet.py bu farklılaşınca modülü yeniden yükler
+# (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
+_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
 
 
 def normalize_owner_email(value):
