@@ -566,7 +566,6 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         if _role_adjusted:
             st.caption("Görev adları benzersiz olmalı: " + ", ".join(f"{a} → {b}" for a, b in _role_adjusted))
         st.session_state.rol_isimleri = role_names
-        render_fixed_roles(isimler, role_names)
         st.session_state.balance_history = st.checkbox(
             "⚖️ Önceki aylarla dengele",
             value=st.session_state.get("balance_history", True),
@@ -579,9 +578,15 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         )
 
     st.divider()
-    render_pair_matrix(isimler)
-    st.divider()
-    render_pair_matrix(isimler, "birlikte")
+    # Kişi kuralları yan yana: birlikte çalışamayan, birlikte çalışmak isteyen,
+    # sabit görev yeri (görev 2 ve üstüyse).
+    _yasak_col, _birlikte_col, _sabit_col = st.columns([2, 2, 1.3], gap="large")
+    with _yasak_col:
+        render_pair_matrix(isimler)
+    with _birlikte_col:
+        render_pair_matrix(isimler, "birlikte")
+    with _sabit_col:
+        render_fixed_roles(isimler, role_names)
     forbidden_input = st.session_state.get("forbidden_pairs_text", "")
     limits_text = st.session_state.get("limits_text", "")
 
