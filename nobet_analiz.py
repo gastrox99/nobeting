@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """Analiz sekmesi: nöbet yükü, kişisel detay, ücret özeti, eşleşme ve tercih özeti."""
-import random
-
 import pandas as pd
 import streamlit as st
 
-from nobet_core import TR_AY_ADLARI, build_person_ics, escape_html, most_paired, preference_summary, tr_sayi
+from nobet_core import (
+    TR_AY_ADLARI, active_fixed_roles, build_person_ics, distribute_roles, escape_html,
+    most_paired, preference_summary, tr_sayi,
+)
 from nobet_durum import save_undo_state
 
 
@@ -80,25 +81,14 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
             if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
                 save_undo_state()
                 rows_liste_to_redist = st.session_state.cached_rows_liste
-                first_role_counts_to_redist = {i: 0 for i in isimler}
-                new_rows_liste = []
-                for row in rows_liste_to_redist:
-                    nobetciler = []
-                    for rn in role_names:
-                        p = row.get(rn, "-")
-                        if p != "-" and p in isimler: nobetciler.append(p)
-                    random.shuffle(nobetciler)
-                    nobetciler.sort(key=lambda x: first_role_counts_to_redist.get(x, 0))
-                    new_row = {"Tarih": row["Tarih"]}
-                    for idx, rn in enumerate(role_names):
-                        if len(nobetciler) > idx:
-                            p = nobetciler[idx]
-                            new_row[rn] = p
-                            if idx == 0:
-                                first_role_counts_to_redist[p] = first_role_counts_to_redist.get(p, 0) + 1
-                        else:
-                            new_row[rn] = "-"
-                    new_rows_liste.append(new_row)
+                # Sabit görev yeri olanlar kendi görevinde kalır, diğerleri eşitlenir.
+                new_rows_liste, first_role_counts_to_redist = distribute_roles(
+                    [row["Tarih"] for row in rows_liste_to_redist],
+                    [[row.get(rn, "-") for rn in role_names if row.get(rn, "-") in isimler]
+                     for row in rows_liste_to_redist],
+                    role_names,
+                    active_fixed_roles(st.session_state.get("fixed_roles"), isimler, role_names),
+                )
                 st.session_state.cached_rows_liste = new_rows_liste
                 st.session_state.cached_first_role_counts = first_role_counts_to_redist
                 # Nöbetçiler değişmez; çizelge yeniden kurulmaz (görev sayısından

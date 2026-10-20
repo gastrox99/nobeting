@@ -574,6 +574,97 @@ def changed_schedule_columns(previous_schedule, current_schedule):
     ]
 
 
+def active_fixed_roles(fixed_roles, people, role_names):
+    """Sabit görev yerlerinden ekipte olan kişileri ve var olan görevleri bırakır."""
+    people = set(people or [])
+    roles = list(role_names or [])
+    if len(roles) < 2:
+        return {}
+    return {p: r for p, r in (fixed_roles or {}).items() if p in people and r in roles}
+
+
+def apply_fixed_roles(row, role_names, fixed_roles):
+    """Bir günün görev satırında sabit görevli kişileri kendi görevlerine taşır.
+
+    Kişi başka bir görevdeyse, sabit görevindeki kişiyle yer değiştirir. Aynı
+    göreve sabit iki kişi aynı gün nöbetteyse görevde ilk oturan kalır.
+    Diğer yerleşimler korunur; yeni bir satır döner.
+    """
+    new_row = dict(row)
+    if not fixed_roles:
+        return new_row
+    # Yer değiştiren kişi de başka bir göreve sabit olabilir; değişiklik kalmayana dek tekrarla.
+    for _ in range(len(role_names)):
+        moved = False
+        for role in role_names:
+            person = new_row.get(role, "-")
+            target = fixed_roles.get(person)
+            if target is None or target == role or target not in role_names:
+                continue
+            holder = new_row.get(target, "-")
+            if holder not in (None, "", "-") and fixed_roles.get(holder) == target:
+                continue
+            new_row[target], new_row[role] = person, holder if holder not in (None, "") else "-"
+            moved = True
+        if not moved:
+            break
+    return new_row
+
+
+def distribute_roles(dates, day_people, role_names, fixed_roles=None, rng=random):
+    """Nöbetçileri görev yerlerine dağıtır; ilk görev herkese eşit gelmeye çalışır.
+
+    ``day_people``: her gün o gün nöbetçi olanların listesi. Sabit görevi
+    olan kişi kendi görevine yerleşir ve ilk görev sayımına katılmaz.
+    Dönüş: (satırlar, ilk_görev_sayıları).
+    """
+    fixed_roles = fixed_roles or {}
+    first_role_counts = {}
+    rows = []
+    for day_date, people in zip(dates, day_people):
+        people = list(people)
+        rng.shuffle(people)
+        people.sort(key=lambda person: first_role_counts.get(person, 0))
+        row = {"Tarih": day_date}
+        row.update({role: "-" for role in role_names})
+        rest = []
+        for person in people:
+            target = fixed_roles.get(person)
+            if target in row and target != "Tarih" and row[target] == "-":
+                row[target] = person
+            else:
+                rest.append(person)
+        for person in rest:
+            for role in role_names:
+                if row[role] == "-":
+                    row[role] = person
+                    break
+        if role_names and row[role_names[0]] != "-":
+            first = row[role_names[0]]
+            first_role_counts[first] = first_role_counts.get(first, 0) + 1
+        rows.append(row)
+    return rows, first_role_counts
+
+
+def fixed_role_conflicts(schedule, day_columns, fixed_roles):
+    """Aynı göreve sabit iki ya da daha çok kişinin birlikte nöbetçi olduğu günler.
+
+    Dönüş: [(sütun, görev, [kişiler]), ...].
+    """
+    conflicts = []
+    if not fixed_roles:
+        return conflicts
+    for column in day_columns:
+        by_role = {}
+        for person in schedule.index[schedule[column]]:
+            if person in fixed_roles:
+                by_role.setdefault(fixed_roles[person], []).append(person)
+        for role, people in by_role.items():
+            if len(people) > 1:
+                conflicts.append((column, role, people))
+    return conflicts
+
+
 def synchronize_changed_role_rows(
     rows_liste,
     previous_schedule,
@@ -581,6 +672,7 @@ def synchronize_changed_role_rows(
     role_names,
     day_columns,
     day_details,
+    fixed_roles=None,
 ):
     """Keep role rows aligned with changed schedule columns.
 
@@ -612,6 +704,7 @@ def synchronize_changed_role_rows(
                     if new_row[role_name] == "-":
                         new_row[role_name] = person
                         break
+        new_row = apply_fixed_roles(new_row, role_names, fixed_roles)
         if row_index < len(synchronized_rows):
             synchronized_rows[row_index] = new_row
         else:
@@ -1319,6 +1412,16 @@ def _aliases(value):
     }
 
 
+def _fixed_roles(value):
+    """{kişi: görev} biçimindeki sabit görev yerlerini doğrular."""
+    if not isinstance(value, dict):
+        return None
+    return {
+        person: role for person, role in value.items()
+        if isinstance(person, str) and isinstance(role, str) and person and role
+    }
+
+
 # Yıl seçimi aralığı (eskiden 2030'da bitiyordu; Aralık 2030'da varsayılan
 # "gelecek ay" 2031 olacağı için uygulama açılmazdı).
 YEAR_MIN = 2024
@@ -1337,6 +1440,7 @@ APP_SETTINGS_FIELDS = {
     "hourly_rate_source": ("nobet_ucreti_kaynak", _text),
     "role_names": ("role_names_text", _text),
     "forbidden_pairs": ("forbidden_pairs_text", _text),
+    "fixed_roles": ("fixed_roles", _fixed_roles),
     "limits": ("limits_text", _text),
     "balance_history": ("balance_history", _bool),
     "name_aliases": ("name_aliases", _aliases),

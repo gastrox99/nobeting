@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Ayarlar: ekip tablosu (isim + kişisel limitler) ve birlikte çalışamayanlar çapraz tablosu.
+"""Ayarlar: ekip tablosu (isim + kişisel limitler), sabit görev yerleri ve birlikte çalışamayanlar çapraz tablosu.
 
 İkisi de ayarlarda saklanan metinleri (``isimler_text``, ``limits_text``,
 ``forbidden_pairs_text``) düzenler; kayıt, yedek ve Excel aynı metinleri
@@ -100,6 +100,53 @@ def render_team_table():
             )
         st.caption("Boş bırakılan sayı sınırsızdır. Hafta sonuna tatiller de dahildir. "
                    "Kişiyi çıkarmak için ismini silin.")
+
+
+_FIXED = "w_sabit_gorev::{}"
+
+
+def render_fixed_roles(isimler, role_names):
+    """Görev başına çoklu seçim: seçilen kişinin nöbetleri hep o görevde olur.
+
+    Ayarlarda ``fixed_roles`` ({kişi: görev}) olarak saklanır. Bir kişi tek
+    göreve sabitlenebilir; başka bir görevde seçilince oraya taşınır.
+    """
+    state = st.session_state
+    if len(role_names) < 2:
+        return
+    fixed = dict(state.get("fixed_roles") or {})
+    shown = state.get("_sabit_shown") or {}
+    changed = False
+    # Son çizimden bu yana değişen kutuyu bul ve sabit görevlere uygula.
+    for role in role_names:
+        key = _FIXED.format(role)
+        if key not in state or role not in shown or list(state[key]) == shown[role]:
+            continue
+        chosen, before = set(state[key]), set(shown[role])
+        for person in before - chosen:
+            if fixed.get(person) == role:
+                fixed.pop(person)
+        for person in chosen - before:
+            fixed[person] = role
+        changed = True
+        break
+    if changed:
+        state.fixed_roles = fixed
+        state.fixed_roles_changed = True
+    shown = {}
+    for role in role_names:
+        shown[role] = [p for p in isimler if fixed.get(p) == role]
+        state[_FIXED.format(role)] = list(shown[role])
+    state["_sabit_shown"] = shown
+
+    with st.container(key="sabit-gorev"):
+        st.markdown("**📌 Sabit görev yeri**")
+        for role in role_names:
+            st.multiselect(
+                role, isimler, key=_FIXED.format(role), placeholder="Kimse sabit değil",
+            )
+        st.caption("Seçilen kişinin nöbetleri hep bu görevde olur. Kimin nöbet tutacağını "
+                   "değiştirmez, yalnız görev yerini belirler.")
 
 
 def _pair_key(a, b):

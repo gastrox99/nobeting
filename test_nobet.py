@@ -3759,3 +3759,64 @@ class TestWhatsappBaglantisi(unittest.TestCase):
         self.assertNotIn("&", url.split("text=", 1)[1])
         from urllib.parse import unquote
         self.assertEqual(unquote(url.split("text=", 1)[1]), "*1 Kasım Paz* — AYB: Ayşe\n2 Kasım & Can")
+
+
+class TestSabitGorevYeri(unittest.TestCase):
+    ROLES = ["AYB", "GYB"]
+
+    def test_dagitimda_sabit_kisi_kendi_gorevinde(self):
+        from nobet_core import distribute_roles
+        days = [["Ali", "Can"], ["Can", "Ali"], ["Ali", "Ece"], ["Ece", "Can"]] * 5
+        rows, _counts = distribute_roles(
+            list(range(len(days))), days, self.ROLES, {"Ali": "GYB"}, rng=random.Random(1),
+        )
+        for row, people in zip(rows, days):
+            self.assertEqual(sorted(row[r] for r in self.ROLES), sorted(people))
+            if "Ali" in people:
+                self.assertEqual(row["GYB"], "Ali")
+
+    def test_ayni_goreve_iki_sabit_kisi_kaybolmaz(self):
+        from nobet_core import distribute_roles, apply_fixed_roles
+        fixed = {"Ali": "AYB", "Can": "AYB"}
+        rows, _ = distribute_roles([1], [["Ali", "Can"]], self.ROLES, fixed, rng=random.Random(0))
+        self.assertEqual(sorted(rows[0][r] for r in self.ROLES), ["Ali", "Can"])
+        row = apply_fixed_roles({"Tarih": 1, "AYB": "Ali", "GYB": "Can"}, self.ROLES, fixed)
+        self.assertEqual(row, {"Tarih": 1, "AYB": "Ali", "GYB": "Can"})
+
+    def test_satirda_yer_degistirir(self):
+        from nobet_core import apply_fixed_roles
+        row = apply_fixed_roles({"Tarih": 1, "AYB": "Ali", "GYB": "Can"}, self.ROLES, {"Ali": "GYB"})
+        self.assertEqual(row, {"Tarih": 1, "AYB": "Can", "GYB": "Ali"})
+        row = apply_fixed_roles({"Tarih": 1, "AYB": "Ali", "GYB": "-"}, self.ROLES, {"Ali": "GYB"})
+        self.assertEqual(row, {"Tarih": 1, "AYB": "-", "GYB": "Ali"})
+        # Üç görevde zincirleme: taşınan kişi de kendi görevine gider.
+        roles = ["A", "B", "C"]
+        row = apply_fixed_roles({"A": "Ali", "B": "Can", "C": "Ece"}, roles, {"Ali": "C", "Ece": "B"})
+        self.assertEqual(row["C"], "Ali")
+        self.assertEqual(row["B"], "Ece")
+
+    def test_degisen_gun_esitlenirken_sabit_gorev_korunur(self):
+        from nobet_core import synchronize_changed_role_rows
+        cols = ["d1", "d2"]
+        details = {c: {"full_date": c} for c in cols}
+        before = pd.DataFrame(False, index=["Ali", "Can", "Ece"], columns=cols)
+        before.loc[["Can", "Ece"], "d1"] = True
+        after = before.copy()
+        after.loc["Ece", "d1"] = False
+        after.loc["Ali", "d1"] = True
+        rows = [{"Tarih": "d1", "AYB": "Can", "GYB": "Ece"}, {"Tarih": "d2", "AYB": "-", "GYB": "-"}]
+        out = synchronize_changed_role_rows(rows, before, after, self.ROLES, cols, details, {"Ali": "AYB"})
+        self.assertEqual(out[0], {"Tarih": "d1", "AYB": "Ali", "GYB": "Can"})
+
+    def test_cakisma_ve_gecerli_kayitlar(self):
+        from nobet_core import active_fixed_roles, fixed_role_conflicts, apply_app_settings
+        schedule = pd.DataFrame({"d1": [True, True, False], "d2": [True, False, True]},
+                                index=["Ali", "Can", "Ece"])
+        fixed = {"Ali": "AYB", "Can": "AYB", "Ece": "GYB"}
+        self.assertEqual(fixed_role_conflicts(schedule, ["d1", "d2"], fixed), [("d1", "AYB", ["Ali", "Can"])])
+        self.assertEqual(active_fixed_roles({"Ali": "AYB", "Eski": "AYB", "Can": "Yok"}, ["Ali", "Can"], self.ROLES),
+                         {"Ali": "AYB"})
+        self.assertEqual(active_fixed_roles({"Ali": "AYB"}, ["Ali"], ["AYB"]), {})
+        state = {}
+        apply_app_settings(state, {"fixed_roles": {"Ali": "AYB", "": "GYB", "Can": 3}})
+        self.assertEqual(state["fixed_roles"], {"Ali": "AYB"})
