@@ -17,11 +17,13 @@ from nobet_core import (
     EXCEL_IMPORT_MAX_BYTES,
     EXCEL_IMPORT_MAX_ROWS,
     TR_AY_ADLARI,
+    build_preference_share_text,
     build_share_text,
     csv_safe_frame,
     create_print_html,
     import_schedule_table,
     parse_schedule_import_date,
+    preference_overview,
 )
 
 # Excel export
@@ -135,7 +137,7 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
 
     _share_cache = st.session_state.setdefault("share_token_cache", {})
     # Excel yükleme seyrek kullanıldığı için Yedek bölümünde (render_excel_import).
-    _export_col, _share_col, _snapshot_col, _ = st.columns([1, 1, 1, 3])
+    _export_col, _share_col, _pref_col, _snapshot_col, _ = st.columns([1, 1, 1, 1, 2])
     with _export_col:
         with st.popover("📤 Dışa aktar", width="stretch"):
             st.download_button("📊 Excel", _excel_bytes, f"nobet_{yil}_{ay:02d}.xlsx",
@@ -194,6 +196,32 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                         st.error("Bağlantı oluşturulamadı.")
                     else:
                         st.rerun()
+
+    with _pref_col:
+        with st.popover("📝 Tercihler", width="stretch"):
+            # Liste hazırlanmadan önce herkesin girilen günlerini grupla teyit etmek için.
+            # Onay bekleyen ekip talepleri dahil değil; yalnızca tabloya işlenmiş tercihler.
+            _pref_rows = preference_overview(st.session_state.get("pref_df", pd.DataFrame()), isimler)
+            if not _pref_rows:
+                st.caption("Bu ay Tercih Belirle'de işaretli tercih, kaçınma, izin ya da müsait değil günü yok.")
+            else:
+                st.caption(
+                    f"{TR_AY_ADLARI[ay]} {yil} için herkesin girilen günleri. Listeyi hazırlamadan önce "
+                    "grupla paylaşıp yanlış olan varsa düzeltebilirsiniz. Onay bekleyen ekip talepleri dahil değildir."
+                )
+                _pref_table = pd.DataFrame(_pref_rows)
+                st.dataframe(_pref_table, hide_index=True, width="stretch")
+                _pref_text = build_preference_share_text(_pref_rows, yil, ay)
+                st.link_button("💬 WhatsApp'ta gönder", whatsapp_url(_pref_text),
+                               type="primary", width="stretch")
+
+                def _pref_png(_table=_pref_table.copy()):
+                    return convert_df_to_png(_table)
+
+                st.download_button("🖼️ Tablo resmi (PNG)", _pref_png, f"tercihler_{yil}_{ay:02d}.png",
+                                   "image/png", on_click="ignore", width="stretch")
+                st.caption("Ya da sağ üstteki simgeyle kopyalayıp yapıştırın.")
+                st.code(_pref_text, language=None)
 
     with _snapshot_col:
         if db_ready:
