@@ -1561,9 +1561,36 @@ class TestCrossMonthBalance(unittest.TestCase):
             return short
 
         spread = short_gaps()
-        with patch.object(nobet_core, "SPREAD_WEIGHT", 0), patch.object(nobet_core, "SPREAD_SCORE_WEIGHT", 0):
+        with patch.object(nobet_core, "SPREAD_WEIGHT", 0), patch.object(nobet_core, "SPREAD_SCORE_WEIGHT", 0), \
+                patch.object(nobet_core, "LONG_GAP_WEIGHT", 0), patch.object(nobet_core, "LONG_GAP_SCORE_WEIGHT", 0):
             unspread = short_gaps()
         self.assertLess(spread * 2, unspread)
+
+    def test_uzun_bos_kalan_ve_limitli_kisi_aya_yayilir(self):
+        # 10 kişi, günde 2, K0 en fazla 3: eskiden limitini ayın başında
+        # doldurup (ör. 1, 8, 10) ayın kalanında boş kalıyordu.
+        names = [f"K{i}" for i in range(10)]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        random.seed(7)
+        k0_long = 0
+        for _ in range(8):
+            schedule, _ = run_scheduling_core(
+                names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=20,
+                person_limits={"K0": {"min": 0, "max": 3}},
+            )
+            for person in names:
+                worked = [days[c]["day_num"] for c in cols if schedule.at[person, c]]
+                points = [0] + worked + [31]
+                longest = max(b - a for a, b in zip(points, points[1:]))
+                if person == "K0":
+                    self.assertEqual(len(worked), 3)
+                    k0_long += longest > 14
+                else:
+                    self.assertLessEqual(longest, 10, (person, worked))
+        # Eskiden 8 ayın 8'inde K0'ın son nöbetinden sonra 15+ gün boştu.
+        self.assertLessEqual(k0_long, 2)
 
     def test_uygulama_onceki_aylari_tek_sorguda_okur(self):
         cursor = _FakeDbCursor(data_rows=[

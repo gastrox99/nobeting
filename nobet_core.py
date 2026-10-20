@@ -2304,6 +2304,29 @@ def pair_repeat_allowed(n_people, n_days, kisi_sayisi):
     return max(1, int(np.ceil(n_days * per_day / max(1, pairs) - 1e-9)))
 
 
+def spread_targets(isimler, n_days, kisi_sayisi, person_limits=None):
+    """Kişi başı beklenen nöbet aralığı ve "nöbet hızı" çarpanı.
+
+    Herkes eşit alırsa iki nöbet arası kişi sayısı / günlük nöbetçi gün olur.
+    En fazla nöbeti bundan az olan kişinin aralığı kendi limitine göredir
+    (30 günde en fazla 3 → 10 günde bir); hızı da buna göre ölçülür, yoksa
+    az nöbeti olduğu için hep öne alınır, limitini ayın başında doldurur.
+    Dönen değer ({kişi: aralık}, {kişi: çarpan}).
+    """
+    team_gap = len(isimler) / max(1, kisi_sayisi)
+    avg_shifts = n_days * kisi_sayisi / max(1, len(isimler))
+    gaps, pace = {}, {}
+    for p in isimler:
+        max_limit = (person_limits or {}).get(p, {}).get('max', 999)
+        if 0 < max_limit < avg_shifts:
+            gaps[p] = n_days / max_limit
+            pace[p] = avg_shifts / max_limit
+        else:
+            gaps[p] = team_gap
+            pace[p] = 1.0
+    return gaps, pace
+
+
 def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                     df_preferred, min_bosluk, forbidden_pairs, person_limits,
                     fixed_assignments, initial_last_shift, history_special,
@@ -2428,6 +2451,12 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
 # kurallarından (toplam ×10, Cuma ×40, hafta sonu ×100) bilerek hafiftir.
 SPREAD_WEIGHT = 3
 SPREAD_SCORE_WEIGHT = 4
+# Uzun süre nöbet tutmayan öne alınır: beklenen aralıktan sonraki her boş gün
+# için seçimde öncelik; simülasyonlar arasında seçimde en uzun boşluğu
+# beklenenin LONG_GAP_LIMIT katını aşan kişi başına, aşan her gün için ceza.
+LONG_GAP_WEIGHT = 3
+LONG_GAP_SCORE_WEIGHT = 10
+LONG_GAP_LIMIT = 1.5
 # Aynı ikiliyi tekrar tekrar aynı güne koymama: seçimde önceki her ortak
 # nöbet başına ceza ve simülasyonlar arasında seçimde beklenenden fazla ortak
 # nöbet başına ceza. Hafta sonu/Cuma dengesinden hafiftir.
@@ -2463,15 +2492,15 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         ekip ortalamasından farkı; tatil günleri azı olana verilir.
 
     Nöbetler aya yayılır: kişinin son nöbetinden bu yana geçen gün,
-    ekip için beklenen aralıktan (kişi sayısı / günlük nöbetçi) kısaysa
-    hafif ceza alır. Bu ceza denge kurallarından daha hafiftir.
+    beklenen aralıktan (spread_targets) kısaysa hafif ceza alır, uzunsa
+    her fazla gün için öne alınır. Bunlar denge kurallarından hafiftir.
     """
     initial_last_shift = initial_last_shift or {}
     history_special = history_special or {}
     history_total = history_total or {}
     history_holiday = history_holiday or {}
-    # Beklenen aralık: herkes eşit nöbet alırsa iki nöbet arası kaç gün olur.
-    ideal_gap = len(isimler) / max(1, kisi_sayisi)
+    person_gap, pace = spread_targets(isimler, len(sutunlar), kisi_sayisi, person_limits)
+    team_gap = {p: len(isimler) / max(1, kisi_sayisi) for p in isimler}
     fixed_by_col = {}
     fixed_days = {}
     fixed_special = {}
@@ -2492,16 +2521,31 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
 
     best_schedule = None
     best_score = float('inf')
+    best_empty = 0
 
-    for attempt in range(int(simulation_count)):
+    attempts = int(simulation_count)
+    attempt = -1
+    while attempt + 1 < attempts:
+        attempt += 1
+        # Her dört simülasyondan biri eski, sade yaymayla kurulur. Çok sıkışık
+        # ekiplerde (az kişi, sık nöbet) yeni öncelikler boş gün bırakabiliyor;
+        # öyleyse aşağıda aynı sayıda sade simülasyon daha denenir.
+        plain = attempt % 4 == 3 or attempt >= simulation_count
+        gap_target = team_gap if plain else person_gap
+        long_weight = 0 if plain else LONG_GAP_WEIGHT
         if progress_callback:
-            progress_callback(attempt + 1)
+            progress_callback(min(attempt + 1, simulation_count))
 
         stat_total = {i: 0 for i in isimler}
         stat_special = {i: 0 for i in isimler}
         stat_friday = {i: 0 for i in isimler}
         stat_holiday = {i: 0 for i in isimler}
         short_gaps = 0
+        month_last = {i: 0 for i in isimler}
+        # Aralık bu aya göre ölçülür; önceki ay bilinmiyorsa son nöbet yarım
+        # aralık önce sayılır (ay başındaki herkes birden "uzun boş" olmasın).
+        spread_from = {i: initial_last_shift.get(i, -10 if plain else -gap_target[i] / 2) for i in isimler}
+        worst_gap = {i: 0 for i in isimler}
         stat_consecutive_weekend = {i: 0 for i in isimler}
         pair_count = {}
         last_weekend_shift = {i: -10 for i in isimler}
@@ -2514,7 +2558,10 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         future_fixed_special = {i: fixed_special.get(i, 0) for i in isimler}
 
         def get_decision_score(p, is_sp, col, is_friday=False, is_holiday=False, day=None):
-            total = stat_total[p] + history_total.get(p, 0) + (random.random() * 0.5)
+            # Limitli kişi limitine göre ne kadar ilerlediğiyle karşılaştırılır;
+            # sabit nöbetleri de baştan sayılır.
+            done = stat_total[p] if plain or pace[p] == 1.0 else (stat_total[p] + future_fixed[p]) * pace[p]
+            total = done + history_total.get(p, 0) + (random.random() * 0.5)
             sp_count = stat_special[p] + history_special.get(p, 0)
             consecutive_penalty = stat_consecutive_weekend[p] * 200
             pref_bonus = 0
@@ -2533,12 +2580,15 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                 # Minimumuna ulaşmamış kişi öne alınır (çoğunlukla hafta içi).
                 if stat_total[p] < person_limits[p].get('min', 0):
                     min_bonus = -250
-            # Son nöbete çok yakın günler hafifçe geri itilir (aya yayma).
+            # Son nöbete çok yakın günler hafifçe geri itilir, uzun süredir
+            # nöbet tutmayan öne alınır (aya yayma).
             spread_penalty = 0
             if day is not None:
-                gap = day - last_shift_day[p]
-                if gap < ideal_gap:
-                    spread_penalty = (ideal_gap - gap) * SPREAD_WEIGHT
+                gap = day - spread_from[p]
+                if gap < gap_target[p]:
+                    spread_penalty = (gap_target[p] - gap) * SPREAD_WEIGHT
+                else:
+                    spread_penalty = -(gap - gap_target[p]) * long_weight
             if is_sp:
                 # Bayram/tatil: son 12 ayda az tutan öne; hafta sonu dengesinden (×100) hafif.
                 holiday_penalty = (
@@ -2619,9 +2669,12 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                     stat_friday[k] += 1
                 if is_holiday:
                     stat_holiday[k] += 1
-                if gun_no - last_shift_day[k] < ideal_gap * 0.6:
+                if gun_no - last_shift_day[k] < person_gap[k] * 0.6:
                     short_gaps += 1
                 last_shift_day[k] = gun_no
+                spread_from[k] = gun_no
+                worst_gap[k] = max(worst_gap[k], gun_no - month_last[k])
+                month_last[k] = gun_no
                 if is_weekend:
                     if last_weekend_shift[k] >= 0 and weekend_num == last_weekend_shift[k] + 1:
                         stat_consecutive_weekend[k] += 1
@@ -2648,6 +2701,10 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         range_holiday = max(holidays) - min(holidays)
 
         allowed_pairs = pair_repeat_allowed(len(isimler), len(sutunlar), kisi_sayisi)
+        long_gaps = sum(
+            max(0, max(worst_gap[p], len(sutunlar) + 1 - month_last[p]) - LONG_GAP_LIMIT * person_gap[p])
+            for p in isimler if month_last[p]
+        )
         pair_excess = sum(max(0, v - allowed_pairs) for v in pair_count.values())
 
         score = (
@@ -2659,6 +2716,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             (range_friday * 30) +
             (range_holiday * 20) +
             (short_gaps * SPREAD_SCORE_WEIGHT) +
+            (long_gaps * LONG_GAP_SCORE_WEIGHT) +
             (pair_excess * PAIR_SCORE_WEIGHT) +
             (std_dev_total * 10) +
             (std_dev_special * 5)
@@ -2667,6 +2725,9 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         if score < best_score:
             best_score = score
             best_schedule = temp_schedule.copy()
+            best_empty = empty_shifts
+        if attempt + 1 == simulation_count and best_empty:
+            attempts = 2 * simulation_count
 
     if best_schedule is not None:
         best_schedule = _balance_totals(
