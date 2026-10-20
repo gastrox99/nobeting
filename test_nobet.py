@@ -734,6 +734,26 @@ class TestRunSchedulingCore(unittest.TestCase):
                 min_bosluk=1, kisi_sayisi=kisi_sayisi, simulation_count=-1
             )
 
+    def test_ayni_ikili_her_nobette_yan_yana_dusmez(self):
+        # Eskiden 10 kişi/günde 2 kişide bazı ikililer 6 nöbetin 5'ini birlikte tutuyordu.
+        isimler = [f"K{i}" for i in range(10)]
+        gun_detaylari = build_gun_detaylari(2026, 11, 30, [])
+        sutunlar = list(gun_detaylari)
+        df_unwanted = pd.DataFrame(False, index=isimler, columns=sutunlar)
+        random.seed(11)
+        for _ in range(5):
+            schedule, _ = run_scheduling_core(
+                isimler, sutunlar, df_unwanted, gun_detaylari,
+                min_bosluk=1, kisi_sayisi=2, simulation_count=50,
+            )
+            together = {}
+            for c in sutunlar:
+                pair = tuple(sorted(schedule.index[schedule[c]]))
+                together[pair] = together.get(pair, 0) + 1
+            self.assertLessEqual(max(together.values()), 3)
+            totals = schedule.sum(axis=1)
+            self.assertLessEqual(totals.max() - totals.min(), 1)
+
     def test_normal_simulasyon_cizelge_uretmege_devam_eder(self):
         isimler, sutunlar, df_unwanted, gun_detaylari, kisi_sayisi = self._build_test_env()
 

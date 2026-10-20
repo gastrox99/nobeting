@@ -2250,6 +2250,60 @@ def _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs):
     return secilenler
 
 
+def _pick_varied_group(adaylar, needed, scores, sabitler, pair_count, forbidden_pairs):
+    """Sıralı adaylardan ``needed`` kişi seçer; aynı gün nöbet tutanlarla daha
+    önce çok birlikte tutmuş adayın puanı PAIR_WEIGHT kadar kötüleşir (aynı
+    ikili her nöbette yan yana düşmesin). Yasak ikililer seçilmez; seçim
+    tıkanırsa eski yöntem (_find_valid_group) kullanılır."""
+    secilenler = []
+    havuz = list(adaylar)
+    while len(secilenler) < needed:
+        yanindakiler = list(sabitler) + secilenler
+        en_iyi, en_iyi_puan = None, None
+        for aday in havuz:
+            if forbidden_pairs and any(tuple(sorted((aday, y))) in forbidden_pairs for y in yanindakiler):
+                continue
+            puan = scores[aday] + PAIR_WEIGHT * sum(
+                pair_count.get(tuple(sorted((aday, y))), 0) for y in yanindakiler
+            )
+            if en_iyi_puan is None or puan < en_iyi_puan:
+                en_iyi, en_iyi_puan = aday, puan
+        if en_iyi is None:
+            break
+        secilenler.append(en_iyi)
+        havuz.remove(en_iyi)
+    if len(secilenler) < needed:
+        eski = _find_valid_group(adaylar, needed, forbidden_pairs)[:needed]
+        if len(eski) > len(secilenler):
+            return eski
+    return secilenler
+
+
+def pair_repeat_excess(schedule, people, columns, kisi_sayisi):
+    """Aynı ikilinin beklenenden fazla birlikte nöbet tutma sayısı.
+
+    Her ikiliye düşen ortak nöbetin yukarı yuvarlanmış ortalaması (en az 1)
+    "normal" sayılır; bunu aşan her ortak nöbet 1 puandır (az = iyi).
+    """
+    people = list(people)
+    if len(people) < 2 or kisi_sayisi < 2:
+        return 0
+    allowed = pair_repeat_allowed(len(people), len(columns), kisi_sayisi)
+    counts = {}
+    for c in columns:
+        who = [p for p in people if p in schedule.index and c in schedule.columns and schedule.at[p, c]]
+        for a, b in _combinations(sorted(who), 2):
+            counts[(a, b)] = counts.get((a, b), 0) + 1
+    return sum(max(0, v - allowed) for v in counts.values())
+
+
+def pair_repeat_allowed(n_people, n_days, kisi_sayisi):
+    """Bir ikilinin ayda "normal" sayılan ortak nöbet sayısı."""
+    pairs = n_people * (n_people - 1) / 2
+    per_day = kisi_sayisi * (kisi_sayisi - 1) / 2
+    return max(1, int(np.ceil(n_days * per_day / max(1, pairs) - 1e-9)))
+
+
 def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                     df_preferred, min_bosluk, forbidden_pairs, person_limits,
                     fixed_assignments, initial_last_shift, history_special,
@@ -2374,6 +2428,11 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
 # kurallarından (toplam ×10, Cuma ×40, hafta sonu ×100) bilerek hafiftir.
 SPREAD_WEIGHT = 3
 SPREAD_SCORE_WEIGHT = 4
+# Aynı ikiliyi tekrar tekrar aynı güne koymama: seçimde önceki her ortak
+# nöbet başına ceza ve simülasyonlar arasında seçimde beklenenden fazla ortak
+# nöbet başına ceza. Hafta sonu/Cuma dengesinden hafiftir.
+PAIR_WEIGHT = 12
+PAIR_SCORE_WEIGHT = 15
 
 
 def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
@@ -2444,6 +2503,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         stat_holiday = {i: 0 for i in isimler}
         short_gaps = 0
         stat_consecutive_weekend = {i: 0 for i in isimler}
+        pair_count = {}
         last_weekend_shift = {i: -10 for i in isimler}
         last_shift_day = {i: initial_last_shift.get(i, -10) for i in isimler}
 
@@ -2537,15 +2597,19 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                 adaylar.append(k)
 
             random.shuffle(adaylar)
-            adaylar.sort(key=lambda x: get_decision_score(x, is_sp, col, is_friday, is_holiday, gun_no))
+            scores = {x: get_decision_score(x, is_sp, col, is_friday, is_holiday, gun_no) for x in adaylar}
+            adaylar.sort(key=scores.get)
 
             # Yeterli aday yoksa günü tamamen boş bırakma: uyan adayları ata,
             # eksik kalan her nöbetçiyi say (eskiden 1 kişi müsaitken gün boştu).
             secilenler = (
-                _find_valid_group(adaylar, needed, forbidden_pairs)[:needed]
+                _pick_varied_group(adaylar, needed, scores, sabitler, pair_count, forbidden_pairs)
                 if adaylar and needed else []
             )
             empty_shifts += needed - len(secilenler)
+            gunun_ekibi = sorted(list(sabitler) + secilenler)
+            for a, b in _combinations(gunun_ekibi, 2):
+                pair_count[(a, b)] = pair_count.get((a, b), 0) + 1
             for k in list(sabitler) + secilenler:
                 temp_schedule.at[k, col] = True
                 stat_total[k] += 1
@@ -2583,6 +2647,9 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         holidays = [stat_holiday[i] + history_holiday.get(i, 0) for i in isimler]
         range_holiday = max(holidays) - min(holidays)
 
+        allowed_pairs = pair_repeat_allowed(len(isimler), len(sutunlar), kisi_sayisi)
+        pair_excess = sum(max(0, v - allowed_pairs) for v in pair_count.values())
+
         score = (
             (empty_shifts * 10000) +
             (limit_violations * 5000) +
@@ -2592,6 +2659,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             (range_friday * 30) +
             (range_holiday * 20) +
             (short_gaps * SPREAD_SCORE_WEIGHT) +
+            (pair_excess * PAIR_SCORE_WEIGHT) +
             (std_dev_total * 10) +
             (std_dev_special * 5)
         )

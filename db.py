@@ -168,7 +168,8 @@ def init_db():
 
                 # Paylaşım linkinden gelen ekip talepleri: kişi başına ayda tek
                 # bekleyen talep (yeniden gönderilen eskisinin yerine geçer).
-                # Liste sahibi onaylayınca ya da reddedince silinir.
+                # Liste sahibi onaylayınca ya da reddedince silinmez, durumu
+                # yazılır ('approved'/'rejected'); ekip üyesi sonucu linkte görür.
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS team_requests (
                         id SERIAL PRIMARY KEY,
@@ -181,6 +182,11 @@ def init_db():
                         UNIQUE (owner, year, month, person)
                     )
                 ''')
+                cur.execute('''
+                    ALTER TABLE team_requests
+                    ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'pending'
+                ''')
+                cur.execute('ALTER TABLE team_requests ADD COLUMN IF NOT EXISTS decided_at TIMESTAMP')
         _last_error = None
         return True
     except Exception as e:
@@ -784,7 +790,8 @@ def submit_team_request(owner, year, month, person, days_by_kind):
                 with conn.cursor() as cur:
                     cur.execute('''
                         SELECT COUNT(*) FROM team_requests
-                        WHERE owner = %s AND NOT (year = %s AND month = %s AND person = %s)
+                        WHERE owner = %s AND status = 'pending'
+                          AND NOT (year = %s AND month = %s AND person = %s)
                     ''', (owner, year, month, person))
                     if cur.fetchone()[0] >= TEAM_REQUEST_LIMIT:
                         return "limit"
@@ -792,7 +799,8 @@ def submit_team_request(owner, year, month, person, days_by_kind):
                         INSERT INTO team_requests (owner, year, month, person, days_json)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (owner, year, month, person) DO UPDATE
-                            SET days_json = EXCLUDED.days_json, created_at = CURRENT_TIMESTAMP
+                            SET days_json = EXCLUDED.days_json, created_at = CURRENT_TIMESTAMP,
+                                status = 'pending', decided_at = NULL
                     ''', (owner, year, month, person, json.dumps(days_by_kind)))
             return "ok"
         finally:
@@ -805,19 +813,22 @@ def submit_team_request(owner, year, month, person, days_by_kind):
         return "error"
 
 
-def list_team_requests(owner, raise_on_error=False):
-    """Bekleyen talepler, eskiden yeniye: [{id, year, month, person, days, created_tr}, ...]."""
+def list_team_requests(owner, raise_on_error=False, include_decided=False):
+    """Bekleyen talepler, eskiden yeniye: [{id, year, month, person, days, created_tr,
+    status, decided_tr}, ...]. ``include_decided`` onaylanan/reddedilenleri de getirir."""
     def _rows():
         conn = _connect()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute('''
-                    SELECT id, year, month, person, days_json,
+                    SELECT id, year, month, person, days_json, status,
                            (created_at AT TIME ZONE current_setting('TimeZone'))
-                               AT TIME ZONE 'Europe/Istanbul' AS created_tr
-                    FROM team_requests WHERE owner = %s
+                               AT TIME ZONE 'Europe/Istanbul' AS created_tr,
+                           (decided_at AT TIME ZONE current_setting('TimeZone'))
+                               AT TIME ZONE 'Europe/Istanbul' AS decided_tr
+                    FROM team_requests WHERE owner = %s AND (%s OR status = 'pending')
                     ORDER BY created_at, id
-                ''', (owner,))
+                ''', (owner, bool(include_decided)))
                 return cur.fetchall()
         finally:
             conn.close()
@@ -834,6 +845,7 @@ def list_team_requests(owner, raise_on_error=False):
                 "id": row['id'], "year": row['year'], "month": row['month'],
                 "person": row['person'], "days": days if isinstance(days, dict) else {},
                 "created_tr": row['created_tr'],
+                "status": row['status'], "decided_tr": row['decided_tr'],
             })
         return result
     except Exception as e:
@@ -841,6 +853,31 @@ def list_team_requests(owner, raise_on_error=False):
         if raise_on_error:
             raise
         return []
+
+
+TEAM_REQUEST_STATUSES = ("approved", "rejected")
+
+
+def decide_team_request(owner, request_id, status):
+    """Talebi onaylandı/reddedildi olarak işaretler (ekip üyesi linkte görür)."""
+    if status not in TEAM_REQUEST_STATUSES:
+        raise ValueError(f"Geçersiz talep durumu: {status}")
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    UPDATE team_requests SET status = %s, decided_at = CURRENT_TIMESTAMP
+                    WHERE owner = %s AND id = %s
+                ''', (status, owner, request_id))
+        return True
+    except Exception as e:
+        _log_error("Decide team request", e)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def delete_team_request(owner, request_id):

@@ -281,6 +281,19 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
             assert [(r["person"], r["days"]) for r in requests] == [
                 ("Talep Ali", {"tercih": [3, 5], "izin": [20]}),
             ]
+
+            # Yönetici karar verince talep sahibi sonucu görür.
+            month_text = f"{TR_AY_ADLARI[next_month]} {next_year}"
+            for status, text in (("approved", f"{month_text} talebin onaylandı"),
+                                 ("rejected", f"{month_text} talebin reddedildi")):
+                _with_db(lambda db: db.decide_team_request(OWNER, requests[0]["id"], status))
+                page.reload()
+                page.get_by_role("tab", name="📝 Talep Gönder").wait_for()
+                _wait_idle(page)
+                _no_exception(page)
+                expect(page.get_by_text(text)).to_be_visible()
+                expect(page.get_by_text("onay bekleyen talebin")).to_have_count(0)
+                expect(page.get_by_role("button", name="📨 Talebi gönder")).to_be_visible()
         finally:
             browser.close()
 

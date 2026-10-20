@@ -96,6 +96,59 @@ def test_ekip_talebi_yeniden_gonderilince_yerine_gecer_ve_silinir(owner):
     assert [r["month"] for r in db.list_team_requests(owner)] == [12]
 
 
+def test_onaylanan_ve_reddedilen_talep_durumu_saklanir(owner):
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"izin": [5]}) == "ok"
+    ali, ayse = db.list_team_requests(owner)
+    assert ali["status"] == "pending" and ali["decided_tr"] is None
+    assert db.decide_team_request(owner, ali["id"], "approved")
+    assert db.decide_team_request(owner, ayse["id"], "rejected")
+    # Yönetici listesinde artık görünmezler; kişi sonucu görür.
+    assert db.list_team_requests(owner) == []
+    decided = {r["person"]: r for r in db.list_team_requests(owner, include_decided=True)}
+    assert decided["Ali"]["status"] == "approved" and decided["Ali"]["decided_tr"] is not None
+    assert decided["Ayşe"]["status"] == "rejected"
+    assert decided["Ali"]["days"] == {"tercih": [3]}
+    # Başka kullanıcının talebi işaretlenemez.
+    assert db.submit_team_request(owner, 2026, 12, "Can", {"kacin": [1]}) == "ok"
+    can = db.list_team_requests(owner)[0]
+    assert db.decide_team_request(owner + ".baska", can["id"], "rejected")
+    assert db.list_team_requests(owner)[0]["status"] == "pending"
+    with pytest.raises(ValueError):
+        db.decide_team_request(owner, can["id"], "silindi")
+    # Yeni talep yeniden onaya düşer.
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [7]}) == "ok"
+    pending = [(r["person"], r["month"], r["days"]) for r in db.list_team_requests(owner)]
+    assert ("Ali", 11, {"izin": [7]}) in pending
+
+
+def test_karara_baglanan_talep_siniri_doldurmaz(owner, monkeypatch):
+    monkeypatch.setattr(db, "TEAM_REQUEST_LIMIT", 1)
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"tercih": [3]}) == "limit"
+    assert db.decide_team_request(owner, db.list_team_requests(owner)[0]["id"], "approved")
+    assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"tercih": [3]}) == "ok"
+
+
+def test_eski_talep_tablosuna_durum_sutunu_eklenir(owner):
+    _drop_team_requests()
+    conn = db._connect()
+    with conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE team_requests (
+                id SERIAL PRIMARY KEY, owner VARCHAR(320) NOT NULL DEFAULT '',
+                year INTEGER NOT NULL, month INTEGER NOT NULL, person VARCHAR(255) NOT NULL,
+                days_json TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (owner, year, month, person))
+        """)
+        cur.execute("INSERT INTO team_requests (owner, year, month, person, days_json) "
+                    "VALUES (%s, 2026, 11, 'Ali', '{\"tercih\": [3]}')", (owner,))
+    conn.close()
+    assert db.init_db()
+    [old] = db.list_team_requests(owner)
+    assert old["status"] == "pending" and old["days"] == {"tercih": [3]}
+
+
 def test_ekip_talebi_siniri(owner, monkeypatch):
     monkeypatch.setattr(db, "TEAM_REQUEST_LIMIT", 2)
     assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
