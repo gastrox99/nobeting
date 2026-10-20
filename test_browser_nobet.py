@@ -552,6 +552,32 @@ def test_tercihler_toplu_tablo_ve_whatsapp_metni(app_url):
             browser.close()
 
 
+def test_hizli_giris_telefonda_tek_satir(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Tek Satır Ali, Tek Satır Ayşe")
+        try:
+            page.get_by_text("🎨 Tercih Belirle", exact=True).click()
+            _wait_idle(page, 1.0)
+            page.set_viewport_size({"width": 390, "height": 844})
+            _wait_idle(page, 0.5)
+            page.get_by_text("⚡ Hızlı giriş: kişi + günler").click()
+            _wait_idle(page, 1.0)
+            boxes = [
+                page.locator(".st-key-quick_entry_person [data-baseweb='select']").bounding_box(),
+                page.get_by_role("textbox", name="Günler").bounding_box(),
+                page.locator(".st-key-quick_entry_kind [data-baseweb='select']").bounding_box(),
+                page.get_by_role("button", name="Uygula").bounding_box(),
+            ]
+            # Kişi · Günler · Tür · Uygula aynı satırda, soldan sağa ve ekrana sığıyor.
+            centers = [b["y"] + b["height"] / 2 for b in boxes]
+            assert max(centers) - min(centers) < 6, boxes
+            assert all(a["x"] + a["width"] <= b["x"] + 1 for a, b in zip(boxes, boxes[1:])), boxes
+            assert boxes[-1]["x"] + boxes[-1]["width"] <= 390, boxes
+            _no_exception(page)
+        finally:
+            browser.close()
+
+
 def test_hizli_giriste_kisi_degisince_gunler_temizlenir(app_url):
     with sync_playwright() as playwright:
         browser, page = _open_app(playwright, app_url, "Hızlı Giriş Ali, Hızlı Giriş Ayşe")
