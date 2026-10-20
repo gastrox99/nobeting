@@ -13,11 +13,13 @@ import os
 
 import pandas as pd
 
-from nobet_core import has_total_limit, is_friday_column, pair_repeat_allowed, pair_repeat_excess, special_cap
+from nobet_core import (
+    has_total_limit, is_friday_column, pair_repeat_allowed, pair_repeat_excess, special_cap, spread_targets,
+)
 
 # Önem sırası (kullanıcı: hafta sonu/tatil > Cuma; toplam farkı en fazla 1 kuralı).
 PRIMARY_METRICS = ("unfilled", "min_short", "total", "special", "holiday", "friday", "total_history")
-SECONDARY_METRICS = ("consecutive_weekends", "avoid", "pair_repeat", "missed_preference", "spread")
+SECONDARY_METRICS = ("consecutive_weekends", "avoid", "pair_repeat", "missed_preference", "long_gap", "spread")
 METRIC_LABELS = {
     "unfilled": "boş nöbet",
     "total": "toplam nöbet farkı",
@@ -29,6 +31,7 @@ METRIC_LABELS = {
     "avoid": "kaçınılan güne düşen nöbet",
     "pair_repeat": "aynı ikilinin fazladan birlikte nöbeti",
     "missed_preference": "karşılanmayan tercih",
+    "long_gap": "uzun nöbetsiz dönem (gün)",
 }
 WEIGHTS = {
     "unfilled": 10_000_000,
@@ -42,6 +45,7 @@ WEIGHTS = {
     "avoid": 40,
     "pair_repeat": 30,
     "missed_preference": 20,
+    "long_gap": 15,
     "spread": 1,
 }
 # Geçmiş aylardan gelen farklar kesirli olabilir (ör. 2/9); çözücü yalnız tam
@@ -83,6 +87,20 @@ def _spread_pairs(people, columns, gun_detaylari, min_bosluk, kisi_sayisi):
     return pairs
 
 
+def _long_gap_windows(people, columns, gun_detaylari, kisi_sayisi, person_limits=None):
+    """Uzun boşluk ölçüsü: kişi başı, beklenen aralığın 2 katı uzunluğundaki
+    ardışık gün pencereleri → (kişi, [sütunlar]). Hiç nöbet düşmeyen her
+    pencere 1 puandır; boşluk pencereden uzadıkça her gün 1 puan artar."""
+    gaps, _ = spread_targets(people, len(columns), kisi_sayisi, person_limits)
+    ordered = sorted(columns, key=lambda c: gun_detaylari[c]["day_num"])
+    windows = []
+    for p in people:
+        width = int(round(2 * gaps[p])) + 1
+        for start in range(0, len(ordered) - width + 1):
+            windows.append((p, ordered[start:start + width]))
+    return windows
+
+
 def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
                      person_limits=None, df_preferred=None, history_special=None,
                      history_total=None, history_holiday=None):
@@ -112,6 +130,7 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
         )}
         consecutive += sum(1 for w in worked if w + 1 in worked)
     pairs = _spread_pairs(people, columns, gun_detaylari, min_bosluk, kisi_sayisi)
+    windows = _long_gap_windows(people, columns, gun_detaylari, kisi_sayisi, person_limits)
     return {
         "unfilled": sum(max(0, kisi_sayisi - sum(assigned(p, c) for p in people)) for c in columns),
         "min_short": sum(
@@ -137,6 +156,7 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
             1 for p in people for c in columns if not assigned(p, c) and _pref(df_preferred, p, c) == 1
         ),
         "pair_repeat": pair_repeat_excess(schedule, people, columns, kisi_sayisi),
+        "long_gap": sum(1 for p, window in windows if not any(assigned(p, c) for c in window)),
         "spread": sum(
             weight for p in people for first, second, weight in pairs
             if assigned(p, first) and assigned(p, second)
@@ -347,6 +367,12 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
                 model.Add(excess >= sum(together) - allowed)
                 pair_terms.append(excess)
     expr["pair_repeat"] = sum(pair_terms)
+    long_gap_terms = []
+    for p, window in _long_gap_windows(people, columns, gun_detaylari, kisi_sayisi, person_limits):
+        empty = model.NewBoolVar("")
+        model.Add(sum(x[p, c] for c in window) + empty >= 1)
+        long_gap_terms.append(empty)
+    expr["long_gap"] = sum(long_gap_terms)
 
     # Öncelikli dengeler mevcut listeden kötü olamaz.
     for name in PRIMARY_METRICS:

@@ -101,7 +101,7 @@ def test_daha_iyisi_yoksa_liste_degismez():
 
 
 def test_degisiklik_metni():
-    before = dict.fromkeys(PRIMARY_METRICS, 0) | {"consecutive_weekends": 3, "avoid": 0, "pair_repeat": 0,
+    before = dict.fromkeys(PRIMARY_METRICS, 0) | {"consecutive_weekends": 3, "avoid": 0, "pair_repeat": 0, "long_gap": 0,
                                                   "missed_preference": 2, "spread": 5}
     after = dict(before, friday=0, consecutive_weekends=0, missed_preference=1)
     before = dict(before, friday=2)
@@ -256,3 +256,39 @@ def test_iyilestir_ayni_ikiliyi_dagitir():
     assert after["pair_repeat"] < 5
     assert all(after[m] <= before[m] for m in PRIMARY_METRICS)
     assert "aynı ikilinin fazladan birlikte nöbeti 25 → " in " ".join(improvement_lines(before, after))
+
+
+def _clumped_schedule(names, cols):
+    # K0 ve K1 ayın ilk 11 gününde 6 nöbeti bitirir, sonra 19 gün boş kalır.
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    rest = []
+    for i, c in enumerate(cols):
+        if i % 2 == 0 and i <= 10:
+            schedule.loc[["K0", "K1"], c] = True
+        else:
+            rest.append(c)
+    others = names[2:]
+    for j, c in enumerate(rest):
+        schedule.at[others[(2 * j) % len(others)], c] = True
+        schedule.at[others[(2 * j + 1) % len(others)], c] = True
+    return schedule
+
+
+def test_uzun_bosluk_olcusu():
+    gd, cols, names = _month(team=10)
+    metrics = schedule_metrics(_clumped_schedule(names, cols), names, cols, gd, 2, 1)
+    # 12-30 arası 19 boş gün; 11 günlük pencereden 9 tane, iki kişi → 18.
+    assert metrics["long_gap"] == 18
+
+
+def test_iyilestir_uzun_boslugu_azaltir():
+    gd, cols, names = _month(team=10)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    improved, before, after = improve_schedule(
+        _clumped_schedule(names, cols), names, cols, unwanted, gd, 1, 2, time_limit=5,
+    )
+    assert improved is not None
+    assert before["long_gap"] == 18
+    assert after["long_gap"] < 3
+    assert all(after[m] <= before[m] for m in PRIMARY_METRICS)
+    assert "uzun nöbetsiz dönem (gün) 18 → " in " ".join(improvement_lines(before, after))
