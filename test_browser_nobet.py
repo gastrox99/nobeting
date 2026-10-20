@@ -458,6 +458,11 @@ def test_yasak_ikili_capraz_tablodan_ve_limit_ekip_tablosundan_girilir(app_url):
             _wait_idle(page, 1.5)
             expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz")[0]).not_to_be_checked()
             expect(_pair_checkbox(page, "Ayar Ali", "Ayar Ayşe")[0]).to_be_checked()
+            # Birlikte çalışmak isteyenler ayrı tabloda; yasak tablosunu etkilemez.
+            _pair_checkbox(page, "Ayar Can", "Ayar Deniz birlikte")[1].click()
+            _wait_idle(page, 1.5)
+            expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz birlikte")[0]).to_be_checked()
+            expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz")[0]).not_to_be_checked()
 
             most = page.get_by_role("spinbutton", name="3. kişi en fazla nöbet", exact=True)
             assert most.input_value() == ""

@@ -3,7 +3,8 @@
 
 Simülasyonun yerine geçmez; onun bulduğu listeden başlar. Kurallar
 (izin, dinlenme, günlük kişi sayısı, yasak ikili, en fazla nöbet, en fazla
-hafta sonu, kilitli nöbetler) aynen uygulanır. Öncelikli dengeler (boş nöbet, toplam, hafta
+hafta sonu, kilitli nöbetler) aynen uygulanır. Birlikte nöbet isteyen
+ikililer ikincil ölçüler arasında en ağır olanıdır. Öncelikli dengeler (boş nöbet, toplam, hafta
 sonu/tatil, tatil, Cuma) mevcut listeden kötü olamaz; kişisel limiti
 olanların nöbet sayısı değişmez. Çözücü bunların
 içinde tercihleri, art arda hafta sonlarını ve nöbet aralıklarını da
@@ -15,11 +16,12 @@ import pandas as pd
 
 from nobet_core import (
     has_total_limit, is_friday_column, pair_repeat_allowed, pair_repeat_excess, special_cap, spread_targets,
+    together_split_count,
 )
 
 # Önem sırası (kullanıcı: hafta sonu/tatil > Cuma; toplam farkı en fazla 1 kuralı).
 PRIMARY_METRICS = ("unfilled", "min_short", "total", "special", "holiday", "friday", "total_history")
-SECONDARY_METRICS = ("consecutive_weekends", "avoid", "pair_repeat", "missed_preference", "long_gap", "spread")
+SECONDARY_METRICS = ("together_split", "consecutive_weekends", "avoid", "pair_repeat", "missed_preference", "long_gap", "spread")
 METRIC_LABELS = {
     "unfilled": "boş nöbet",
     "total": "toplam nöbet farkı",
@@ -27,6 +29,7 @@ METRIC_LABELS = {
     "holiday": "tatil farkı",
     "friday": "Cuma farkı",
     "total_history": "önceki aylarla toplam farkı",
+    "together_split": "birlikte nöbet isteyenlerin ayrı düştüğü gün",
     "consecutive_weekends": "art arda hafta sonu nöbeti",
     "avoid": "kaçınılan güne düşen nöbet",
     "pair_repeat": "aynı ikilinin fazladan birlikte nöbeti",
@@ -41,6 +44,7 @@ WEIGHTS = {
     "holiday": 20_000,
     "friday": 5_000,
     "total_history": 1_000,
+    "together_split": 100,
     "consecutive_weekends": 60,
     "avoid": 40,
     "pair_repeat": 30,
@@ -103,7 +107,7 @@ def _long_gap_windows(people, columns, gun_detaylari, kisi_sayisi, person_limits
 
 def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
                      person_limits=None, df_preferred=None, history_special=None,
-                     history_total=None, history_holiday=None):
+                     history_total=None, history_holiday=None, together_pairs=None):
     """Çizelgenin adalet ölçüleri (hepsinde az = iyi). İyileştir öncesi/sonrası karşılaştırılır."""
     person_limits = person_limits or {}
     history_special = history_special or {}
@@ -155,7 +159,8 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
         "missed_preference": sum(
             1 for p in people for c in columns if not assigned(p, c) and _pref(df_preferred, p, c) == 1
         ),
-        "pair_repeat": pair_repeat_excess(schedule, people, columns, kisi_sayisi),
+        "pair_repeat": pair_repeat_excess(schedule, people, columns, kisi_sayisi, exempt=together_pairs),
+        "together_split": together_split_count(schedule, together_pairs, columns),
         "long_gap": sum(1 for p, window in windows if not any(assigned(p, c) for c in window)),
         "spread": sum(
             weight for p in people for first, second, weight in pairs
@@ -172,8 +177,8 @@ def improvement_lines(before, after):
     """Kullanıcıya gösterilecek değişiklikler: ["Cuma farkı 2 → 1", ...]."""
     lines = []
     for name in PRIMARY_METRICS + SECONDARY_METRICS:
-        if name in METRIC_LABELS and after[name] != before[name]:
-            lines.append(f"{METRIC_LABELS[name]} {before[name]:g} → {after[name]:g}")
+        if name in METRIC_LABELS and after.get(name, 0) != before.get(name, 0):
+            lines.append(f"{METRIC_LABELS[name]} {before.get(name, 0):g} → {after.get(name, 0):g}")
     if not lines and after["spread"] < before["spread"]:
         lines.append("nöbetler aya daha düzenli yayıldı")
     return lines
@@ -214,7 +219,7 @@ def rule_breaking_shifts(current, people, columns, df_unwanted_bool, gun_detayla
 def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
                      forbidden_pairs=None, person_limits=None, df_preferred=None,
                      fixed_assignments=None, initial_last_shift=None, history_special=None,
-                     history_total=None, history_holiday=None, time_limit=5.0):
+                     history_total=None, history_holiday=None, time_limit=5.0, together_pairs=None):
     """Mevcut çizelgeden daha iyisini arar.
 
     Dönen değer (yeni_çizelge, önceki_ölçüler, yeni_ölçüler). Daha iyisi
@@ -229,9 +234,13 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     history_holiday = _history(history_holiday)
     initial_last_shift = initial_last_shift or {}
     fixed = {(p, c) for p, c in (fixed_assignments or ()) if p in people and c in columns}
+    together_pairs = {
+        tuple(sorted(pair)) for pair in (together_pairs or ())
+        if pair[0] in people and pair[1] in people and tuple(sorted(pair)) not in set(forbidden_pairs or ())
+    } if kisi_sayisi >= 2 else set()
     metric_args = dict(
         person_limits=person_limits, df_preferred=df_preferred, history_special=history_special,
-        history_total=history_total, history_holiday=history_holiday,
+        history_total=history_total, history_holiday=history_holiday, together_pairs=together_pairs,
     )
     before = schedule_metrics(current, people, columns, gun_detaylari, kisi_sayisi, min_bosluk, **metric_args)
     days = {c: gun_detaylari[c]["day_num"] for c in columns}
@@ -358,6 +367,8 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
         allowed = pair_repeat_allowed(len(people), len(columns), kisi_sayisi)
         for i, a in enumerate(people):
             for b in people[i + 1:]:
+                if tuple(sorted((a, b))) in together_pairs:
+                    continue
                 together = []
                 for c in columns:
                     both = model.NewBoolVar("")
@@ -367,6 +378,15 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
                 model.Add(excess >= sum(together) - allowed)
                 pair_terms.append(excess)
     expr["pair_repeat"] = sum(pair_terms)
+    # Birlikte nöbet isteyenler: ikiliden yalnız birinin nöbetçi olduğu günler.
+    split_terms = []
+    for a, b in sorted(together_pairs):
+        for c in columns:
+            split = model.NewBoolVar("")
+            model.Add(split >= x[a, c] - x[b, c])
+            model.Add(split >= x[b, c] - x[a, c])
+            split_terms.append(split)
+    expr["together_split"] = sum(split_terms)
     long_gap_terms = []
     for p, window in _long_gap_windows(people, columns, gun_detaylari, kisi_sayisi, person_limits):
         empty = model.NewBoolVar("")
@@ -409,7 +429,8 @@ def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari
     """Simülasyon sonucunda boş nöbet ya da 1'den büyük toplam farkı varsa bir kez
     ``improve_schedule`` dener. Dönen değer: (çizelge, düzeldi_mi); çözücü yoksa,
     hata verirse ya da daha iyisini bulamazsa çizelge aynen döner."""
-    metric_keys = ("person_limits", "df_preferred", "history_special", "history_total", "history_holiday")
+    metric_keys = ("person_limits", "df_preferred", "history_special", "history_total", "history_holiday",
+                   "together_pairs")
     try:
         before = schedule_metrics(
             schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
