@@ -19,10 +19,6 @@ from nobet_core import (
     together_split_count,
 )
 
-# Yüklendiği andaki dosya zamanı: nobet.py bu farklılaşınca modülü yeniden yükler
-# (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
-_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
-
 # Önem sırası (kullanıcı: hafta sonu/tatil > Cuma; toplam farkı en fazla 1 kuralı).
 PRIMARY_METRICS = ("unfilled", "min_short", "total", "special", "holiday", "friday", "total_history")
 SECONDARY_METRICS = (
@@ -468,3 +464,9 @@ def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari
     if improved is None:
         return schedule, False
     return improved, True
+
+
+# Yüklendiği andaki dosya zamanı: nobet_tazele.py bu farklılaşınca modülü yeniden
+# yükler (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
+# En sonda: yükleme yarıda hata verirse damga eski kalır, sonraki çalışma yeniden dener.
+_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns

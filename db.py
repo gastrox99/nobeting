@@ -11,10 +11,6 @@ import inspect
 import time
 import traceback
 
-# Yüklendiği andaki dosya zamanı: nobet.py bu farklılaşınca modülü yeniden yükler
-# (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
-_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
-
 _last_error = None
 
 # Yalnızca bunlar "veritabanı hatası" sayılır; geri kalanı (TypeError vb.) bir
@@ -100,7 +96,17 @@ def _log_error(action, exc):
 def log_unexpected(action, exc):
     """Kod hatasının tam izini (şifresiz) sunucu günlüğüne yazar."""
     text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    print(f"{action} beklenmeyen hata:\n" + re.sub(r'(://[^:/@\s]+):[^@\s]+@', r'\1:***@', text))
+    print(f"{action} beklenmeyen hata (sürüm {_code_version()}):\n"
+          + re.sub(r'(://[^:/@\s]+):[^@\s]+@', r'\1:***@', text))
+
+
+def _code_version():
+    """Çalışan kodun kısa etiketi (nobet_tazele.py); günlükte hangi kodun hata verdiği görünsün."""
+    try:
+        from nobet_tazele import code_version
+        return code_version()
+    except Exception:  # sürüm okunamazsa hata kaydı yine yazılsın
+        return "?"
 
 
 def get_last_error():
@@ -1255,3 +1261,9 @@ def load_backup_snapshot(snapshot_id, owner=""):
     finally:
         if conn is not None:
             conn.close()
+
+
+# Yüklendiği andaki dosya zamanı: nobet_tazele.py bu farklılaşınca modülü yeniden
+# yükler (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
+# En sonda: yükleme yarıda hata verirse damga eski kalır, sonraki çalışma yeniden dener.
+_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
