@@ -2969,6 +2969,50 @@ def build_share_text(rows, role_names, yil, ay, special_days=()):
     return "\n".join(lines)
 
 
+def preference_overview(preferences, people):
+    """Tercih Belirle'deki işaretler kişi başına gün listesi olarak.
+
+    [{"İsim", "Tercih", "Kaçın", "İzin", "Müsait Değil"}, ...]; değerler
+    "3, 5, 10-12" biçiminde, işaret yoksa "-". Hiç işaretli gün yoksa boş liste.
+    """
+    day_columns = {}
+    for column in preferences.columns:
+        try:
+            day_columns[column] = int(str(column).split()[0])
+        except (ValueError, IndexError):
+            continue
+    rows = []
+    any_marked = False
+    for person in people:
+        days = {code: [] for _, _, code in TALEP_TURLERI}
+        for column, day in day_columns.items():
+            try:
+                code = int(preferences.at[person, column])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if code in days:
+                days[code].append(day)
+        any_marked = any_marked or any(days.values())
+        row = {"İsim": person}
+        for _, label, code in TALEP_TURLERI:
+            row[label] = format_day_ranges(days[code]) or "-"
+        rows.append(row)
+    return rows if any_marked else []
+
+
+def build_preference_share_text(rows, yil, ay):
+    """WhatsApp'a yapıştırmaya hazır tercih listesi (teyit için)."""
+    lines = [f"📝 {TR_AY_ADLARI[ay]} {yil} nöbet tercihleri", ""]
+    for row in rows:
+        parts = [
+            f"{label}: {row[label]}" for _, label, _ in TALEP_TURLERI
+            if row.get(label) not in (None, "", "-")
+        ]
+        lines.append(f"*{row['İsim']}* — {' · '.join(parts) if parts else 'talep yok'}")
+    lines += ["", "Yanlış ya da eksik varsa liste hazırlanmadan önce yazın."]
+    return "\n".join(lines)
+
+
 def shared_default_month(months, today):
     """Paylaşım sayfasında ilk açılacak ay: bu ay, yoksa bugünden önceki son ay.
 

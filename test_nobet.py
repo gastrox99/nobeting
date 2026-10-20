@@ -37,6 +37,7 @@ from nobet_core import (
     backup_reminder,
     holiday_shift_counts,
     schedule_totals,
+    build_preference_share_text,
     build_share_text,
     build_person_ics,
     shared_default_month,
@@ -44,6 +45,7 @@ from nobet_core import (
     shared_day_states,
     on_duty_summary,
     shared_updated_text,
+    preference_overview,
     preference_summary,
     compact_team_rows,
     team_settings_rows,
@@ -2308,6 +2310,36 @@ class TestTercihOzeti(unittest.TestCase):
         self.assertIsNone(preference_summary(schedule, prefs, ["Ali"]))
         # Tercih tablosunda olmayan kişi ya da gün sorun çıkarmaz.
         self.assertIsNone(preference_summary(schedule, prefs.iloc[0:0], ["Ali"]))
+
+
+class TestTercihListesiPaylasimi(unittest.TestCase):
+    def test_kisi_basina_gun_listesi_ve_whatsapp_metni(self):
+        cols = [f"{d} X" for d in range(1, 15)]
+        prefs = pd.DataFrame(0, index=["Görkem", "Faruk", "Can"], columns=cols)
+        for d in (3, 5, 10, 11, 12):
+            prefs.at["Görkem", f"{d} X"] = 1
+        prefs.at["Görkem", "7 X"] = 2
+        for d in (1, 2, 3):
+            prefs.at["Faruk", f"{d} X"] = 3
+        prefs.at["Faruk", "14 X"] = 4
+        rows = preference_overview(prefs, ["Görkem", "Faruk", "Can", "Yeni"])
+        self.assertEqual(rows[0], {"İsim": "Görkem", "Tercih": "3, 5, 10-12", "Kaçın": "7",
+                                   "İzin": "-", "Müsait Değil": "-"})
+        self.assertEqual(rows[1]["İzin"], "1-3")
+        self.assertEqual(rows[1]["Müsait Değil"], "14")
+        # İşareti olmayan ya da tabloda olmayan kişi satırda kalır (teyit için).
+        self.assertEqual([r["İsim"] for r in rows], ["Görkem", "Faruk", "Can", "Yeni"])
+        self.assertEqual(rows[3]["Tercih"], "-")
+        text = build_preference_share_text(rows, 2026, 11)
+        self.assertIn("Kasım 2026", text)
+        self.assertIn("*Görkem* — Tercih: 3, 5, 10-12 · Kaçın: 7", text)
+        self.assertIn("*Faruk* — İzin: 1-3 · Müsait Değil: 14", text)
+        self.assertIn("*Can* — talep yok", text)
+
+    def test_isaret_yoksa_bos(self):
+        prefs = pd.DataFrame(0, index=["Ali"], columns=["1 Pzt"])
+        self.assertEqual(preference_overview(prefs, ["Ali"]), [])
+        self.assertEqual(preference_overview(pd.DataFrame(), ["Ali"]), [])
 
 
 class TestShareLinksDb(unittest.TestCase):

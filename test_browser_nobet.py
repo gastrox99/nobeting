@@ -512,3 +512,36 @@ def test_iyilestir_dugmesi_listeyi_iyilestirir_ve_geri_alinir(app_url):
                 _no_exception(page)
         finally:
             browser.close()
+
+
+def test_tercihler_toplu_tablo_ve_whatsapp_metni(app_url):
+    team = "Toplu Ali, Toplu Ayşe, Toplu Can"
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, team)
+        try:
+            _wait_idle(page)
+            page.get_by_text("📝 Tercihler").click()
+            expect(page.locator("[data-testid='stPopoverBody']").get_by_text("işaretli tercih, kaçınma")).to_be_visible()
+            page.keyboard.press("Escape")
+            page.get_by_text("🎨 Tercih Belirle", exact=True).click()
+            _wait_idle(page, 1.0)
+            page.get_by_role("button", name="🟥İzin").click()
+            _wait_idle(page, 1.0)
+            pref_row = page.locator(".st-key-preference-grid [data-testid='stHorizontalBlock']").filter(
+                has=page.locator("b", has_text="Toplu Ayşe")
+            ).first
+            for day in (1, 2):
+                button = pref_row.locator(":scope > [data-testid='stColumn']").nth(day).get_by_role("button")
+                button.click()
+                expect(button).to_have_text("İ")
+            _wait_idle(page, 1.0)
+            page.get_by_text("📝 Tercihler").click()
+            code = page.locator("[data-testid='stPopoverBody'] [data-testid='stCode']").first
+            code.wait_for()
+            text = code.inner_text()
+            assert "*Toplu Ayşe* — İzin: 1-2" in text, text
+            assert "*Toplu Ali* — talep yok" in text, text
+            expect(page.get_by_role("link", name="💬 WhatsApp'ta gönder")).to_be_visible()
+            _no_exception(page)
+        finally:
+            browser.close()
