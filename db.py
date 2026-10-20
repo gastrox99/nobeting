@@ -8,12 +8,23 @@ import json
 import re
 import hashlib
 import inspect
+import time
+import traceback
 
 # Yüklendiği andaki dosya zamanı: nobet.py bu farklılaşınca modülü yeniden yükler
 # (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
 _nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
 
 _last_error = None
+
+# Yalnızca bunlar "veritabanı hatası" sayılır; geri kalanı (TypeError vb.) bir
+# kod hatasıdır ve "veritabanına yazılamıyor" diye gizlenmeden yukarı iletilir.
+_DB_ERRORS = (psycopg2.Error, OSError)
+
+# Sürüm denetimi olmadan yazmak için açıkça verilen değer (yedekten geri yükleme,
+# test verisi). ``None`` artık "denetleme" değil, "sürüm bilinmiyor" demektir.
+FORCE = "!force"
+_MISSING = object()
 
 
 def _database_url():
@@ -39,8 +50,39 @@ def is_database_configured():
     return bool(_database_url())
 
 
+# Neon uykudan uyanırken ilk bağlantı düşebiliyor; bağlantı hatasında bu kadar
+# bekleyip bir kez daha denenir (testler kısaltır).
+CONNECT_RETRY_DELAY = 1.0
+
+
 def _connect():
-    return psycopg2.connect(_database_url(), connect_timeout=10)
+    """Yeni bağlantı açar; bağlantı hatasında (OperationalError) bir kez yeniden dener.
+
+    Havuz yok: her çağrı kendi bağlantısını açar ve çağıran kapatır (Neon uyuyunca
+    açık kalan bağlantı bozuluyordu).
+    """
+    try:
+        return psycopg2.connect(_database_url(), connect_timeout=10)
+    except psycopg2.OperationalError as exc:
+        _log_error("Connect (yeniden deneniyor)", exc)
+        time.sleep(CONNECT_RETRY_DELAY)
+        return psycopg2.connect(_database_url(), connect_timeout=10)
+
+
+def ping_db():
+    """Uyandırma bağlantısı: veritabanına şu an ulaşılabiliyorsa True."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return True
+    except _DB_ERRORS as e:
+        _log_error("Ping", e)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _describe_error(exc):
@@ -55,9 +97,20 @@ def _log_error(action, exc):
     print(f"{action} error: {_describe_error(exc)}")
 
 
+def log_unexpected(action, exc):
+    """Kod hatasının tam izini (şifresiz) sunucu günlüğüne yazar."""
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    print(f"{action} beklenmeyen hata:\n" + re.sub(r'(://[^:/@\s]+):[^@\s]+@', r'\1:***@', text))
+
+
 def get_last_error():
     """Why the last init_db() failed, or None."""
     return _last_error
+
+
+# init_db aynı anda birden çok oturumda çalışınca CREATE TABLE IF NOT EXISTS
+# "duplicate key ... pg_type" ile düşebiliyordu; hazırlık bu kilitle sıraya girer.
+_INIT_LOCK_KEY = 7_160_455_243_001
 
 
 def init_db():
@@ -71,6 +124,7 @@ def init_db():
         conn = _connect()
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
+                cur.execute('SELECT pg_advisory_xact_lock(%s)', (_INIT_LOCK_KEY,))
                 # Create schedules table
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS schedules (
@@ -214,6 +268,55 @@ except (OSError, TypeError):
     SCHEMA_VERSION = "bilinmiyor"
 
 
+# Şema hazırlığı ya da uyandırma başarısız olan oturum bu kadar saniye sonra yeniden dener.
+DB_RETRY_SECONDS = 30
+
+
+def prepare_schema(shared, session, schema_version, init_fn=None, error_fn=None, now=None, retry_after=None, ping_fn=None):
+    """Şemayı sunucu başına bir kez hazırlar; bu oturum veritabanını kullanabiliyorsa True.
+
+    ``shared`` sunucudaki tüm oturumların ortak sözlüğü, ``session`` bu oturumun
+    durumu. Başarı bayrağı yalnızca True yönünde değişir: geç biten başka bir
+    oturumun hatası, hazırlanmış şemayı "hazır değil" yapamaz. Başarısız olan
+    oturum ``retry_after`` saniye sonra yeniden dener (eskiden oturum boyunca
+    denemiyordu).
+
+    Şema zaten hazırsa yeni oturum önce ``ping_fn`` ile tek bir uyandırma
+    bağlantısı açar (Neon uyuyor olabilir). Ulaşılamazsa False döner ve
+    ``session["_db_unreachable"]`` True olur: çağıran diğer okumaları atlar
+    (her biri ayrı ayrı zaman aşımı beklemesin). Yeniden deneme aynı süreyle.
+    """
+    init_fn = init_fn or init_db
+    error_fn = error_fn or get_last_error
+    now = time.time() if now is None else now
+    retry_after = DB_RETRY_SECONDS if retry_after is None else retry_after
+    if shared.get("ready"):
+        if ping_fn is None or session.get("_db_awake"):
+            return True
+        tried = session.get("_db_wake_attempted")
+        if isinstance(tried, (int, float)) and now - tried < retry_after:
+            return False
+        session["_db_wake_attempted"] = now
+        awake = bool(ping_fn())
+        session["_db_awake"] = awake
+        session["_db_unreachable"] = not awake
+        return awake
+    attempted = session.get("_db_init_attempted")
+    if isinstance(attempted, tuple) and attempted[0] == schema_version and now - attempted[1] < retry_after:
+        return False
+    session["_db_init_attempted"] = (schema_version, now)
+    if init_fn():
+        shared["ready"] = True
+        shared["error"] = None
+        # Hazırlık bu oturumda bağlandı: ayrıca uyandırmaya gerek yok.
+        session["_db_awake"] = True
+        session["_db_unreachable"] = False
+    elif not shared.get("ready"):
+        # Bu sırada başka bir oturum hazırlığı bitirdiyse hatası bayrağı ezmesin.
+        shared["error"] = error_fn()
+    return bool(shared.get("ready"))
+
+
 def _is_missing_schema(exc):
     return isinstance(exc, (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn))
 
@@ -234,6 +337,29 @@ def _with_schema_repair(action, run):
 def settings_key(owner=""):
     """app_settings row key for a user ('' = single-user mode)."""
     return f"user:{owner}" if owner else "default"
+
+
+class VersionUnknown(Exception):
+    """Kaydın bu oturumdaki sürümü bilinmiyor (okunamadı): denetimsiz yazılmaz."""
+
+
+def _check_expected(expected_version, what):
+    if expected_version is _MISSING:
+        raise TypeError(f"{what}: expected_version zorunlu (denetimsiz yazma için db.FORCE)")
+    if expected_version is None:
+        raise VersionUnknown(what)
+
+
+# Kayıt bir kilidi en fazla bu kadar bekler: işlemin ortasında ölen bir istemci
+# (deploy sırasında kapanan sunucu) kilidi tutarsa kayıt takılmaz, temiz bir
+# "yazılamıyor" hatasına döner.
+LOCK_TIMEOUT = "8s"
+
+
+def _lock_key(cur, *parts):
+    """Aynı kayda yazan işlemleri sıraya sokar (satır yokken FOR UPDATE kilitlemez)."""
+    cur.execute("SET LOCAL lock_timeout = %s", (LOCK_TIMEOUT,))
+    cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', ("/".join(str(p) for p in parts),))
 
 
 class SaveConflict(Exception):
@@ -284,8 +410,8 @@ def _settings_content_version(value):
 def get_schedule_version(name, year, month, owner=""):
     """Kaydın içerik sürümü (metin); kayıt yoksa "", okunamazsa None.
 
-    Oturum bunu okuma/kayıt anında saklar; sonraki kayıtta aynı değilse başka
-    bir yerde değişiklik yapılmıştır (``save_schedule(expected_version=...)``).
+    Uygulama sürümü artık ``load_schedule(version_out=...)`` ile içerikle aynı
+    okumadan alır; bu fonksiyon testler ve teşhis içindir.
     """
     conn = None
     try:
@@ -297,7 +423,7 @@ def get_schedule_version(name, year, month, owner=""):
             )
             row = cur.fetchone()
             return _schedule_content_version(cur, row[0]) if row else ""
-    except Exception as e:
+    except _DB_ERRORS as e:
         _log_error("Get schedule version", e)
         return None
     finally:
@@ -306,7 +432,11 @@ def get_schedule_version(name, year, month, owner=""):
 
 
 def get_settings_version(owner=""):
-    """Ekip ve ayarlar kaydının son değişiklik zamanı; kayıt yoksa "", okunamazsa None."""
+    """Ekip ve ayarlar kaydının içerik sürümü; kayıt yoksa "", okunamazsa None.
+
+    Uygulama sürümü ``load_app_settings(version_out=...)`` ile alır; bu
+    fonksiyon testler ve teşhis içindir.
+    """
     conn = None
     try:
         conn = _connect()
@@ -314,7 +444,7 @@ def get_settings_version(owner=""):
             cur.execute('SELECT value FROM app_settings WHERE key = %s', (settings_key(owner),))
             row = cur.fetchone()
         return _settings_content_version(row[0]) if row else ""
-    except Exception as e:
+    except _DB_ERRORS as e:
         _log_error("Get settings version", e)
         return None
     finally:
@@ -322,7 +452,7 @@ def get_settings_version(owner=""):
             conn.close()
 
 
-def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None, owner="", expected_version=None, version_out=None, writer=None):
+def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, settings_dict=None, rows_liste=None, owner="", expected_version=_MISSING, version_out=None, writer=None):
     """Save a schedule to database.
 
     ``expected_version`` (``get_schedule_version`` çıktısı) verilirse ve kayıt
@@ -330,44 +460,30 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
     yükseltilir (eski bir sekme yeni değişikliklerin üzerine yazmasın). Kayıttaki
     içerik yazılacak içerikle zaten aynıysa çakışma sayılmaz.
     ``version_out`` bir sözlükse yeni sürüm ``version_out["version"]`` olur.
+
+    ``expected_version`` zorunludur: ``None`` (sürüm okunamadı) ``VersionUnknown``
+    yükseltir; denetimsiz yazmak için ``FORCE`` verilir. Bir alan JSON'a
+    çevrilemezse hiçbir şey yazılmaz ve hata yukarı iletilir (eskiden alan
+    sessizce NULL yazılıyor, tercihler/kilitler siliniyordu).
+    Veritabanı hatasında False döner; kod hataları yukarı iletilir.
     """
+    _check_expected(expected_version, name)
+    # Önce serileştir: hata olursa bağlantı açılmadan, hiçbir şey yazılmadan durur.
+    team_str = json.dumps(list(team_members))
+    pref_json = pref_df.to_json() if pref_df is not None else None
+    settings_json_str = json.dumps(settings_dict) if settings_dict is not None else None
+    # Serialize the displayed role assignments so manual swaps survive reloads.
+    rows_liste_json = json.dumps(rows_liste, ensure_ascii=False) if rows_liste is not None else None
     conn = None
     try:
         conn = _connect()
-
-        # JSON-safe team encoding (handles commas in names)
-        team_str = json.dumps(list(team_members))
-
-        # Serialize preference dataframe as JSON if provided
-        pref_json = None
-        if pref_df is not None:
-            try:
-                pref_json = pref_df.to_json()
-            except Exception:
-                pref_json = None
-
-        # Serialize settings dict as JSON if provided
-        settings_json_str = None
-        if settings_dict is not None:
-            try:
-                settings_json_str = json.dumps(settings_dict)
-            except Exception:
-                settings_json_str = None
-
-        # Serialize the displayed role assignments so manual swaps survive reloads.
-        rows_liste_json = None
-        if rows_liste is not None:
-            try:
-                rows_liste_json = json.dumps(rows_liste, ensure_ascii=False)
-            except Exception:
-                rows_liste_json = None
-
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
+                _lock_key(cur, "schedules", owner, name, year, month)
                 # Beklenmeyen içerik sürümü; yazılan içerik de buna eşit değilse çakışmadır.
                 conflict_version = None
                 conflict_by = (None, None)
-                if expected_version is not None:
+                if expected_version != FORCE:
                     # Satırı kilitleyip sürümü denetle: aynı anda iki oturum yazmasın.
                     cur.execute(
                         "SELECT id, updated_at, writer, updated_at AT TIME ZONE current_setting('TimeZone') FROM schedules "
@@ -417,16 +533,14 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
         if version_out is not None:
             version_out["version"] = saved_version
         return True
-    except SaveConflict:
-        raise
-    except Exception as e:
+    except _DB_ERRORS as e:
         _log_error("Save schedule", e)
         return False
     finally:
         if conn is not None:
             conn.close()
 
-def load_schedule(name, year, month, raise_on_error=False, owner="", include_preferences=True):
+def load_schedule(name, year, month, raise_on_error=False, owner="", include_preferences=True, version_out=None):
     """Load a schedule from database.
     Returns (team_members, schedule_df, pref_df, settings_dict, rows_liste).
     pref_df, settings_dict, and rows_liste are None when not saved.
@@ -436,10 +550,17 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
     the legacy tuple-on-error behavior for non-interactive callers.
     ``include_preferences=False`` tercih (izin/müsait değil) verisini okumaz;
     yalnızca nöbetlere ihtiyaç duyan paylaşım sayfası için.
+
+    ``version_out`` bir sözlükse içerikle aynı anda (aynı anlık görüntüden)
+    okunan sürüm ``version_out["version"]`` olur; kayıt yoksa "".
     """
     conn = None
+
     try:
         conn = _connect()
+        if version_out is not None:
+            # Sürüm ve içerik aynı anlık görüntüden okunsun (arada yazılan kayıt karışmasın).
+            conn.set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_REPEATABLE_READ, readonly=True)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Get schedule
             cur.execute('''
@@ -448,9 +569,14 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
 
             schedule_row = cur.fetchone()
             if not schedule_row:
+                if version_out is not None:
+                    version_out["version"] = ""
                 return None, None, None, None, None  # finally still runs — conn will be closed
 
             schedule_id = schedule_row['id']
+            if version_out is not None:
+                with conn.cursor() as plain:
+                    loaded_version = _schedule_content_version(plain, schedule_id)
 
             # Decode team_members — try JSON first (new format), fall back to comma split (legacy)
             raw_team = schedule_row['team_members']
@@ -502,6 +628,8 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
 
             data_rows = cur.fetchall()
 
+        if version_out is not None:
+            version_out["version"] = loaded_version
         if not data_rows:
             return team_members, None, pref_df, settings_dict, rows_liste
 
@@ -520,7 +648,10 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
         return team_members, df, pref_df, settings_dict, rows_liste
 
     except Exception as e:
-        _log_error("Load schedule", e)
+        if isinstance(e, _DB_ERRORS + (json.JSONDecodeError,)):
+            _log_error("Load schedule", e)
+        else:
+            log_unexpected("Load schedule", e)
         if raise_on_error:
             raise
         return None, None, None, None, None
@@ -594,20 +725,22 @@ def load_auto_saved_assignments(periods, owner="", include_preferences=False):
     return (result, preferences) if include_preferences else result
 
 
-def save_app_settings(settings, owner="", expected_version=None, version_out=None, writer=None):
+def save_app_settings(settings, owner="", expected_version=_MISSING, version_out=None, writer=None):
     """Save the team list and settings as one JSON document.
 
     ``expected_version`` ve ``version_out`` için ``save_schedule`` açıklamasına bakın;
-    sürüm farklıysa ``SaveConflict`` yükseltilir.
+    sürüm farklıysa ``SaveConflict`` yükseltilir; ``None`` ``VersionUnknown``.
     """
+    _check_expected(expected_version, "settings")
+    value = json.dumps(settings, ensure_ascii=False)
+    saved_version = _settings_content_version(value)
     conn = None
     try:
         conn = _connect()
         with conn:
             with conn.cursor() as cur:
-                value = json.dumps(settings, ensure_ascii=False)
-                saved_version = _settings_content_version(value)
-                if expected_version is not None:
+                _lock_key(cur, "app_settings", settings_key(owner))
+                if expected_version != FORCE:
                     cur.execute("SELECT value, updated_at, writer, updated_at AT TIME ZONE current_setting('TimeZone') FROM app_settings WHERE key = %s FOR UPDATE", (settings_key(owner),))
                     current = cur.fetchone()
                     known = (
@@ -627,9 +760,7 @@ def save_app_settings(settings, owner="", expected_version=None, version_out=Non
         if version_out is not None:
             version_out["version"] = saved_version
         return True
-    except SaveConflict:
-        raise
-    except Exception as e:
+    except _DB_ERRORS as e:
         _log_error("Save settings", e)
         return False
     finally:
@@ -637,8 +768,11 @@ def save_app_settings(settings, owner="", expected_version=None, version_out=Non
             conn.close()
 
 
-def load_app_settings(owner="", raise_on_error=False):
-    """Return saved settings as a dict, or None when nothing is saved yet."""
+def load_app_settings(owner="", raise_on_error=False, version_out=None):
+    """Return saved settings as a dict, or None when nothing is saved yet.
+
+    ``version_out`` bir sözlükse okunan değerin sürümü (aynı okumadan) oraya yazılır.
+    """
     conn = None
     try:
         conn = _connect()
@@ -646,11 +780,18 @@ def load_app_settings(owner="", raise_on_error=False):
             cur.execute('SELECT value FROM app_settings WHERE key = %s', (settings_key(owner),))
             row = cur.fetchone()
         if not row:
+            if version_out is not None:
+                version_out["version"] = ""
             return None
         settings = json.loads(row['value'])
+        if version_out is not None:
+            version_out["version"] = _settings_content_version(row['value'])
         return settings if isinstance(settings, dict) else None
     except Exception as e:
-        _log_error("Load settings", e)
+        if isinstance(e, _DB_ERRORS + (json.JSONDecodeError,)):
+            _log_error("Load settings", e)
+        else:
+            log_unexpected("Load settings", e)
         if raise_on_error:
             raise
         return None
@@ -813,8 +954,12 @@ def list_shared_months(owner):
             conn.close()
 
 
-def resolve_share_token(token):
-    """(owner, year, month) for a valid token, else None; (owner, 0, 0) is the permanent link."""
+def resolve_share_token(token, raise_on_error=False):
+    """(owner, year, month) for a valid token, else None; (owner, 0, 0) is the permanent link.
+
+    ``raise_on_error`` ile veritabanı hatası yukarı iletilir: paylaşım sayfası
+    "bağlantı geçersiz" yerine "veritabanına ulaşılamıyor" diyebilsin.
+    """
     if not token or not isinstance(token, str) or len(token) > 64:
         return None
     conn = None
@@ -826,6 +971,8 @@ def resolve_share_token(token):
         return (row['owner'], row['year'], row['month']) if row else None
     except Exception as e:
         _log_error("Resolve share link", e)
+        if raise_on_error:
+            raise
         return None
     finally:
         if conn is not None:

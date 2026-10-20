@@ -71,9 +71,15 @@ def test_eski_surumle_yazan_oturum_reddedilir(owner):
     assert _assigned(owner) == ["Ayşe"]
 
 
-def test_surum_verilmezse_denetim_yapilmaz(owner):
-    assert _save(owner, "Ali")
-    assert _save(owner, "Ayşe")
+def test_force_ile_denetimsiz_yazilir_surum_zorunlu(owner):
+    assert _save(owner, "Ali", expected_version=db.FORCE)
+    assert _save(owner, "Ayşe", expected_version=db.FORCE)
+    assert _assigned(owner) == ["Ayşe"]
+    # Sürüm verilmeden yazmak artık bir kod hatası (denetim sessizce kapanmasın).
+    with pytest.raises(TypeError):
+        _save(owner, "Ali")
+    with pytest.raises(TypeError):
+        db.save_app_settings({"a": 1}, owner=owner)
     assert _assigned(owner) == ["Ayşe"]
 
 
@@ -115,7 +121,7 @@ def test_baska_yerde_ayni_degisiklik_yapildiysa_cakisma_yok(owner):
 
 def test_acik_oturumdaki_eski_zaman_surumu_kabul_edilir(owner):
     # Bu güncelleme yayınlandığında açık sekmeler eski biçimde (zaman) sürüm tutuyor.
-    assert _save(owner, "Ali")
+    assert _save(owner, "Ali", expected_version=db.FORCE)
     conn = db._connect()
     with conn, conn.cursor() as cur:
         cur.execute("SELECT updated_at FROM schedules WHERE owner = %s", (owner,))
@@ -142,7 +148,7 @@ def test_ayni_ayarlar_iki_sekmeden_yazilinca_cakisma_yok(owner):
 def test_paylasim_okumasi_tercih_verisini_okumaz(owner):
     prefs = pd.DataFrame(0, index=["Ali", "Ayşe"], columns=["1 Per"])
     prefs.at["Ali", "1 Per"] = 3
-    assert _save(owner, "Ali", pref_df=prefs)
+    assert _save(owner, "Ali", pref_df=prefs, expected_version=db.FORCE)
     assert db.load_schedule("Otomatik_2026_10", 2026, 10, owner=owner)[2] is not None
     assert db.load_schedule("Otomatik_2026_10", 2026, 10, owner=owner, include_preferences=False)[2] is None
 

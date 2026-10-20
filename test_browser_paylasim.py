@@ -57,7 +57,7 @@ def _save_month(db, year, month, days):
         weekday = column.split()[1]
         rows.append({"Tarih": f"{day:02d}.{month:02d}.{year} {weekday}", "AYB": days[day][0], "GYB": days[day][1]})
     assert db.save_schedule(f"Otomatik_{year}_{month:02d}", year, month, team, schedule,
-                            rows_liste=rows, owner=OWNER)
+                            rows_liste=rows, owner=OWNER, expected_version=db.FORCE)
 
 
 def _seed(db):
@@ -75,7 +75,7 @@ def _seed(db):
         **{_d: ("Ücret Ali", "Ücret Veli") for _d in range(5, 28, 2)},
     })
     assert db.save_app_settings(
-        {"team": "Bugün Ali, Talep Ali, Ücret Ali", "title": "Tabip", "risky_unit": True}, owner=OWNER)
+        {"team": "Bugün Ali, Talep Ali, Ücret Ali", "title": "Tabip", "risky_unit": True}, owner=OWNER, expected_version=db.FORCE)
     return {
         "today": today, "tomorrow_in_month": tomorrow.month == today.month,
         "previous": (prev_year, prev_month),

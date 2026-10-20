@@ -91,7 +91,19 @@ def _cached_person_pay(owner, year, month, person, list_days):
 def render_shared_view(token, db_ready):
     # Sekme adı "Nöbet Listesi" olduğu için başlık uygulamanın adı.
     st.markdown("<h1 style='text-align: center; font-size: 2rem;'>Adil Nöbet</h1>", unsafe_allow_html=True)
-    _target = resolve_share_token(token) if db_ready else None
+    # Veritabanına ulaşılamıyorsa (Neon uyanmadı) bağlantı "geçersiz" sanılmasın.
+    _unreachable = (
+        "⏳ Veritabanına şu an ulaşılamıyor. Bağlantınız geçerli olabilir; "
+        "biraz sonra sayfayı yenileyin."
+    )
+    if not db_ready:
+        st.warning(_unreachable)
+        return
+    try:
+        _target = resolve_share_token(token, raise_on_error=True)
+    except Exception:
+        st.warning(_unreachable)
+        return
     if not _target:
         st.error("Bu paylaşım bağlantısı geçersiz ya da kapatılmış.")
         return

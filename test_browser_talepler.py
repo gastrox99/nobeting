@@ -96,7 +96,7 @@ def _bump_schedule(db, year, month):
     """Ayı başka bir yerden (ör. telefondan) kaydedilmiş gibi yapar."""
     import pandas as pd
     frame = pd.DataFrame(False, index=[ALI, AYSE], columns=["1 Per"])
-    assert db.save_schedule(f"Otomatik_{year}_{month:02d}", year, month, [ALI, AYSE], frame, owner="")
+    assert db.save_schedule(f"Otomatik_{year}_{month:02d}", year, month, [ALI, AYSE], frame, owner="", expected_version=db.FORCE)
 
 
 def test_kaydedilemeyen_onayda_talep_kaybolmaz(app_url):  # noqa: F811

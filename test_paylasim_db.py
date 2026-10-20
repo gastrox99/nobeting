@@ -43,7 +43,7 @@ def _save(owner, year, month, assigned=True, name=None):
     if assigned:
         schedule.at["Ali", "1 Per"] = True
     assert db.save_schedule(name or f"Otomatik_{year}_{month:02d}", year, month,
-                            ["Ali", "Ayşe"], schedule, owner=owner)
+                            ["Ali", "Ayşe"], schedule, owner=owner, expected_version=db.FORCE)
 
 
 def test_kalici_baglanti_tum_aylari_acar(owner):

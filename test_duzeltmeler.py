@@ -117,7 +117,7 @@ def test_buyuk_ekipte_yasak_ikili_listesi_kullanilir():
         load_app_settings=lambda **k: None, save_app_settings=lambda *a, **k: True,
         load_schedule=lambda *a, **k: None, save_schedule=lambda *a, **k: True,
         load_auto_saved_assignments=lambda *a, **k: ({}, {}), list_backup_snapshots=lambda **k: [],
-        get_share_link=lambda *a: None,
+        get_share_link=lambda *a: None, ping_db=lambda: True,
         get_schedule_version=lambda *a, **k: None, get_settings_version=lambda *a, **k: None,
     )
     names = ", ".join(f"Kişi{i:02d}" for i in range(27))
@@ -184,7 +184,7 @@ def test_cakisan_ayda_ay_degistirmek_once_uyarir():
         load_app_settings=lambda **k: None, save_app_settings=lambda *a, **k: True,
         load_schedule=lambda *a, **k: (None, None, None, None, None), save_schedule=conflict,
         load_auto_saved_assignments=lambda *a, **k: ({}, {}), list_backup_snapshots=lambda **k: [],
-        get_share_link=lambda *a: None,
+        get_share_link=lambda *a: None, ping_db=lambda: True,
         get_schedule_version=lambda *a, **k: "v1", get_settings_version=lambda *a, **k: None,
     )
     with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, **fakes):
