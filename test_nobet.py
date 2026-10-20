@@ -3795,6 +3795,39 @@ class TestWhatsappBaglantisi(unittest.TestCase):
         self.assertEqual(unquote(url.split("text=", 1)[1]), "*1 Kasım Paz* — AYB: Ayşe\n2 Kasım & Can")
 
 
+class TestGorevYeriEsitleme(unittest.TestCase):
+    """Ayın bir kısmında nöbeti olmayan kişi sonradan gelince tek göreve yığılmamalı."""
+    ROLES = ["AYB", "GYB"]
+    NAMES = ["GÖRKEM", "FARUK", "EYLÜL", "EGE", "AYÇA", "ORCAN", "LEYLA", "AYBÜKE", "SENA"]
+
+    def _month(self, seed):
+        rng = random.Random(seed)
+        days = []
+        for day in range(30):
+            pool = [n for n in self.NAMES if not (n == "AYBÜKE" and day < 15)]
+            days.append(rng.sample(pool, 2))
+        return days
+
+    def test_gec_gelen_kisi_iki_goreve_de_dagilir(self):
+        from nobet_core import distribute_roles
+        for seed in range(30):
+            days = self._month(seed)
+            rows, _ = distribute_roles(list(range(30)), days, self.ROLES, rng=random.Random(seed))
+            for name in self.NAMES:
+                ayb = sum(row["AYB"] == name for row in rows)
+                gyb = sum(row["GYB"] == name for row in rows)
+                self.assertLessEqual(abs(ayb - gyb), 1, (seed, name, ayb, gyb))
+
+    def test_nobetciler_degismez_ve_tek_kisi_ilk_goreve(self):
+        from nobet_core import distribute_roles
+        days = [["Ali", "Can"], ["Can"], [], ["Ali", "Can", "Ece"]]
+        rows, counts = distribute_roles([1, 2, 3, 4], days, self.ROLES, rng=random.Random(3))
+        self.assertEqual(sorted([rows[0]["AYB"], rows[0]["GYB"]]), ["Ali", "Can"])
+        self.assertEqual((rows[1]["AYB"], rows[1]["GYB"]), ("Can", "-"))
+        self.assertEqual((rows[2]["AYB"], rows[2]["GYB"]), ("-", "-"))
+        self.assertEqual(sum(counts.values()), 3)
+
+
 class TestSabitGorevYeri(unittest.TestCase):
     ROLES = ["AYB", "GYB"]
 
