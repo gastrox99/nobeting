@@ -3766,6 +3766,21 @@ def nobet_ucreti_hesapla(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler):
     gece saatlerine verilir: 120 saat gece, 72 saat fazla mesai varsa 72
     saat gece ücreti, kalan fazla mesaiye gündüz ücreti.
     """
+    saat, fm_saat, satirlar = ucret_saatleri(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler)
+    ucret = (
+        satirlar["gunduz"][2]
+        + satirlar["gece"][2]
+        + satirlar["tatil"][2]
+        + satirlar["tatil_gece"][2]
+    )
+    return saat, fm_saat, ucret
+
+
+def ucret_saatleri(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler):
+    """``nobet_ucreti_hesapla``nın dökümü: (nöbet saati, fazla mesai, satırlar).
+
+    ``satirlar``: {tür: (saat, saat ücreti, tutar)}; türler ``UCRET_TURLERI``.
+    """
     if not isinstance(ucretler, dict):
         ucretler = dict.fromkeys(UCRET_TURLERI, ucretler)
     saat = toplam_nobet * 24
@@ -3774,13 +3789,97 @@ def nobet_ucreti_hesapla(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler):
     tatil_gece = min(tatil_nobet * NOBET_GECE_SAAT, tatil_saat)
     kalan = fm_saat - tatil_saat
     normal_gece = min((toplam_nobet - tatil_nobet) * NOBET_GECE_SAAT, kalan)
-    ucret = (
-        (kalan - normal_gece) * ucretler["gunduz"]
-        + normal_gece * ucretler["gece"]
-        + (tatil_saat - tatil_gece) * ucretler["tatil"]
-        + tatil_gece * ucretler["tatil_gece"]
+    saatler = {
+        "gunduz": kalan - normal_gece,
+        "gece": normal_gece,
+        "tatil": tatil_saat - tatil_gece,
+        "tatil_gece": tatil_gece,
+    }
+    satirlar = {
+        tur: (saatler[tur], ucretler[tur], saatler[tur] * ucretler[tur]) for tur in UCRET_TURLERI
+    }
+    return saat, fm_saat, satirlar
+
+
+def ayarlardaki_saat_ucretleri(settings, yil, ay):
+    """Liste sahibinin kayıtlı ayarlarından o ayın saat ücretleri.
+
+    Ana sayfadaki seçimle aynıdır: ünvan seçiliyse resmi tablo (gündüz ücreti
+    o dönem için elle değiştirildiyse ondan türetilen gece/bayram ücretleri),
+    "Elle gir"de her saat aynı ücret. Ücret girilmemişse None.
+    Döner: {"ucretler", "unvan", "riskli", "donem", "tam", "elle"}.
+    """
+    settings = settings or {}
+    unvan = _unvan(settings.get("title")) or ELLE_UNVAN
+    riskli = settings.get("risky_unit") is True
+    try:
+        elle_ucret = float(settings.get("hourly_rate"))
+    except (TypeError, ValueError):
+        elle_ucret = None
+    if elle_ucret is not None and (elle_ucret != elle_ucret or elle_ucret < 0):
+        elle_ucret = None
+    if unvan == ELLE_UNVAN:
+        # Hiç ücret girilmemiş ayarlarda kutu 1 TL'de durur; o zaman gösterilmez.
+        if not elle_ucret or elle_ucret <= 1:
+            return None
+        return {"ucretler": elle_ucret, "unvan": None, "riskli": False,
+                "donem": None, "tam": True, "elle": True}
+    info = unvan_saat_ucreti(unvan, yil, ay, riskli)
+    kaynak = f"{unvan}|{info['donem'][0]}-{info['donem'][1]}|{int(riskli)}|g"
+    elle = (
+        settings.get("hourly_rate_source") == kaynak
+        and elle_ucret is not None
+        and abs(elle_ucret - info["gunduz"]) > 0.005
     )
-    return saat, fm_saat, ucret
+    ucretler = (
+        saat_ucretleri(elle_ucret, TATIL_ARTIRIMI, GECE_FARKI) if elle
+        else {tur: info[tur] for tur in UCRET_TURLERI}
+    )
+    return {"ucretler": ucretler, "unvan": unvan, "riskli": riskli,
+            "donem": info["donem"], "tam": info["tam"], "elle": elle}
+
+
+UCRET_TURU_ADI = {
+    "gunduz": "Gündüz",
+    "gece": "Gece (20-08)",
+    "tatil": "Bayram gündüz (%25)",
+    "tatil_gece": "Bayram gece (%25)",
+}
+
+
+def kisi_ucret_dokumu(nobet_gunleri, yil, ay, settings, preferences=None, person=None):
+    """Bir kişinin o ayki tahmini nöbet ücreti dökümü (paylaşım sayfası için).
+
+    ``nobet_gunleri``: kişinin nöbet tuttuğu gün numaraları. Tatiller, arifeler
+    ve izinli günlerin mesaiden düşmesi Analiz'deki Ücret Özeti ile aynıdır.
+    Ücret ayarı yoksa None döner.
+    """
+    oran = ayarlardaki_saat_ucretleri(settings, yil, ay)
+    if oran is None:
+        return None
+    gun_sayisi = calendar.monthrange(yil, ay)[1]
+    tatil_metni = holiday_text_for_period((settings or {}).get("holidays_by_period"), yil, ay)
+    tatil_gunleri, _ = parse_holiday_days(tatil_metni, gun_sayisi)
+    gun_detaylari = build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)
+    yarim_gunler = official_half_days(yil, ay)
+    zorunlu, _ = required_work_hours(gun_detaylari, yarim_gunler)
+    mesai = personal_work_hours(gun_detaylari, yarim_gunler, preferences, [person]).get(person, zorunlu)
+    resmi = {gun for gun, _ in official_holidays(yil, ay)}
+    tatiller = set(tatil_gunleri)
+    gunler = sorted({int(gun) for gun in nobet_gunleri if 1 <= int(gun) <= gun_sayisi})
+    bayram = [gun for gun in gunler if gun in tatiller and gun in resmi]
+    saat, fm_saat, satirlar = ucret_saatleri(len(gunler), len(bayram), mesai, oran["ucretler"])
+    return {
+        **oran,
+        "nobet": len(gunler),
+        "bayram_nobet": len(bayram),
+        "saat": saat,
+        "zorunlu": zorunlu,
+        "mesai": mesai,
+        "fazla_mesai": fm_saat,
+        "satirlar": satirlar,
+        "toplam": sum(tutar for _, _, tutar in satirlar.values()),
+    }
 
 
 def _unvan(value):

@@ -25,7 +25,7 @@ if not TEST_DB:
 
 from playwright.sync_api import expect, sync_playwright  # noqa: E402
 
-from nobet_core import TR_AY_ADLARI, TR_GUN_KISA, now_tr, previous_period  # noqa: E402
+from nobet_core import TR_AY_ADLARI, TR_GUN_KISA, kisi_ucret_dokumu, now_tr, previous_period, tr_sayi  # noqa: E402
 from test_browser_nobet import APP_DIR, _no_exception, _wait_idle  # noqa: E402
 
 OWNER = f"paylasim-tarayici-{uuid.uuid4().hex[:8]}@example.com"
@@ -70,8 +70,12 @@ def _seed(db):
         days[1] = ("Geçmiş Ece", "Geçmiş Fatma")
     _save_month(db, today.year, today.month, days)
     prev_year, prev_month = previous_period(today.year, today.month)
-    _save_month(db, prev_year, prev_month, {3: ("Önceki Gül", "Önceki Hasan")})
-    assert db.save_app_settings({"team": "Bugün Ali, Talep Ali"}, owner=OWNER)
+    _save_month(db, prev_year, prev_month, {
+        3: ("Önceki Gül", "Önceki Hasan"),
+        **{_d: ("Ücret Ali", "Ücret Veli") for _d in range(5, 28, 2)},
+    })
+    assert db.save_app_settings(
+        {"team": "Bugün Ali, Talep Ali, Ücret Ali", "title": "Tabip", "risky_unit": True}, owner=OWNER)
     return {
         "today": today, "tomorrow_in_month": tomorrow.month == today.month,
         "previous": (prev_year, prev_month),
@@ -235,6 +239,13 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
             expect(page.get_by_text("Talep gönderilmedi:")).to_be_visible()
             assert _with_db(lambda db: db.list_team_requests(OWNER)) == []
 
+            # Canlıdaki hata: sunucu yeniden başlamadan yeni kod gelince tablo
+            # kurulmamıştı ve her talep "kaydedilemedi" diyordu.
+            import psycopg2
+            conn = psycopg2.connect(TEST_DB)
+            with conn, conn.cursor() as cur:
+                cur.execute("DROP TABLE team_requests")
+            conn.close()
             page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("10-12")
             page.get_by_role("button", name="📨 Talebi gönder").click()
             _wait_idle(page)
@@ -267,5 +278,36 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
             assert [(r["person"], r["days"]) for r in requests] == [
                 ("Talep Ali", {"tercih": [3, 5], "izin": [20]}),
             ]
+        finally:
+            browser.close()
+
+
+def test_kisi_yalniz_kendi_ucret_dokumunu_gorur(shared):
+    url, data = shared
+    today = data["today"]
+    prev_year, prev_month = data["previous"]
+    expected = kisi_ucret_dokumu(
+        range(5, 28, 2), prev_year, prev_month, {"title": "Tabip", "risky_unit": True}, None, "Ücret Ali")
+    assert expected["toplam"] > 0
+    with sync_playwright() as p:
+        browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
+        try:
+            _choose(page, "Ücret Ali", all_rows=False)
+            page.get_by_text(f"{TR_AY_ADLARI[today.month]} {today.year}", exact=True).click()
+            page.get_by_role("option", name=f"{TR_AY_ADLARI[prev_month]} {prev_year}").click()
+            _wait_idle(page)
+            _no_exception(page)
+            title = f"💰 Tahmini nöbet ücretim: {tr_sayi(expected['toplam'])} ₺"
+            page.get_by_text(title).click()
+            _wait_idle(page)
+            expect(page.get_by_text("12 nöbet = 288 saat")).to_be_visible()
+            expect(page.get_by_text("Tabip, riskli birim (%50)")).to_be_visible()
+            pay_table = page.locator("[data-testid='stExpander'] [data-testid='stDataFrame']")
+            expect(pay_table).to_contain_text("Gece (20-08)")
+            expect(pay_table).to_contain_text(f"{tr_sayi(expected['satirlar']['gece'][1])} ₺")
+            # Tüm liste açılsa da yalnız kendi ücreti görünür.
+            page.get_by_text("Tüm listeyi göster", exact=True).click()
+            _wait_idle(page)
+            expect(page.get_by_text("💰 Tahmini nöbet ücretim")).to_have_count(1)
         finally:
             browser.close()

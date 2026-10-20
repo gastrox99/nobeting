@@ -33,8 +33,13 @@ from nobet_core import (
     now_tr,
     on_duty_summary,
     format_day_ranges,
+    UCRET_TURLERI,
+    UCRET_TURU_ADI,
+    donem_adi,
+    kisi_ucret_dokumu,
     parse_schedule_import_date,
     parse_team_request,
+    tr_sayi,
     request_open_months,
     shared_day_states,
     shared_default_month,
@@ -71,6 +76,11 @@ def _cached_shared_months(owner):
 @st.cache_data(ttl=10, show_spinner=False)
 def _cached_shared_rows(owner, year, month):
     return _shared_rows(owner, year, month)
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_person_pay(owner, year, month, person, list_days):
+    return _person_pay(owner, year, month, person, list_days)
 
 
 def render_shared_view(token, db_ready):
@@ -206,7 +216,61 @@ def _render_list(_owner, _year, _month, _person):
             f"nobet_{_year}_{_month:02d}.ics", "text/calendar",
             on_click="ignore", width="stretch",
         )
+    if _person:
+        _render_pay(_owner, _year, _month, _person, _rows, _roles)
     st.caption("Liste, liste sahibi değişiklik yaptıkça güncellenir.")
+
+
+def _render_pay(_owner, _year, _month, _person, _rows, _roles):
+    """Seçilen kişinin yalnızca kendi tahmini nöbet ücreti (Analiz > Ücret Özeti ile aynı hesap)."""
+    # Çizelge yoksa (yalnız liste kayıtlıysa) nöbet günleri listeden sayılır.
+    _list_days = tuple(
+        _parsed["day"] for _row in _rows
+        if any(_row.get(_role) == _person for _role in _roles)
+        for _parsed in [parse_schedule_import_date(_row.get("Tarih"))] if _parsed
+    )
+    _pay = _cached_person_pay(_owner, _year, _month, _person, _list_days)
+    if _pay is None or not _pay["nobet"]:
+        return
+    with st.expander(f"💰 Tahmini nöbet ücretim: {tr_sayi(_pay['toplam'])} ₺", expanded=False):
+        _lines = [
+            {
+                "Tür": UCRET_TURU_ADI[_tur],
+                "Saat": int(_pay["satirlar"][_tur][0]),
+                "Saat ücreti": f"{tr_sayi(_pay['satirlar'][_tur][1])} ₺",
+                "Tutar": f"{tr_sayi(_pay['satirlar'][_tur][2])} ₺",
+            }
+            for _tur in UCRET_TURLERI
+            if _pay["satirlar"][_tur][0] > 0
+        ]
+        _lines.append({"Tür": "Toplam", "Saat": int(_pay["fazla_mesai"]), "Saat ücreti": "",
+                       "Tutar": f"{tr_sayi(_pay['toplam'])} ₺"})
+        _bayram = f", {_pay['bayram_nobet']} bayram" if _pay["bayram_nobet"] else ""
+        _izin = _pay["zorunlu"] - _pay["mesai"]
+        _izin_text = f" (izinli günlerin {_izin} saati düşüldü)" if _izin else ""
+        st.markdown(
+            f"{_pay['nobet']} nöbet{_bayram} = **{int(_pay['saat'])} saat** · "
+            f"zorunlu mesai **{int(_pay['mesai'])} saat**{_izin_text} · "
+            f"fazla mesai **{int(_pay['fazla_mesai'])} saat**"
+        )
+        if _lines[:-1]:
+            st.dataframe(pd.DataFrame(_lines), hide_index=True, width="stretch")
+        else:
+            st.info("Nöbet saatin zorunlu mesaiyi aşmıyor; bu ay fazla mesai ücreti çıkmıyor.")
+        if _pay["unvan"]:
+            _basis = _pay["unvan"] + (", riskli birim (%50)" if _pay["riskli"] else "")
+            _basis += f", {donem_adi(_pay['donem'])} katsayısı"
+            if not _pay["tam"]:
+                _basis += " (bu dönemin katsayısı henüz eklenmedi, son bilinen kullanıldı)"
+            if _pay["elle"]:
+                _basis += "; gündüz ücreti liste sahibince elle girildi"
+        else:
+            _basis = "liste sahibinin girdiği saat ücreti, her saat aynı (gece/bayram farkı yok)"
+        st.caption(
+            f"Hesap: {_basis}. Yalnız fazla mesai saatleri ödenir; gece ücreti en fazla gece "
+            "saatin kadar saate uygulanır. %25 yalnız resmi ve dini bayramlarda. Damga vergisi "
+            "düşülmüş nettir; tahminidir, liste değişirse değişir."
+        )
 
 
 # Kutu başlıkları: ekibin anlayacağı dille, parantezde uygulamadaki adı.
@@ -270,6 +334,30 @@ def _render_request_form(_owner, _person):
         st.error("Bekleyen talep sayısı doldu; liste sahibi eski talepleri onaylayınca tekrar deneyin.")
     else:
         st.error("Talep kaydedilemedi. Biraz sonra tekrar deneyin.")
+
+
+def _person_pay(_owner, year, month, person, list_days):
+    """Kişinin nöbet günleri ve İzin günleriyle ücret dökümü; ücret ayarı yoksa None.
+
+    Günler çizelgeden okunur; çizelgede kişi yoksa listedeki günler (list_days) kullanılır.
+    """
+    _loaded = load_schedule(f"Otomatik_{year}_{month:02d}", year, month, owner=_owner)
+    _schedule = _loaded[1] if _loaded else None
+    _days, _prefs = list(list_days), None
+    if _schedule is not None and not _schedule.empty and person in _schedule.index:
+        _schedule = as_bool_frame(_schedule)
+        _days = []
+        for _col in _schedule.columns:
+            try:
+                _day = int(str(_col).split()[0])
+            except (ValueError, IndexError):
+                continue
+            if bool(_schedule.at[person, _col]):
+                _days.append(_day)
+        # Yalnız kişinin kendi tercih satırı kullanılır (İzin günleri mesaiden düşer).
+        if _loaded[2] is not None and person in _loaded[2].index:
+            _prefs = _loaded[2].loc[[person]]
+    return kisi_ucret_dokumu(_days, year, month, load_app_settings(owner=_owner) or {}, _prefs, person)
 
 
 def _shared_rows(_owner, year, month):

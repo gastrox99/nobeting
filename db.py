@@ -6,6 +6,8 @@ import pandas as pd
 from io import StringIO
 import json
 import re
+import hashlib
+import inspect
 
 _last_error = None
 
@@ -188,6 +190,33 @@ def init_db():
     finally:
         if conn is not None:
             conn.close()
+
+# init_db'nin içeriğinden türeyen sürüm: tablo eklenince değişir. Uygulama
+# veritabanını sunucu başına bir kez hazırlıyor; Streamlit Cloud yeni kodu
+# sunucuyu yeniden başlatmadan çekince yeni tablo kurulmuyordu (ekip
+# talepleri "kaydedilemedi" hatası). Sürüm değişince hazırlık yeniden çalışır.
+try:
+    SCHEMA_VERSION = hashlib.sha1(inspect.getsource(init_db).encode("utf-8")).hexdigest()[:12]
+except (OSError, TypeError):
+    SCHEMA_VERSION = "bilinmiyor"
+
+
+def _is_missing_schema(exc):
+    return isinstance(exc, (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn))
+
+
+def _with_schema_repair(action, run):
+    """run() tablo/sütun eksik diye düşerse şemayı kurup bir kez daha dener."""
+    try:
+        return run()
+    except Exception as e:
+        if not _is_missing_schema(e):
+            raise
+        _log_error(f"{action} (şema eksik, kuruluyor)", e)
+        if not init_db():
+            raise
+        return run()
+
 
 def settings_key(owner=""):
     """app_settings row key for a user ('' = single-user mode)."""
@@ -748,46 +777,53 @@ def submit_team_request(owner, year, month, person, days_by_kind):
 
     "ok", "limit" (bekleyen talep sınırı dolu) ya da "error" döner.
     """
-    conn = None
-    try:
+    def _run():
         conn = _connect()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute('''
-                    SELECT COUNT(*) FROM team_requests
-                    WHERE owner = %s AND NOT (year = %s AND month = %s AND person = %s)
-                ''', (owner, year, month, person))
-                if cur.fetchone()[0] >= TEAM_REQUEST_LIMIT:
-                    return "limit"
-                cur.execute('''
-                    INSERT INTO team_requests (owner, year, month, person, days_json)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (owner, year, month, person) DO UPDATE
-                        SET days_json = EXCLUDED.days_json, created_at = CURRENT_TIMESTAMP
-                ''', (owner, year, month, person, json.dumps(days_by_kind)))
-        return "ok"
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute('''
+                        SELECT COUNT(*) FROM team_requests
+                        WHERE owner = %s AND NOT (year = %s AND month = %s AND person = %s)
+                    ''', (owner, year, month, person))
+                    if cur.fetchone()[0] >= TEAM_REQUEST_LIMIT:
+                        return "limit"
+                    cur.execute('''
+                        INSERT INTO team_requests (owner, year, month, person, days_json)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (owner, year, month, person) DO UPDATE
+                            SET days_json = EXCLUDED.days_json, created_at = CURRENT_TIMESTAMP
+                    ''', (owner, year, month, person, json.dumps(days_by_kind)))
+            return "ok"
+        finally:
+            conn.close()
+
+    try:
+        return _with_schema_repair("Submit team request", _run)
     except Exception as e:
         _log_error("Submit team request", e)
         return "error"
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def list_team_requests(owner, raise_on_error=False):
     """Bekleyen talepler, eskiden yeniye: [{id, year, month, person, days, created_tr}, ...]."""
-    conn = None
-    try:
+    def _rows():
         conn = _connect()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute('''
-                SELECT id, year, month, person, days_json,
-                       (created_at AT TIME ZONE current_setting('TimeZone'))
-                           AT TIME ZONE 'Europe/Istanbul' AS created_tr
-                FROM team_requests WHERE owner = %s
-                ORDER BY created_at, id
-            ''', (owner,))
-            rows = cur.fetchall()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute('''
+                    SELECT id, year, month, person, days_json,
+                           (created_at AT TIME ZONE current_setting('TimeZone'))
+                               AT TIME ZONE 'Europe/Istanbul' AS created_tr
+                    FROM team_requests WHERE owner = %s
+                    ORDER BY created_at, id
+                ''', (owner,))
+                return cur.fetchall()
+        finally:
+            conn.close()
+
+    try:
+        rows = _with_schema_repair("List team requests", _rows)
         result = []
         for row in rows:
             try:
@@ -805,9 +841,6 @@ def list_team_requests(owner, raise_on_error=False):
         if raise_on_error:
             raise
         return []
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def delete_team_request(owner, request_id):

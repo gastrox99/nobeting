@@ -113,7 +113,7 @@ def test_alt_siniri_altindaki_kisinin_nobeti_azalmaz_ama_artabilir():
 def test_buyuk_ekipte_yasak_ikili_listesi_kullanilir():
     from streamlit.testing.v1 import AppTest
     fakes = dict(
-        init_db=lambda: True, get_last_error=lambda: None, is_database_configured=lambda: False,
+        init_db=lambda: True, get_last_error=lambda: None, is_database_configured=lambda: False, SCHEMA_VERSION="test",
         load_app_settings=lambda **k: None, save_app_settings=lambda *a, **k: True,
         load_schedule=lambda *a, **k: None, save_schedule=lambda *a, **k: True,
         load_auto_saved_assignments=lambda *a, **k: ({}, {}), list_backup_snapshots=lambda **k: [],
@@ -180,7 +180,7 @@ def test_cakisan_ayda_ay_degistirmek_once_uyarir():
         raise db.SaveConflict("x")
 
     fakes = dict(
-        init_db=lambda: True, get_last_error=lambda: None, is_database_configured=lambda: False,
+        init_db=lambda: True, get_last_error=lambda: None, is_database_configured=lambda: False, SCHEMA_VERSION="test",
         load_app_settings=lambda **k: None, save_app_settings=lambda *a, **k: True,
         load_schedule=lambda *a, **k: (None, None, None, None, None), save_schedule=conflict,
         load_auto_saved_assignments=lambda *a, **k: ({}, {}), list_backup_snapshots=lambda **k: [],

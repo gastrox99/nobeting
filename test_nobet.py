@@ -2497,8 +2497,9 @@ class TestGoogleLoginSupport(unittest.TestCase):
                 f"{name} kullanıcıya bağlı değil",
             )
         shared = _app_source("nobet_paylasim.py")
-        # Liste (load_schedule) ve talep sekmesindeki ekip (load_app_settings).
-        self.assertEqual(shared.count("owner=_owner"), 2)
+        # Liste (load_schedule), talep sekmesindeki ekip (load_app_settings) ve
+        # kişinin ücreti (load_schedule + load_app_settings).
+        self.assertEqual(shared.count("owner=_owner"), 4)
         self.assertNotIn("owner=_owner", source.replace(shared, ""))
         # Giriş kontrolü ayarlar yüklenmeden önce yapılmalı.
         self.assertLess(source.index("AUTH_ENABLED = _auth_configured()"),
@@ -2603,6 +2604,61 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         # 48 saat fm; 29 Ekim bayram ücretiyle, 30 Ekim normal ücretle.
         self.assertAlmostEqual(float(finance["Ücret (TL)"].iloc[0]),
                                12 * 125.0 + 12 * 137.5 + 12 * 100.0 + 12 * 110.0)
+
+    def test_ucret_dokumu_toplami_hesapla_ile_ayni(self):
+        from nobet_core import ucret_saatleri, UCRET_TURLERI
+        for args in [(10, 0, 168), (12, 0, 120), (8, 1, 160), (7, 2, 160), (6, 0, 160), (15, 3, 100)]:
+            saat, fm, satirlar = ucret_saatleri(*args, self.UCRET)
+            self.assertEqual((saat, fm), nobet_ucreti_hesapla(*args, self.UCRET)[:2])
+            self.assertEqual(sum(_t for _, _, _t in satirlar.values()), nobet_ucreti_hesapla(*args, self.UCRET)[2])
+            self.assertEqual(sum(satirlar[_k][0] for _k in UCRET_TURLERI), fm)
+
+    def test_ayarlardaki_saat_ucretleri_ana_sayfa_ile_ayni(self):
+        from nobet_core import ayarlardaki_saat_ucretleri
+        tablo = unvan_saat_ucreti("Tabip", 2026, 10, True)
+        oran = ayarlardaki_saat_ucretleri({"title": "Tabip", "risky_unit": True}, 2026, 10)
+        self.assertEqual(oran["ucretler"]["gunduz"], 340.07)
+        self.assertEqual(oran["ucretler"]["tatil_gece"], tablo["tatil_gece"])
+        self.assertFalse(oran["elle"])
+        # Aynı dönem için elle değiştirilen gündüz ücretinden türetilir.
+        elle = ayarlardaki_saat_ucretleri(
+            {"title": "Tabip", "hourly_rate": 200.0, "hourly_rate_source": "Tabip|2026-2|0|g"}, 2026, 10)
+        self.assertTrue(elle["elle"])
+        self.assertEqual(elle["ucretler"], saat_ucretleri(200.0, 0.25, 0.10))
+        # Başka dönemin elle ücreti bu aya taşınmaz (ana sayfa da tabloya döner).
+        self.assertFalse(ayarlardaki_saat_ucretleri(
+            {"title": "Tabip", "hourly_rate": 200.0, "hourly_rate_source": "Tabip|2026-1|0|g"}, 2026, 10)["elle"])
+        self.assertEqual(ayarlardaki_saat_ucretleri({"title": "Elle gir", "hourly_rate": 150}, 2026, 10)["ucretler"], 150.0)
+        # Ücret hiç girilmemişse gösterilmez.
+        self.assertIsNone(ayarlardaki_saat_ucretleri({}, 2026, 10))
+        self.assertIsNone(ayarlardaki_saat_ucretleri({"hourly_rate": 1.0}, 2026, 10))
+
+    def test_kisi_ucret_dokumu_analiz_ucret_ozeti_ile_ayni(self):
+        from nobet_core import kisi_ucret_dokumu, ayarlardaki_saat_ucretleri
+        # Ekim 2026: 29 resmi bayram, 30 elle eklenmiş tatil, 28 arife; Ali 1 Ekim izinli.
+        settings = {"title": "Tabip", "holidays_by_period": {"2026-10": "29,30"}}
+        days = build_gun_detaylari(2026, 10, 31, [29, 30])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=["Ali"], columns=cols)
+        nobet = [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 30]
+        for _d in nobet:
+            schedule.at["Ali", cols[_d - 1]] = True
+        prefs = pd.DataFrame(0, index=["Ali"], columns=cols)
+        prefs.at["Ali", cols[0]] = 3
+        half = official_half_days(2026, 10)
+        zorunlu, _ = required_work_hours(days, half)
+        mesai = personal_work_hours(days, half, prefs, ["Ali"])
+        ucretler = ayarlardaki_saat_ucretleri(settings, 2026, 10)["ucretler"]
+        _, finance, _ = build_schedule_analysis(
+            schedule, [], [], ["Ali"], days, {}, zorunlu, ucretler, mesai, frozenset({29}))
+        dokum = kisi_ucret_dokumu(nobet, 2026, 10, settings, prefs, "Ali")
+        self.assertEqual(dokum["nobet"], 11)
+        self.assertEqual(dokum["bayram_nobet"], 1)
+        self.assertEqual(dokum["mesai"], zorunlu - 8)
+        self.assertEqual(round(dokum["toplam"], 2), float(finance.loc["Ali", "Ücret (TL)"]))
+        self.assertEqual(int(dokum["fazla_mesai"]), int(finance.loc["Ali", "Fazla mesai"]))
+        self.assertGreater(dokum["satirlar"]["tatil_gece"][0], 0)
+        self.assertIsNone(kisi_ucret_dokumu(nobet, 2026, 10, {}, None, "Ali"))
 
     def test_unvan_ayari_saklanir_gecersizi_atlanir(self):
         state = {"unvan_val": "Tabip", "riskli_birim_val": True,
@@ -2807,7 +2863,9 @@ class TestDatabaseConnectionDiagnostics(unittest.TestCase):
     def test_basarisiz_baglanti_kalici_onbelleklenmez(self):
         source = _app_source()
         self.assertNotIn("def _init_db_once", source)
-        self.assertIn('if not _db_state["ready"] and not st.session_state.get("_db_init_attempted")', source)
+        self.assertIn(
+            'if not _db_state["ready"] and st.session_state.get("_db_init_attempted") != SCHEMA_VERSION', source)
+        self.assertIn("_db_state = _db_init_state(SCHEMA_VERSION)", source)
 
 
 class TestSchedulePersistence(unittest.TestCase):
