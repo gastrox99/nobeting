@@ -604,3 +604,34 @@ def test_hizli_giriste_kisi_degisince_gunler_temizlenir(app_url):
             _no_exception(page)
         finally:
             browser.close()
+
+
+def test_sabit_gorev_yeri_secilen_kisiyi_o_goreve_koyar(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Sabit Ali, Sabit Ayşe, Sabit Can")
+        try:
+            _wait_idle(page)
+            roles = _settings_box(page, "textbox", "🏷️ Görev İsimleri:")
+            roles.fill("AYB, GYB")
+            roles.press("Enter")
+            _wait_idle(page)
+            page.locator(".st-key-sabit-gorev [data-testid='stMultiSelect']").nth(1).click()
+            page.get_by_role("option", name="Sabit Ali").click()
+            page.keyboard.press("Escape")
+            _wait_idle(page)
+            for person in ("Sabit Ali", "Sabit Ayşe"):
+                cell = _day_button(page, person, 0)
+                cell.click()
+                cell.get_by_text("✓").wait_for()
+                _wait_idle(page)
+            _no_exception(page)
+            assert "GYB: Sabit Ali" in _whatsapp_first_day(page)
+            # Başka göreve seçilince oraya taşınır ve bu ayın listesi hemen düzelir.
+            page.locator(".st-key-sabit-gorev [data-testid='stMultiSelect']").nth(0).click()
+            page.get_by_role("option", name="Sabit Ali").click()
+            page.keyboard.press("Escape")
+            _wait_idle(page)
+            _no_exception(page)
+            assert "AYB: Sabit Ali" in _whatsapp_first_day(page)
+        finally:
+            browser.close()

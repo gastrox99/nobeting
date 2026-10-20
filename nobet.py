@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-import random
 import calendar
 import time
 import os
@@ -112,6 +111,10 @@ for _attempt in range(2):
             MISSING_DAY_FREE_LABEL,
             format_missing_day_reason,
             synchronize_changed_role_rows,
+            active_fixed_roles,
+            apply_fixed_roles,
+            distribute_roles,
+            fixed_role_conflicts,
             switch_schedule_period,
             build_limit_violation_messages,
             update_persistence_feedback,
@@ -141,7 +144,7 @@ from nobet_yedek import render_backup_section, run_requested_snapshot
 from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
-from nobet_ekip import render_team_table, render_pair_matrix
+from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import finish_approved_requests, render_team_requests
 from streamlit_local_storage import LocalStorage
 
@@ -420,6 +423,10 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                 st.session_state[_pairs_key] = rename_in_pairs_text(
                     st.session_state.get(_pairs_key, ""), prev_isimler, _renames
                 )
+            if st.session_state.get("fixed_roles"):
+                st.session_state.fixed_roles = {
+                    _renames.get(_p, _p): _r for _p, _r in st.session_state.fixed_roles.items()
+                }
             st.toast("İsim değişikliği uygulandı: " + ", ".join(f"{a} → {b}" for a, b in _renames.items()), icon="✏️")
         st.session_state.isimler_cache = isimler
         _seen_names.update(isimler)
@@ -571,9 +578,15 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         )
 
     st.divider()
-    render_pair_matrix(isimler)
-    st.divider()
-    render_pair_matrix(isimler, "birlikte")
+    # Kişi kuralları yan yana: birlikte çalışamayan, birlikte çalışmak isteyen,
+    # sabit görev yeri (görev 2 ve üstüyse).
+    _yasak_col, _birlikte_col, _sabit_col = st.columns([2, 2, 1.3], gap="large")
+    with _yasak_col:
+        render_pair_matrix(isimler)
+    with _birlikte_col:
+        render_pair_matrix(isimler, "birlikte")
+    with _sabit_col:
+        render_fixed_roles(isimler, role_names)
     forbidden_input = st.session_state.get("forbidden_pairs_text", "")
     limits_text = st.session_state.get("limits_text", "")
 
@@ -1396,6 +1409,12 @@ if _fp_unk:
     input_warn_msg.append(f"⚠️ Yasak çiftte ekip dışı isim(ler): **{', '.join(_fp_unk)}** — bu kısıtlama etkisiz.")
 if _lim_unk:
     input_warn_msg.append(f"⚠️ Kişisel limitte ekip dışı isim(ler): **{', '.join(_lim_unk)}** — bu limit etkisiz.")
+_fixed_roles = active_fixed_roles(st.session_state.get("fixed_roles"), isimler, role_names)
+for _col, _role, _people in fixed_role_conflicts(edited_df, sutunlar, _fixed_roles):
+    input_warn_msg.append(
+        f"📌 {gun_detaylari[_col]['day_num']}. gün: **{', '.join(_people)}** ikisi de {_role} görevine sabit; "
+        f"yalnız biri {_role}'de. Olmasın isterseniz Birlikte Çalışamayan'da işaretleyin."
+    )
 
 _issue_count = (
     len(max_person_msg) + len(_missing_days) + len(conflict_msg) + len(forbidden_msg)
@@ -1425,25 +1444,13 @@ _cache_key = (yil, ay, tuple(isimler), tuple(sutunlar), tuple(role_names))
 if (st.session_state.should_regenerate_assignments
         or st.session_state.cached_rows_liste is None
         or st.session_state.get('cached_key') != _cache_key):
-    rows_liste = []
-    first_role_counts = {i: 0 for i in isimler}
-    for col in sutunlar:
-        nobetciler = edited_df.index[edited_df[col]].tolist()
-        random.shuffle(nobetciler) 
-        nobetciler.sort(key=lambda x: first_role_counts[x]) 
-        
-        # Build row with all assigned people using custom role names
-        row_data = {"Tarih": gun_detaylari[col]['full_date']}
-        
-        for idx, role_name in enumerate(role_names):
-            if len(nobetciler) > idx:
-                row_data[role_name] = nobetciler[idx]
-                if idx == 0:
-                    first_role_counts[nobetciler[idx]] += 1
-            else:
-                row_data[role_name] = "-"
-        
-        rows_liste.append(row_data)
+    # Sabit görev yeri olan kişi kendi görevine yerleşir (Ayarlar > Görev İsimleri).
+    rows_liste, first_role_counts = distribute_roles(
+        [gun_detaylari[col]['full_date'] for col in sutunlar],
+        [edited_df.index[edited_df[col]].tolist() for col in sutunlar],
+        role_names,
+        _fixed_roles,
+    )
     st.session_state.cached_rows_liste = rows_liste
     st.session_state.cached_first_role_counts = first_role_counts
     st.session_state.cached_role_names = role_names
@@ -1471,9 +1478,15 @@ else:
             role_names,
             sutunlar,
             gun_detaylari,
+            _fixed_roles,
         )
         st.session_state.cached_rows_liste = rows_liste
         st.session_state.cached_role_schedule = edited_df.copy(deep=True)
+    if st.session_state.pop("fixed_roles_changed", False):
+        # Sabit görev yeri değişince bu ayın satırları yeni kurala göre düzenlenir;
+        # açılan eski aylar ise olduğu gibi kalır.
+        rows_liste = [apply_fixed_roles(row, role_names, _fixed_roles) for row in rows_liste]
+        st.session_state.cached_rows_liste = rows_liste
 
 # Display and allow manual editing of ROLES (swapping people)
 # REMOVED: Manual list editing as requested. Using autonomous redistribution instead.
