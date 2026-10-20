@@ -182,10 +182,11 @@ GRID_JS = """() => {
     const cols = [...r.querySelectorAll(":scope > [data-testid='stColumn']")];
     const b = cols[0] && cols[0].querySelector('b');
     if (!b) return null;
-    const spans = cols[0].querySelectorAll('span');
+    // Rozet "6 · 2 HS": baştaki sayı toplam nöbettir.
+    const badge = cols[0].querySelector('.nm-badge');
     return {
       name: b.innerText.trim(),
-      badge: parseInt(spans[spans.length - 1].innerText),
+      badge: badge ? parseInt(badge.innerText) : null,
       cells: cols.slice(1).map(c => {
         const btn = c.querySelector('button');
         return btn ? btn.innerText.trim() : null;
