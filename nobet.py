@@ -119,6 +119,8 @@ for _attempt in range(2):
             locks_to_json,
             assignment_warnings,
             collect_app_settings,
+            merge_app_settings,
+            settings_difference_labels,
             persistence_fingerprint,
             build_schedule_analysis,
             changed_schedule_columns,
@@ -675,18 +677,45 @@ if (
             expected_version=_settings_version.get("version"), version_out=_settings_version,
         )
     except SaveConflict:
-        # Başka bir yerde (ör. telefonda) ayarlar değişmiş; onların üzerine yazma.
+        # Başka bir yerde (ör. telefonda) ayarlar değişmiş. Öbür yerdeki fark
+        # yalnızca bakılan ay ya da bu sekmenin de aynen yaptığı değişiklikse
+        # birleştirilip kaydedilir; başka bir ayar değiştiyse onun üzerine yazılmaz.
         _settings_saved = False
-        st.session_state.app_settings_load_failed = True
-        st.session_state.settings_conflict = True
+        _their_settings = None
+        try:
+            _their_version = get_settings_version(owner=current_owner)
+            _their_settings = load_app_settings(owner=current_owner, raise_on_error=True)
+            _merge = merge_app_settings(
+                st.session_state.get("last_saved_settings"), _current_settings, _their_settings,
+            )
+            if _merge is not None and not _merge[1] and _their_version is not None:
+                _current_settings = _merge[0]
+                _settings_version["version"] = _their_version
+                _settings_saved = save_app_settings(
+                    _current_settings, owner=current_owner,
+                    expected_version=_their_version, version_out=_settings_version,
+                )
+        except SaveConflict:
+            _settings_saved = False
+        except Exception:
+            _settings_saved = False
+        if not _settings_saved:
+            st.session_state.app_settings_load_failed = True
+            st.session_state.settings_conflict = (
+                settings_difference_labels(_current_settings, _their_settings) if _their_settings else True
+            )
     if _settings_saved:
         st.session_state.last_saved_settings = _current_settings
         # Hazırlanmış yedek artık eski; yeniden hazırlanması gerekir.
         st.session_state.pop("backup_bytes", None)
-if st.session_state.get("settings_conflict"):
+_settings_conflict = st.session_state.get("settings_conflict")
+if _settings_conflict:
+    _conflict_fields = (
+        f" Farklı olan: {', '.join(_settings_conflict)}." if isinstance(_settings_conflict, list) and _settings_conflict else ""
+    )
     st.error(
         "⚠️ Ekip ve ayarlar başka bir yerde (telefon ya da başka sekme) değiştirilmiş. "
-        "Yeni değişikliklerin üzerine yazmamak için ayarlar kaydedilmiyor. Sayfayı yenileyin."
+        f"Yeni değişikliklerin üzerine yazmamak için ayarlar kaydedilmiyor. Sayfayı yenileyin.{_conflict_fields}"
     )
 
 # --- YEDEK: tüm aylar ve ayarlar tek dosyada; aynı dosyadan geri yükleme (nobet_yedek.py) ---

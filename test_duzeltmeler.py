@@ -213,3 +213,32 @@ def test_cakisan_ayda_ay_degistirmek_once_uyarir():
         assert [e.value for e in at.exception] == []
         assert at.session_state["ay_input_direct"] == 11
     streamlit.cache_resource.clear()
+
+
+def test_ayar_cakismasinda_farkli_alanlar_birlesir():
+    from nobet_core import merge_app_settings
+    base = {"team": "Ali, Ayşe", "limits": "", "year": 2026, "month": 11}
+    mine = {"team": "Ali, Ayşe, Can", "limits": "", "year": 2026, "month": 11}
+    theirs = {"team": "Ali, Ayşe", "limits": "Ali:3", "year": 2026, "month": 12}
+    merged, adopt = merge_app_settings(base, mine, theirs)
+    # Bu sekmenin ekibi + öbür yerin limiti; bakılan ay bu sekmeninki kalır.
+    assert merged == {"team": "Ali, Ayşe, Can", "limits": "Ali:3", "year": 2026, "month": 11}
+    assert adopt == {"limits": "Ali:3"}
+
+
+def test_ayar_cakismasinda_ayni_deger_cakisma_degil_farkli_deger_cakisma():
+    from nobet_core import merge_app_settings
+    base = {"team": "Ali", "fixed_roles": {}}
+    same = {"team": "Ali", "fixed_roles": {"Ali": "AYB"}}
+    assert merge_app_settings(base, same, dict(same)) == (same, {})
+    assert merge_app_settings(base, same, {"team": "Ali", "fixed_roles": {"Ali": "GYB"}}) is None
+    # Bu oturum hiç kaydetmemişse (bilinen kayıt yok) birleştirilmez.
+    assert merge_app_settings(None, same, base) is None
+    # Öbür yerde silinen alan bu oturumda değişmediyse silinir.
+    merged, adopt = merge_app_settings({"team": "Ali", "limits": "Ali:2"}, {"team": "Ali, Can", "limits": "Ali:2"}, {"team": "Ali"})
+    assert merged == {"team": "Ali, Can"} and adopt == {}
+
+
+def test_ayar_cakismasi_uyarisinda_farkli_alanlar_yazilir():
+    from nobet_core import settings_difference_labels
+    assert settings_difference_labels({"team": "A", "limits": "", "month": 11}, {"team": "A", "limits": "A:2", "month": 12}) == ["nöbet sınırları", "ay"]
