@@ -2,13 +2,13 @@
 """Ekip talepleri: paylaşım linkinden gelen tercih/izin istekleri.
 
 Link girişsiz olduğu için talepler çizelgeye doğrudan yazılmaz; liste sahibi
-burada onaylar (tercihlere işlenir) ya da reddeder (silinir).
+burada onaylar (tercihlere işlenir) ya da reddeder; sonuç talep sahibine paylaşım linkinde görünür.
 """
 import time
 
 import streamlit as st
 
-from db import delete_team_request, list_team_requests
+from db import decide_team_request, list_team_requests
 from nobet_core import (
     TR_AY_ADLARI,
     apply_team_request,
@@ -19,7 +19,7 @@ from nobet_core import (
 
 _CACHE_KEY = "team_requests_cache"
 _CACHE_SECONDS = 60
-# Onaylanıp tercihlere işlenen, ay kaydedilince silinecek talepler: [(id, yıl, ay)].
+# Onaylanıp tercihlere işlenen, ay kaydedilince onaylandı olarak işaretlenecek talepler: [(id, yıl, ay)].
 _APPROVED_KEY = "team_requests_approved"
 
 
@@ -38,7 +38,7 @@ def _approve(owner, request, person, save_undo_state):
     )
     if _changed:
         # Tercih Belirle modunda da bekletmeden kaydedilsin. Talep, ay gerçekten
-        # kaydedilince silinir (finish_approved_requests); kayıt başka yerdeki
+        # kaydedilince onaylandı olarak işaretlenir (finish_approved_requests); kayıt başka yerdeki
         # bir değişiklik yüzünden durursa talep kaybolmaz, yeniden onaylanabilir.
         st.session_state.save_preferences_now = True
         st.session_state.setdefault(_APPROVED_KEY, []).append(
@@ -46,19 +46,19 @@ def _approve(owner, request, person, save_undo_state):
         )
     else:
         # Tercihler zaten talep gibiymiş; kaydedilecek bir şey yok.
-        delete_team_request(owner, request["id"])
+        decide_team_request(owner, request["id"], "approved")
         st.session_state.pop(_CACHE_KEY, None)
     st.toast(f"{person} talebi onaylandı ({_changed} gün işlendi).", icon="✅")
 
 
 def _reject(owner, request):
-    delete_team_request(owner, request["id"])
+    decide_team_request(owner, request["id"], "rejected")
     st.session_state.pop(_CACHE_KEY, None)
     st.toast(f"{request['person']} talebi reddedildi.", icon="🗑️")
 
 
 def finish_approved_requests(owner, yil, ay, saved):
-    """Kayıt denendikten sonra çağrılır: kaydedildiyse onaylanan talepleri siler,
+    """Kayıt denendikten sonra çağrılır: kaydedildiyse onaylanan talepleri işaretler,
     kaydedilemediyse talepler listede yeniden görünür."""
     _approved = st.session_state.pop(_APPROVED_KEY, None)
     if not _approved:
@@ -67,7 +67,7 @@ def finish_approved_requests(owner, yil, ay, saved):
     if saved:
         for _id, _y, _m in _approved:
             if (_y, _m) == (yil, ay):
-                delete_team_request(owner, _id)
+                decide_team_request(owner, _id, "approved")
     else:
         # Liste bu çalışmada talep gizlenerek çizildi; yeniden çiz ki görünsün.
         st.rerun()

@@ -45,6 +45,7 @@ from nobet_core import (
     shared_default_month,
     shared_updated_text,
     shared_visible_months,
+    team_request_summary,
 )
 
 
@@ -299,13 +300,25 @@ def _render_request_form(_owner, _person):
     if _done == (_person, _year, _month):
         st.success("✅ Talebin iletildi. Liste sahibi onaylayınca çizelgeye işlenir; "
                    "o zamana kadar buradan güncelleyebilirsin.")
-    _pending = next((
-        _r for _r in list_team_requests(_owner)
+    _mine = next((
+        _r for _r in list_team_requests(_owner, include_decided=True)
         if (_r["person"], _r["year"], _r["month"]) == (_person, _year, _month)
     ), None)
+    _status = (_mine or {}).get("status")
+    _pending = _mine if _status == "pending" else None
+    _period_text = f"{TR_AY_ADLARI[_month]} {_year}"
     if _pending and _done != (_person, _year, _month):
         st.info("Bu ay için onay bekleyen talebin aşağıda. Değiştirip güncellersen eskisinin yerine geçer.")
-    _prefill = (_pending or {}).get("days") or {}
+    elif _status in ("approved", "rejected"):
+        _when = _mine["decided_tr"].strftime(" (%d.%m %H:%M)") if _mine.get("decided_tr") else ""
+        _summary = " · ".join(f"{_label}: {_text}" for _label, _text in team_request_summary(_mine["days"]))
+        if _status == "approved":
+            st.success(f"✅ {_period_text} talebin onaylandı{_when}: {_summary}. "
+                       "Yeni talep gönderirsen yeniden onaya düşer.")
+        else:
+            st.warning(f"❌ {_period_text} talebin reddedildi{_when}: {_summary}. "
+                       "Liste sahibiyle konuşabilir ya da yeni talep gönderebilirsin.")
+    _prefill = (_mine or {}).get("days") or {}
     with st.form(f"talep_{_person}_{_year}_{_month}", border=False):
         _texts = {
             _key: st.text_input(

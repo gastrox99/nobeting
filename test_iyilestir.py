@@ -101,7 +101,7 @@ def test_daha_iyisi_yoksa_liste_degismez():
 
 
 def test_degisiklik_metni():
-    before = dict.fromkeys(PRIMARY_METRICS, 0) | {"consecutive_weekends": 3, "avoid": 0,
+    before = dict.fromkeys(PRIMARY_METRICS, 0) | {"consecutive_weekends": 3, "avoid": 0, "pair_repeat": 0,
                                                   "missed_preference": 2, "spread": 5}
     after = dict(before, friday=0, consecutive_weekends=0, missed_preference=1)
     before = dict(before, friday=2)
@@ -225,3 +225,34 @@ def test_hafta_sonu_siniri_uyari_ve_neden():
     reasons = dict(n.explain_missing_day(schedule, weekend[4], gd,
                                          pd.DataFrame(False, index=names, columns=cols), 0, limits))
     assert any("K0" in r for r in reasons.get("nöbet limitinde", []))
+
+
+def _fixed_pairs_schedule(names, cols, k=2):
+    """Her gün aynı ikililer sırayla: (K0,K1), (K2,K3), ... — eski davranışın abartısı."""
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    groups = [names[i:i + k] for i in range(0, len(names), k)]
+    for i, c in enumerate(cols):
+        for p in groups[i % len(groups)]:
+            schedule.at[p, c] = True
+    return schedule
+
+
+def test_ayni_ikili_olcusu():
+    gd, cols, names = _month(team=10)
+    assert n.pair_repeat_allowed(10, 30, 2) == 1
+    assert n.pair_repeat_allowed(8, 30, 2) == 2
+    # 5 ikili × 6 ortak nöbet; her biri 1'i aşan 5 fazla → 25.
+    assert n.pair_repeat_excess(_fixed_pairs_schedule(names, cols), names, cols, 2) == 25
+    assert n.pair_repeat_excess(_fixed_pairs_schedule(names, cols), names, cols, 1) == 0
+
+
+def test_iyilestir_ayni_ikiliyi_dagitir():
+    gd, cols, names = _month(team=10)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    current = _fixed_pairs_schedule(names, cols)
+    improved, before, after = improve_schedule(current, names, cols, unwanted, gd, 1, 2, time_limit=5)
+    assert improved is not None
+    assert before["pair_repeat"] == 25
+    assert after["pair_repeat"] < 5
+    assert all(after[m] <= before[m] for m in PRIMARY_METRICS)
+    assert "aynı ikilinin fazladan birlikte nöbeti 25 → " in " ".join(improvement_lines(before, after))

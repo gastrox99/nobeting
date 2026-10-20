@@ -13,11 +13,11 @@ import os
 
 import pandas as pd
 
-from nobet_core import has_total_limit, is_friday_column, special_cap
+from nobet_core import has_total_limit, is_friday_column, pair_repeat_allowed, pair_repeat_excess, special_cap
 
 # Önem sırası (kullanıcı: hafta sonu/tatil > Cuma; toplam farkı en fazla 1 kuralı).
 PRIMARY_METRICS = ("unfilled", "min_short", "total", "special", "holiday", "friday", "total_history")
-SECONDARY_METRICS = ("consecutive_weekends", "avoid", "missed_preference", "spread")
+SECONDARY_METRICS = ("consecutive_weekends", "avoid", "pair_repeat", "missed_preference", "spread")
 METRIC_LABELS = {
     "unfilled": "boş nöbet",
     "total": "toplam nöbet farkı",
@@ -27,6 +27,7 @@ METRIC_LABELS = {
     "total_history": "önceki aylarla toplam farkı",
     "consecutive_weekends": "art arda hafta sonu nöbeti",
     "avoid": "kaçınılan güne düşen nöbet",
+    "pair_repeat": "aynı ikilinin fazladan birlikte nöbeti",
     "missed_preference": "karşılanmayan tercih",
 }
 WEIGHTS = {
@@ -39,6 +40,7 @@ WEIGHTS = {
     "total_history": 1_000,
     "consecutive_weekends": 60,
     "avoid": 40,
+    "pair_repeat": 30,
     "missed_preference": 20,
     "spread": 1,
 }
@@ -134,6 +136,7 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
         "missed_preference": sum(
             1 for p in people for c in columns if not assigned(p, c) and _pref(df_preferred, p, c) == 1
         ),
+        "pair_repeat": pair_repeat_excess(schedule, people, columns, kisi_sayisi),
         "spread": sum(
             weight for p in people for first, second, weight in pairs
             if assigned(p, first) and assigned(p, second)
@@ -329,6 +332,21 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
             model.Add(both >= x[p, first] + x[p, second] - 1)
             spread_terms.append(weight * both)
     expr["spread"] = sum(spread_terms)
+    # Aynı ikili: beklenenden fazla ortak nöbet (schedule_metrics ile aynı ölçü).
+    pair_terms = []
+    if kisi_sayisi >= 2 and len(people) >= 2:
+        allowed = pair_repeat_allowed(len(people), len(columns), kisi_sayisi)
+        for i, a in enumerate(people):
+            for b in people[i + 1:]:
+                together = []
+                for c in columns:
+                    both = model.NewBoolVar("")
+                    model.Add(both >= x[a, c] + x[b, c] - 1)
+                    together.append(both)
+                excess = model.NewIntVar(0, len(columns), "")
+                model.Add(excess >= sum(together) - allowed)
+                pair_terms.append(excess)
+    expr["pair_repeat"] = sum(pair_terms)
 
     # Öncelikli dengeler mevcut listeden kötü olamaz.
     for name in PRIMARY_METRICS:
