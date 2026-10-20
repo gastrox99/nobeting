@@ -147,11 +147,14 @@ def _open(playwright, url):
     return browser, page
 
 
-def _choose(page, name, all_rows=True):
-    """Açılışta sorulan adı seçer; istenirse tüm listeyi açar."""
+def _choose(page, name, all_rows=True, list_tab=True):
+    """Açılışta sorulan adı seçer, liste sekmesine geçer; istenirse tüm listeyi açar."""
     page.get_by_text("Adını seç", exact=True).click()
     page.get_by_role("option", name=name, exact=True).click()
     _wait_idle(page)
+    if list_tab:
+        page.get_by_role("tab", name="📋 Nöbet Listesi").click()
+        _wait_idle(page)
     if all_rows:
         page.get_by_text("Tüm listeyi göster", exact=True).click()
         _wait_idle(page)
@@ -227,9 +230,9 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
     with sync_playwright() as p:
         browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
         try:
-            _choose(page, "Talep Ali", all_rows=False)
-            page.get_by_role("tab", name="📝 Talep Gönder").click()
-            # Varsayılan ay sonraki ay.
+            _choose(page, "Talep Ali", all_rows=False, list_tab=False)
+            # Ad seçilince önce talep sekmesi açılır; varsayılan ay sonraki ay.
+            expect(page.get_by_role("tab", name="📝 Talep Gönder")).to_have_attribute("aria-selected", "true")
             expect(page.get_by_text(f"{TR_AY_ADLARI[next_month]} {next_year}", exact=True)).to_be_visible()
             page.get_by_label("👍 Nöbet istediğim günler (Tercih)").fill("3,5")
             page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("5-7,abc")
