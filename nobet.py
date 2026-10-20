@@ -292,7 +292,6 @@ def _version_box(key):
 
 # --- Ekip ve ayarları veritabanından geri yükle (sayfa yenilemesinde) ---
 if 'app_settings_loaded' not in st.session_state:
-    st.session_state.app_settings_loaded = True
     _stored_settings = None
     # Okuma başarısızsa kayıtlı ayarların üzerine boş ayar yazılmasın.
     st.session_state.app_settings_load_failed = not _db_ready
@@ -313,6 +312,9 @@ if 'app_settings_loaded' not in st.session_state:
     st.session_state.last_saved_settings = (
         collect_app_settings(st.session_state) if _stored_settings else None
     )
+    # En sonda: telefonda dokunuş bu çalışmayı yarıda keserse yükleme yeniden
+    # yapılır (yarım yüklenmiş ayarlar kayıtlıların üzerine yazılmasın).
+    st.session_state.app_settings_loaded = True
 
 # --- localStorage for team list persistence (veritabanı yoksa yedek) ---
 local_storage = LocalStorage()
