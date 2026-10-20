@@ -15,6 +15,7 @@ from unittest.mock import patch
 import db
 from nobet_core import (
     NOBET_UNVANLARI,
+    alternate_day_chains,
     katsayi_donemi,
     nobet_ucreti_hesapla,
     saat_ucretleri,
@@ -1567,6 +1568,39 @@ class TestCrossMonthBalance(unittest.TestCase):
                 patch.object(nobet_core, "LONG_GAP_WEIGHT", 0), patch.object(nobet_core, "LONG_GAP_SCORE_WEIGHT", 0):
             unspread = short_gaps()
         self.assertLess(spread * 2, unspread)
+
+    def test_gun_asiri_zincir_azalir(self):
+        # Ayın ilk haftası çok kişi müsait değil (Kasım 2026 ekran görüntüsü):
+        # kalanlar nöbet-boş-nöbet-boş-nöbet zincirine giriyordu. 2 normal,
+        # 3. ve sonrası cezalı.
+        import nobet_core
+        names = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        blocks = {"A": range(1, 9), "B": range(5, 9), "D": range(1, 7), "E": range(1, 7),
+                  "G": [14, 15, 20], "H": range(1, 16), "I": range(16, 31)}
+        for person, ds in blocks.items():
+            for d in ds:
+                unwanted.at[person, cols[d - 1]] = True
+        limits = {"H": {"min": 0, "max": 4}, "I": {"min": 0, "max": 4}}
+        day_of = {c: days[c]["day_num"] for c in cols}
+
+        def chains():
+            random.seed(3)
+            total = 0
+            for _ in range(4):
+                schedule, _ = run_scheduling_core(
+                    names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=30,
+                    person_limits=limits,
+                )
+                total += alternate_day_chains(schedule, names, cols, day_of)
+            return total
+
+        penalized = chains()
+        with patch.object(nobet_core, "ALT_CHAIN_WEIGHT", 0), patch.object(nobet_core, "ALT_CHAIN_SCORE_WEIGHT", 0):
+            plain = chains()
+        self.assertLess(penalized * 2, plain)
 
     def test_uzun_bos_kalan_ve_limitli_kisi_aya_yayilir(self):
         # 10 kişi, günde 2, K0 en fazla 3: eskiden limitini ayın başında

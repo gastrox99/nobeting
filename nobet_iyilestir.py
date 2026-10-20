@@ -14,12 +14,12 @@ import os
 import pandas as pd
 
 from nobet_core import (
-    has_total_limit, is_friday_column, pair_repeat_allowed, pair_repeat_excess, special_cap, spread_targets,
+    alternate_day_chains, has_total_limit, is_friday_column, pair_repeat_allowed, pair_repeat_excess, special_cap, spread_targets,
 )
 
 # Önem sırası (kullanıcı: hafta sonu/tatil > Cuma; toplam farkı en fazla 1 kuralı).
 PRIMARY_METRICS = ("unfilled", "min_short", "total", "special", "holiday", "friday", "total_history")
-SECONDARY_METRICS = ("consecutive_weekends", "avoid", "pair_repeat", "missed_preference", "long_gap", "spread")
+SECONDARY_METRICS = ("consecutive_weekends", "alt_chain", "avoid", "pair_repeat", "missed_preference", "long_gap", "spread")
 METRIC_LABELS = {
     "unfilled": "boş nöbet",
     "total": "toplam nöbet farkı",
@@ -28,6 +28,7 @@ METRIC_LABELS = {
     "friday": "Cuma farkı",
     "total_history": "önceki aylarla toplam farkı",
     "consecutive_weekends": "art arda hafta sonu nöbeti",
+    "alt_chain": "üst üste gün aşırı nöbet",
     "avoid": "kaçınılan güne düşen nöbet",
     "pair_repeat": "aynı ikilinin fazladan birlikte nöbeti",
     "missed_preference": "karşılanmayan tercih",
@@ -42,6 +43,7 @@ WEIGHTS = {
     "friday": 5_000,
     "total_history": 1_000,
     "consecutive_weekends": 60,
+    "alt_chain": 50,
     "avoid": 40,
     "pair_repeat": 30,
     "missed_preference": 20,
@@ -156,6 +158,9 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
             1 for p in people for c in columns if not assigned(p, c) and _pref(df_preferred, p, c) == 1
         ),
         "pair_repeat": pair_repeat_excess(schedule, people, columns, kisi_sayisi),
+        "alt_chain": alternate_day_chains(
+            schedule, people, columns, {c: gun_detaylari[c]["day_num"] for c in columns}
+        ),
         "long_gap": sum(1 for p, window in windows if not any(assigned(p, c) for c in window)),
         "spread": sum(
             weight for p in people for first, second, weight in pairs
@@ -373,6 +378,16 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
         model.Add(sum(x[p, c] for c in window) + empty >= 1)
         long_gap_terms.append(empty)
     expr["long_gap"] = sum(long_gap_terms)
+    # Gün aşırı zincir: d, d+2, d+4 üçlüsünün hepsi doluysa 1 (schedule_metrics ile aynı ölçü).
+    by_day = {days[c]: c for c in columns}
+    chain_terms = []
+    for p in people:
+        for d, c in by_day.items():
+            if d + 2 in by_day and d + 4 in by_day:
+                triple = model.NewBoolVar("")
+                model.Add(triple >= x[p, c] + x[p, by_day[d + 2]] + x[p, by_day[d + 4]] - 2)
+                chain_terms.append(triple)
+    expr["alt_chain"] = sum(chain_terms)
 
     # Öncelikli dengeler mevcut listeden kötü olamaz.
     for name in PRIMARY_METRICS:

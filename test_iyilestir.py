@@ -101,7 +101,7 @@ def test_daha_iyisi_yoksa_liste_degismez():
 
 
 def test_degisiklik_metni():
-    before = dict.fromkeys(PRIMARY_METRICS, 0) | {"consecutive_weekends": 3, "avoid": 0, "pair_repeat": 0, "long_gap": 0,
+    before = dict.fromkeys(PRIMARY_METRICS, 0) | {"consecutive_weekends": 3, "alt_chain": 0, "avoid": 0, "pair_repeat": 0, "long_gap": 0,
                                                   "missed_preference": 2, "spread": 5}
     after = dict(before, friday=0, consecutive_weekends=0, missed_preference=1)
     before = dict(before, friday=2)
@@ -292,3 +292,44 @@ def test_iyilestir_uzun_boslugu_azaltir():
     assert after["long_gap"] < 3
     assert all(after[m] <= before[m] for m in PRIMARY_METRICS)
     assert "uzun nöbetsiz dönem (gün) 18 → " in " ".join(improvement_lines(before, after))
+
+
+def _alternate_day_schedule(names, cols):
+    """K0-K1 1,3,5,7. günler (4'lü gün aşırı zincir), K2-K3 9,11,13 (3'lü); kalan günler sırayla."""
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    for d in (1, 3, 5, 7):
+        schedule.loc[["K0", "K1"], cols[d - 1]] = True
+    for d in (9, 11, 13):
+        schedule.loc[["K2", "K3"], cols[d - 1]] = True
+    others = names[4:]
+    j = 0
+    for d in range(1, len(cols) + 1):
+        if d in (1, 3, 5, 7, 9, 11, 13):
+            continue
+        for _ in range(2):
+            schedule.at[others[j % len(others)], cols[d - 1]] = True
+            j += 1
+    return schedule
+
+
+def test_gun_asiri_zincir_olcusu():
+    gd, cols, names = _month(team=10)
+    schedule = _alternate_day_schedule(names, cols)
+    # 4'lü zincir 2, 3'lü zincir 1 sayılır: K0, K1 2+2; K2, K3 1+1.
+    assert n.alternate_day_chains(schedule, ["K0", "K1", "K2", "K3"], cols) == 6
+    assert schedule_metrics(schedule, ["K0", "K1", "K2", "K3"], cols, gd, 2, 1)["alt_chain"] == 6
+    two = pd.DataFrame(False, index=["K0"], columns=cols)
+    two.loc["K0", [cols[0], cols[2], cols[6], cols[8]]] = True
+    assert n.alternate_day_chains(two, ["K0"], cols) == 0
+
+
+def test_iyilestir_gun_asiri_zinciri_kirar():
+    gd, cols, names = _month(team=10)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    current = _alternate_day_schedule(names, cols)
+    improved, before, after = improve_schedule(current, names, cols, unwanted, gd, 1, 2, time_limit=5)
+    assert improved is not None
+    assert before["alt_chain"] >= 6
+    assert after["alt_chain"] == 0
+    assert all(after[m] <= before[m] for m in PRIMARY_METRICS)
+    assert "üst üste gün aşırı nöbet" in " ".join(improvement_lines(before, after))
