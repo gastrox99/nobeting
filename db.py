@@ -9,6 +9,10 @@ import re
 import hashlib
 import inspect
 
+# Yüklendiği andaki dosya zamanı: nobet.py bu farklılaşınca modülü yeniden yükler
+# (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
+_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
+
 _last_error = None
 
 
@@ -234,11 +238,40 @@ class SaveConflict(Exception):
 
 
 def _version_text(moment):
+    """Eski sürüm biçimi (son değişiklik zamanı); açık oturumlar bunu tutuyor olabilir."""
     return moment.isoformat() if moment is not None else ""
 
 
+# Sürüm, kaydın içeriğinin özetidir ("h:..."), zamanı değil. Böylece başka bir
+# oturum (ör. güncellemeden sonra yeniden çalışan telefon sekmesi) aynı içeriği
+# yeniden yazınca sahte "başka yerde değiştirilmiş" uyarısı çıkmaz; içerik
+# gerçekten değiştiyse yine durdurulur.
+_SCHEDULE_CONTENT_SQL = '''
+    SELECT md5(concat_ws(chr(29),
+        s.team_members, coalesce(s.pref_json, '-'), coalesce(s.settings_json, '-'),
+        coalesce(s.rows_liste_json, '-'),
+        coalesce((
+            SELECT string_agg(d.person || chr(31) || d.day_col || chr(31) || d.assigned::text, chr(30)
+                              ORDER BY d.person, d.day_col)
+            FROM schedule_data AS d WHERE d.schedule_id = s.id
+        ), '-')
+    ))
+    FROM schedules AS s WHERE s.id = %s
+'''
+
+
+def _schedule_content_version(cur, schedule_id):
+    cur.execute(_SCHEDULE_CONTENT_SQL, (schedule_id,))
+    row = cur.fetchone()
+    return f"h:{row[0]}" if row else ""
+
+
+def _settings_content_version(value):
+    return "h:" + hashlib.md5(value.encode("utf-8")).hexdigest()
+
+
 def get_schedule_version(name, year, month, owner=""):
-    """Kaydın son değişiklik zamanı (metin); kayıt yoksa "", okunamazsa None.
+    """Kaydın içerik sürümü (metin); kayıt yoksa "", okunamazsa None.
 
     Oturum bunu okuma/kayıt anında saklar; sonraki kayıtta aynı değilse başka
     bir yerde değişiklik yapılmıştır (``save_schedule(expected_version=...)``).
@@ -248,11 +281,11 @@ def get_schedule_version(name, year, month, owner=""):
         conn = _connect()
         with conn.cursor() as cur:
             cur.execute(
-                'SELECT updated_at FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s',
+                'SELECT id FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s',
                 (owner, name, year, month),
             )
             row = cur.fetchone()
-        return _version_text(row[0]) if row else ""
+            return _schedule_content_version(cur, row[0]) if row else ""
     except Exception as e:
         _log_error("Get schedule version", e)
         return None
@@ -267,9 +300,9 @@ def get_settings_version(owner=""):
     try:
         conn = _connect()
         with conn.cursor() as cur:
-            cur.execute('SELECT updated_at FROM app_settings WHERE key = %s', (settings_key(owner),))
+            cur.execute('SELECT value FROM app_settings WHERE key = %s', (settings_key(owner),))
             row = cur.fetchone()
-        return _version_text(row[0]) if row else ""
+        return _settings_content_version(row[0]) if row else ""
     except Exception as e:
         _log_error("Get settings version", e)
         return None
@@ -283,7 +316,8 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
 
     ``expected_version`` (``get_schedule_version`` çıktısı) verilirse ve kayıt
     bu sürümden sonra değişmişse hiçbir şey yazılmaz ve ``SaveConflict``
-    yükseltilir (eski bir sekme yeni değişikliklerin üzerine yazmasın).
+    yükseltilir (eski bir sekme yeni değişikliklerin üzerine yazmasın). Kayıttaki
+    içerik yazılacak içerikle zaten aynıysa çakışma sayılmaz.
     ``version_out`` bir sözlükse yeni sürüm ``version_out["version"]`` olur.
     """
     conn = None
@@ -319,15 +353,18 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
 
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
+                # Beklenmeyen içerik sürümü; yazılan içerik de buna eşit değilse çakışmadır.
+                conflict_version = None
                 if expected_version is not None:
                     # Satırı kilitleyip sürümü denetle: aynı anda iki oturum yazmasın.
                     cur.execute(
-                        'SELECT updated_at FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s FOR UPDATE',
+                        'SELECT id, updated_at FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s FOR UPDATE',
                         (owner, name, year, month),
                     )
                     current = cur.fetchone()
-                    if _version_text(current[0] if current else None) != expected_version:
-                        raise SaveConflict(name)
+                    current_version = _schedule_content_version(cur, current[0]) if current else ""
+                    if expected_version not in (current_version, _version_text(current[1] if current else None)):
+                        conflict_version = current_version
                 # Insert or update schedule
                 cur.execute('''
                     INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, owner, updated_at)
@@ -357,12 +394,13 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
                         INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
                         VALUES %s
                     ''', rows)
-                if version_out is not None:
-                    cur.execute('SELECT updated_at FROM schedules WHERE id = %s', (schedule_id,))
-                    saved_at = cur.fetchone()[0]
+                saved_version = _schedule_content_version(cur, schedule_id)
+                if conflict_version is not None and conflict_version != saved_version:
+                    # Başka yerde farklı içerik yazılmış: geri al (with conn), üzerine yazma.
+                    raise SaveConflict(name)
 
         if version_out is not None:
-            version_out["version"] = _version_text(saved_at)
+            version_out["version"] = saved_version
         return True
     except SaveConflict:
         raise
@@ -552,10 +590,16 @@ def save_app_settings(settings, owner="", expected_version=None, version_out=Non
         conn = _connect()
         with conn:
             with conn.cursor() as cur:
+                value = json.dumps(settings, ensure_ascii=False)
+                saved_version = _settings_content_version(value)
                 if expected_version is not None:
-                    cur.execute('SELECT updated_at FROM app_settings WHERE key = %s FOR UPDATE', (settings_key(owner),))
+                    cur.execute('SELECT value, updated_at FROM app_settings WHERE key = %s FOR UPDATE', (settings_key(owner),))
                     current = cur.fetchone()
-                    if _version_text(current[0] if current else None) != expected_version:
+                    known = (
+                        (_settings_content_version(current[0]), _version_text(current[1])) if current else ("",)
+                    )
+                    # Başka yerde aynı ayarlar yazılmışsa (ör. iki sekme) çakışma sayılmaz.
+                    if expected_version not in known and saved_version not in known:
                         raise SaveConflict("settings")
                 cur.execute('''
                     INSERT INTO app_settings (key, value, updated_at)
@@ -563,11 +607,9 @@ def save_app_settings(settings, owner="", expected_version=None, version_out=Non
                     ON CONFLICT (key) DO UPDATE
                         SET value = EXCLUDED.value,
                             updated_at = CURRENT_TIMESTAMP
-                    RETURNING updated_at
-                ''', (settings_key(owner), json.dumps(settings, ensure_ascii=False)))
-                saved_at = cur.fetchone()[0]
+                ''', (settings_key(owner), value))
         if version_out is not None:
-            version_out["version"] = _version_text(saved_at)
+            version_out["version"] = saved_version
         return True
     except SaveConflict:
         raise
