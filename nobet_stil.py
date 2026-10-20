@@ -82,7 +82,7 @@ GLOBAL_CSS = """
 /* Ayarlar: ekip tablosu ve birlikte çalışamayanlar çapraz tablosu.
    Satırlar dar ekranda da yan yana kalır; çapraz tablo yana kayar. */
 [data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stHorizontalBlock"],
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stHorizontalBlock"] {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stHorizontalBlock"] {
     flex-wrap: nowrap !important;
     gap: 6px;
 }
@@ -100,16 +100,16 @@ GLOBAL_CSS = """
 [data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stNumberInputStepDown"],
 [data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stNumberInputStepUp"] { display: none; }
 [data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stCaptionContainer"] { line-height: 1.2; }
-[data-testid="stExpander"] .st-key-yasak-tablo {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
 }
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stVerticalBlock"] { gap: 0; }
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stHorizontalBlock"] {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stVerticalBlock"] { gap: 0; }
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stHorizontalBlock"] {
     min-width: max-content;
     gap: 0;
 }
-[data-testid="stExpander"] .st-key-yasak-tablo :is([data-testid="column"],[data-testid="stColumn"]) {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) :is([data-testid="column"],[data-testid="stColumn"]) {
     flex: 0 0 34px !important;
     width: 34px !important;
     min-width: 34px !important;
@@ -117,14 +117,14 @@ GLOBAL_CSS = """
     align-items: center;
     justify-content: center;
 }
-[data-testid="stExpander"] .st-key-yasak-tablo :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) :is([data-testid="column"],[data-testid="stColumn"]):first-child {
     flex: 0 0 110px !important;
     width: 110px !important;
     min-width: 110px !important;
     justify-content: flex-start;
 }
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stCheckbox"] { margin: 0 auto; min-height: 0; }
-[data-testid="stExpander"] .st-key-yasak-tablo [data-testid="stCheckbox"] label { margin: 0; padding: 0; }
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stCheckbox"] { margin: 0 auto; min-height: 0; }
+[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stCheckbox"] label { margin: 0; padding: 0; }
 .yasak-baslik {
     writing-mode: vertical-rl;
     transform: rotate(180deg);
@@ -173,6 +173,40 @@ GLOBAL_CSS = """
         flex: 1 1 calc(50% - 6px) !important;
         min-width: calc(50% - 6px) !important;
     }
+}
+
+/* Hızlı giriş: Kişi · Günler · Tür · Uygula telefonda da tek satır. */
+[data-testid="stExpander"] .st-key-quick-entry [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    gap: 6px !important;
+    align-items: center;
+}
+[data-testid="stExpander"] .st-key-quick-entry :is([data-testid="column"],[data-testid="stColumn"]) {
+    min-width: 0 !important;
+    width: auto !important;
+}
+.st-key-quick-entry [data-testid="stForm"] { padding: 0 !important; }
+@media (max-width: 768px) {
+    /* Dış satır: Kişi | form (Günler · Tür · Uygula). */
+    .st-key-quick-entry > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:first-child { flex: 24 1 0 !important; }
+    .st-key-quick-entry > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:last-child { flex: 76 1 0 !important; }
+    .st-key-quick-entry [data-testid="stForm"] [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:first-child { flex: 4 1 0 !important; }
+    .st-key-quick-entry [data-testid="stForm"] [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:nth-child(2) { flex: 5 1 0 !important; }
+    .st-key-quick-entry [data-testid="stForm"] [data-testid="stHorizontalBlock"]
+        > [data-testid="stColumn"]:last-child { flex: 0 0 auto !important; }
+    /* Dar kutularda ok simgesi yer kaplamasın; kutuya dokununca liste yine açılır. */
+    .st-key-quick-entry [data-baseweb="select"] svg { display: none; }
+    .st-key-quick-entry [data-baseweb="select"] div { padding-left: 0 !important; padding-right: 0 !important; margin-left: 0 !important; }
+    .st-key-quick-entry [data-baseweb="select"] > div { padding-left: 8px !important; padding-right: 4px !important; align-items: center; }
+    .st-key-quick-entry [data-testid="stHorizontalBlock"] { gap: 4px !important; }
+    .st-key-quick-entry :is(input, [data-baseweb="select"] div) { font-size: 13px !important; }
+    .st-key-quick-entry input { padding-left: 8px !important; padding-right: 4px !important; }
+    .st-key-quick-entry [data-testid="stFormSubmitButton"] button { padding: 4px 8px; }
+    .st-key-quick-entry [data-testid="stFormSubmitButton"] button p { font-size: 14px; }
 }
 
 /* Üstteki ay çubuğu: ‹ Kasım 2026 › telefonda da tek satır. */

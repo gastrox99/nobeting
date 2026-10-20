@@ -458,6 +458,11 @@ def test_yasak_ikili_capraz_tablodan_ve_limit_ekip_tablosundan_girilir(app_url):
             _wait_idle(page, 1.5)
             expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz")[0]).not_to_be_checked()
             expect(_pair_checkbox(page, "Ayar Ali", "Ayar Ayşe")[0]).to_be_checked()
+            # Birlikte çalışmak isteyenler ayrı tabloda; yasak tablosunu etkilemez.
+            _pair_checkbox(page, "Ayar Can", "Ayar Deniz birlikte")[1].click()
+            _wait_idle(page, 1.5)
+            expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz birlikte")[0]).to_be_checked()
+            expect(_pair_checkbox(page, "Ayar Can", "Ayar Deniz")[0]).not_to_be_checked()
 
             most = page.get_by_role("spinbutton", name="3. kişi en fazla nöbet", exact=True)
             assert most.input_value() == ""
@@ -542,6 +547,32 @@ def test_tercihler_toplu_tablo_ve_whatsapp_metni(app_url):
             assert "*Toplu Ayşe* — İzin: 1-2" in text, text
             assert "*Toplu Ali* — talep yok" in text, text
             expect(page.get_by_role("link", name="💬 WhatsApp'ta gönder")).to_be_visible()
+            _no_exception(page)
+        finally:
+            browser.close()
+
+
+def test_hizli_giris_telefonda_tek_satir(app_url):
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Tek Satır Ali, Tek Satır Ayşe")
+        try:
+            page.get_by_text("🎨 Tercih Belirle", exact=True).click()
+            _wait_idle(page, 1.0)
+            page.set_viewport_size({"width": 390, "height": 844})
+            _wait_idle(page, 0.5)
+            page.get_by_text("⚡ Hızlı giriş: kişi + günler").click()
+            _wait_idle(page, 1.0)
+            boxes = [
+                page.locator(".st-key-quick_entry_person [data-baseweb='select']").bounding_box(),
+                page.get_by_role("textbox", name="Günler").bounding_box(),
+                page.locator(".st-key-quick_entry_kind [data-baseweb='select']").bounding_box(),
+                page.get_by_role("button", name="Uygula").bounding_box(),
+            ]
+            # Kişi · Günler · Tür · Uygula aynı satırda, soldan sağa ve ekrana sığıyor.
+            centers = [b["y"] + b["height"] / 2 for b in boxes]
+            assert max(centers) - min(centers) < 6, boxes
+            assert all(a["x"] + a["width"] <= b["x"] + 1 for a, b in zip(boxes, boxes[1:])), boxes
+            assert boxes[-1]["x"] + boxes[-1]["width"] <= 390, boxes
             _no_exception(page)
         finally:
             browser.close()
