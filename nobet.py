@@ -723,7 +723,7 @@ if (
         if not _settings_saved:
             st.session_state.app_settings_load_failed = True
             st.session_state.settings_conflict = (
-                settings_difference_labels(_current_settings, _their_settings) if _their_settings else True
+                (settings_difference_labels(_current_settings, _their_settings) or True) if _their_settings else True
             )
             st.session_state.settings_conflict_by = conflict_writer_text(
                 _conflict.writer, _conflict.saved_at, _writer,

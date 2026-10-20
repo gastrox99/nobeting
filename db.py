@@ -370,14 +370,15 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
                 if expected_version is not None:
                     # Satırı kilitleyip sürümü denetle: aynı anda iki oturum yazmasın.
                     cur.execute(
-                        'SELECT id, updated_at, writer FROM schedules WHERE owner = %s AND name = %s AND year = %s AND month = %s FOR UPDATE',
+                        "SELECT id, updated_at, writer, updated_at AT TIME ZONE current_setting('TimeZone') FROM schedules "
+                        "WHERE owner = %s AND name = %s AND year = %s AND month = %s FOR UPDATE",
                         (owner, name, year, month),
                     )
                     current = cur.fetchone()
                     current_version = _schedule_content_version(cur, current[0]) if current else ""
                     if expected_version not in (current_version, _version_text(current[1] if current else None)):
                         conflict_version = current_version
-                        conflict_by = (current[2], current[1]) if current else (None, None)
+                        conflict_by = (current[2], current[3]) if current else (None, None)
                 # Insert or update schedule
                 cur.execute('''
                     INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, owner, updated_at, writer)
@@ -607,14 +608,14 @@ def save_app_settings(settings, owner="", expected_version=None, version_out=Non
                 value = json.dumps(settings, ensure_ascii=False)
                 saved_version = _settings_content_version(value)
                 if expected_version is not None:
-                    cur.execute('SELECT value, updated_at, writer FROM app_settings WHERE key = %s FOR UPDATE', (settings_key(owner),))
+                    cur.execute("SELECT value, updated_at, writer, updated_at AT TIME ZONE current_setting('TimeZone') FROM app_settings WHERE key = %s FOR UPDATE", (settings_key(owner),))
                     current = cur.fetchone()
                     known = (
                         (_settings_content_version(current[0]), _version_text(current[1])) if current else ("",)
                     )
                     # Başka yerde aynı ayarlar yazılmışsa (ör. iki sekme) çakışma sayılmaz.
                     if expected_version not in known and saved_version not in known:
-                        raise SaveConflict("settings", *((current[2], current[1]) if current else ()))
+                        raise SaveConflict("settings", *((current[2], current[3]) if current else ()))
                 cur.execute('''
                     INSERT INTO app_settings (key, value, updated_at, writer)
                     VALUES (%s, %s, CURRENT_TIMESTAMP, %s)

@@ -1622,7 +1622,9 @@ def conflict_writer_text(writer, saved_at, own_tag):
     when = ""
     if saved_at is not None:
         try:
-            when = " " + saved_at.replace(tzinfo=timezone.utc).astimezone(TR_TZ).strftime("%H:%M")
+            if saved_at.tzinfo is None:  # saat dilimi bilinmiyorsa UTC sayılır
+                saved_at = saved_at.replace(tzinfo=timezone.utc)
+            when = " " + saved_at.astimezone(TR_TZ).strftime("%H:%M")
         except (AttributeError, ValueError, TypeError):
             when = ""
     same = " (bu cihaz, başka bir sekme ya da pencere)" if writer.split(" · oturum")[0] == own_tag.split(" · oturum")[0] else ""

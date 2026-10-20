@@ -158,3 +158,10 @@ def test_cakismada_son_kaydi_yapan_bilinir(owner):
     with pytest.raises(db.SaveConflict) as exc:
         db.save_app_settings({"a": 2}, owner=owner, expected_version="", writer="Mac")
     assert exc.value.writer == "iPhone · Safari · oturum aaaaaa"
+
+
+def test_cakisma_saati_saat_dilimli_doner(owner):
+    assert db.save_app_settings({"a": 1}, owner=owner, expected_version="", writer="x")
+    with pytest.raises(db.SaveConflict) as exc:
+        db.save_app_settings({"a": 2}, owner=owner, expected_version="")
+    assert exc.value.saved_at.tzinfo is not None
