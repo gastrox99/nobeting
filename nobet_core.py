@@ -1572,6 +1572,100 @@ def collect_app_settings(session_state):
     return json.loads(json.dumps(settings, ensure_ascii=False))
 
 
+# Ayar çakışması uyarısında hangi ayarın farklı olduğunu söylemek için.
+SETTINGS_FIELD_LABELS = {
+    "team": "ekip", "year": "yıl", "month": "ay", "people_per_shift": "nöbet başına kişi",
+    "rest_days": "dinlenme", "holidays_by_period": "tatiller", "hourly_rate": "saat ücreti",
+    "title": "ünvan", "risky_unit": "riskli birim", "hourly_rate_source": "ücret kaynağı",
+    "role_names": "görev isimleri", "forbidden_pairs": "birlikte çalışamayan",
+    "fixed_roles": "sabit görev yeri", "together_pairs": "birlikte çalışmak isteyen",
+    "limits": "nöbet sınırları", "balance_history": "önceki aylarla dengele",
+    "name_aliases": "ad değişiklikleri", "last_backup": "son yedek",
+}
+
+
+def settings_difference_labels(mine, theirs):
+    """İki ayar kaydında farklı olan alanların adları (uyarı metni için)."""
+    mine, theirs = mine or {}, theirs or {}
+    return [
+        SETTINGS_FIELD_LABELS.get(key, key)
+        for key in sorted(set(mine) | set(theirs))
+        if mine.get(key) != theirs.get(key)
+    ]
+
+
+def device_label(user_agent):
+    """Tarayıcı bilgisinden kısa cihaz adı: "iPhone · Safari", "Mac · Chrome"."""
+    ua = str(user_agent or "")
+    device = next((name for key, name in (
+        ("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
+        ("Macintosh", "Mac"), ("Windows", "Windows"), ("Linux", "Linux"),
+    ) if key in ua), "Bilinmeyen cihaz")
+    browser = next((name for key, name in (
+        ("Edg/", "Edge"), ("CriOS", "Chrome"), ("FxiOS", "Firefox"), ("Firefox/", "Firefox"),
+        ("Chrome/", "Chrome"), ("Safari/", "Safari"),
+    ) if key in ua), "")
+    if device in ("iPhone", "iPad") and "Safari/" not in ua and not browser:
+        browser = "Ana Ekran uygulaması"
+    return f"{device} · {browser}" if browser else device
+
+
+def writer_tag(user_agent, session_id):
+    """Kaydı yapan oturumun etiketi (veritabanına yazılır, en çok 200 karakter)."""
+    return f"{device_label(user_agent)} · oturum {str(session_id or '?')[:6]}"[:200]
+
+
+def conflict_writer_text(writer, saved_at, own_tag):
+    """Çakışma uyarısına eklenen "son kaydı kim yaptı" cümlesi."""
+    if not writer:
+        return ""
+    when = ""
+    if saved_at is not None:
+        try:
+            if saved_at.tzinfo is None:  # saat dilimi bilinmiyorsa UTC sayılır
+                saved_at = saved_at.replace(tzinfo=timezone.utc)
+            when = " " + saved_at.astimezone(TR_TZ).strftime("%H:%M")
+        except (AttributeError, ValueError, TypeError):
+            when = ""
+    same = " (bu cihaz, başka bir sekme ya da pencere)" if writer.split(" · oturum")[0] == own_tag.split(" · oturum")[0] else ""
+    return f" Son kaydı yapan: {writer}{when}{same}. Bu sekme: {own_tag}."
+
+
+# Son bakılan ay her sekmenin kendisine aittir; başka sekmenin ayı bu sekmeye alınmaz.
+SETTINGS_VIEW_KEYS = ("year", "month")
+
+
+def merge_app_settings(base, mine, theirs):
+    """Ayar kaydı çakışınca iki oturumun değişikliklerini alan alan birleştirir.
+
+    ``base``: bu oturumun son bildiği kayıt, ``mine``: bu oturumun şimdiki
+    ayarları, ``theirs``: veritabanındaki güncel kayıt. Aynı alanı iki taraf
+    farklı değiştirdiyse None döner (gerçek çakışma). Değilse (birleşik
+    ayarlar, bu oturuma alınacak alanlar) döner.
+    """
+    if not isinstance(base, dict) or not isinstance(theirs, dict):
+        return None
+    mine = mine or {}
+    keys = set(base) | set(mine) | set(theirs)
+    mine_changed = {key for key in keys if mine.get(key) != base.get(key)}
+    theirs_changed = {key for key in keys if theirs.get(key) != base.get(key)}
+    if any(
+        mine.get(key) != theirs.get(key)
+        for key in (mine_changed & theirs_changed) - set(SETTINGS_VIEW_KEYS)
+    ):
+        return None
+    merged = {}
+    for key in keys:
+        source = mine if key in mine_changed or key in SETTINGS_VIEW_KEYS else theirs
+        if key in source:
+            merged[key] = source[key]
+    adopt = {
+        key: merged[key] for key in theirs_changed - mine_changed - set(SETTINGS_VIEW_KEYS)
+        if key in merged
+    }
+    return merged, adopt
+
+
 PENDING_PREFS_KEY = "nobet_bekleyen_tercihler"
 
 
