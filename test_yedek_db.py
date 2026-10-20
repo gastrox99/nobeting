@@ -60,7 +60,7 @@ def _save_month(owner, year, month, assigned, team=TEAM):
     settings = {"locked": [list(assigned[0])] if assigned else [], "hidden": {}}
     assert db.save_schedule(
         f"Otomatik_{year}_{month:02d}", year, month, team, schedule,
-        pref_df=prefs, settings_dict=settings, rows_liste=rows, owner=owner,
+        pref_df=prefs, settings_dict=settings, rows_liste=rows, owner=owner, expected_version=db.FORCE,
     )
 
 
@@ -81,7 +81,7 @@ def _full_backup(owner):
 def test_indirilen_yedek_baska_hesaba_aynen_geri_yuklenir(owner):
     _save_month(owner, 2026, 9, [("Ali", "1 Per"), ("Can", "3 Cmt")])
     _save_month(owner, 2026, 10, [("Ayşe", "2 Cum")])
-    assert db.save_app_settings({"isimler_text": "Ali, Ayşe, Can", "kisi_sayisi": 2}, owner=owner)
+    assert db.save_app_settings({"isimler_text": "Ali, Ayşe, Can", "kisi_sayisi": 2}, owner=owner, expected_version=db.FORCE)
 
     backup = _full_backup(owner)
     assert backup_summary(backup) == "2 ay (Eylül 2026 – Ekim 2026), ekip ve ayarlar"

@@ -966,6 +966,12 @@ class TestPersonRoleDisplay(unittest.TestCase):
 
         self.assertIsNone(find_person_role(rows, ["Görev1", "Görev2"], 0, "Mehmet"))
 
+def _writes(cursor):
+    """Kayıt sorguları; sıraya sokan kilit (pg_advisory_xact_lock, lock_timeout) hariç."""
+    return [item for item in cursor.executed
+            if "pg_advisory_xact_lock" not in item[0] and "lock_timeout" not in item[0]]
+
+
 class _FakeDbCursor:
     def __init__(self, schedule_row=None, data_rows=None):
         self.schedule_row = schedule_row
@@ -2616,8 +2622,8 @@ class TestGoogleLoginSupport(unittest.TestCase):
         schedule = pd.DataFrame([[True]], index=["Ali"], columns=["1 Çar"])
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)), \
                 patch.object(db, "execute_values"):
-            self.assertTrue(db.save_schedule("Ocak", 2025, 1, ["Ali"], schedule, owner="ali@gmail.com"))
-        insert_sql, insert_params = cursor.executed[0]
+            self.assertTrue(db.save_schedule("Ocak", 2025, 1, ["Ali"], schedule, owner="ali@gmail.com", expected_version=db.FORCE))
+        insert_sql, insert_params = _writes(cursor)[0]
         self.assertIn("ON CONFLICT (owner, name, year, month)", insert_sql)
         self.assertEqual(insert_params[7], "ali@gmail.com")
 
@@ -2874,8 +2880,8 @@ class TestAppSettingsPersistence(unittest.TestCase):
         settings = {"team": "Ali, Ayşe", "year": 2026, "month": 10}
         save_cursor = _FakeDbCursor()
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(save_cursor)):
-            self.assertTrue(db.save_app_settings(settings))
-        stored_value = save_cursor.executed[0][1][1]
+            self.assertTrue(db.save_app_settings(settings, expected_version=db.FORCE))
+        stored_value = _writes(save_cursor)[0][1][1]
 
         load_cursor = _FakeDbCursor(schedule_row={"value": stored_value})
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)):
@@ -2908,7 +2914,7 @@ class TestAppSettingsPersistence(unittest.TestCase):
         source = _app_source()
         self.assertNotIn("elapsed >= 30", source)
         self.assertIn("_persist_fp != st.session_state.get(\"last_saved_fingerprint\")", source)
-        self.assertIn("load_app_settings(owner=current_owner, raise_on_error=True)", source)
+        self.assertIn("load_app_settings(\n                owner=current_owner, raise_on_error=True,", source)
         self.assertIn("save_app_settings(\n            _current_settings, owner=current_owner,", source)
         # Ayarlar widget'lar çizilmeden önce yüklenmeli.
         self.assertLess(
@@ -3013,9 +3019,16 @@ class TestDatabaseConnectionDiagnostics(unittest.TestCase):
     def test_basarisiz_baglanti_kalici_onbelleklenmez(self):
         source = _app_source()
         self.assertNotIn("def _init_db_once", source)
-        self.assertIn(
-            'if not _db_state["ready"] and st.session_state.get("_db_init_attempted") != SCHEMA_VERSION', source)
         self.assertIn("_db_state = _db_init_state(SCHEMA_VERSION)", source)
+        self.assertIn("_db_ready = prepare_schema(\n    _db_state, st.session_state, SCHEMA_VERSION,", source)
+        # Başarısızlık kalıcı değil: aynı oturum bir süre sonra yeniden dener.
+        shared, session, calls = {"ready": False, "error": None}, {}, []
+        fail = lambda: calls.append(1) or False  # noqa: E731
+        self.assertFalse(db.prepare_schema(shared, session, "v", fail, lambda: "uyku", now=100))
+        self.assertEqual(shared["error"], "uyku")
+        self.assertFalse(db.prepare_schema(shared, session, "v", fail, lambda: "uyku", now=110))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(db.prepare_schema(shared, session, "v", lambda: True, lambda: None, now=140))
 
 
 class TestSchedulePersistence(unittest.TestCase):
@@ -3045,10 +3058,10 @@ class TestSchedulePersistence(unittest.TestCase):
         with patch.object(
             db.psycopg2,
             "connect",
-            side_effect=RuntimeError("database unavailable"),
+            side_effect=db.psycopg2.OperationalError("database unavailable"),
         ):
             self.assertFalse(
-                db.save_schedule("Ocak", 2025, 1, ["Ali"], schedule)
+                db.save_schedule("Ocak", 2025, 1, ["Ali"], schedule, expected_version=db.FORCE)
             )
 
     def test_save_serializes_role_rows_alongside_schedule(self):
@@ -3067,12 +3080,12 @@ class TestSchedulePersistence(unittest.TestCase):
         with patch.object(db.psycopg2, "connect", return_value=connection), \
                 patch.object(db, "execute_values"):
             self.assertTrue(db.save_schedule(
-                "Ocak", 2025, 1, ["Ali", "Ayşe"], schedule, rows_liste=rows
+                "Ocak", 2025, 1, ["Ali", "Ayşe"], schedule, rows_liste=rows, expected_version=db.FORCE
             ))
 
-        insert_params = cursor.executed[0][1]
+        insert_params = _writes(cursor)[0][1]
         self.assertEqual(json.loads(insert_params[6]), rows)
-        self.assertIn("rows_liste_json", cursor.executed[0][0])
+        self.assertIn("rows_liste_json", _writes(cursor)[0][0])
 
     def test_load_restores_role_rows_exactly(self):
         rows = [
@@ -3110,14 +3123,14 @@ class TestSchedulePersistence(unittest.TestCase):
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(save_cursor)), \
                 patch.object(db, "execute_values"):
             self.assertTrue(db.save_schedule(
-                "Ocak", 2025, 1, ["Ali", "Ayşe"], schedule, pref_df=prefs
+                "Ocak", 2025, 1, ["Ali", "Ayşe"], schedule, pref_df=prefs, expected_version=db.FORCE
             ))
 
         load_cursor = _FakeDbCursor(
             schedule_row={
                 "id": 10,
                 "team_members": json.dumps(["Ali", "Ayşe"]),
-                "pref_json": save_cursor.executed[0][1][4],
+                "pref_json": _writes(save_cursor)[0][1][4],
             },
             data_rows=[{"person": "Ali", "day_col": "1 Çar", "assigned": False}],
         )
@@ -3178,14 +3191,14 @@ class TestSchedulePersistence(unittest.TestCase):
                 patch.object(db, "execute_values"):
             self.assertTrue(db.save_schedule(
                 "Düzenlenmiş", 2025, 1, ["Ali", "Ayşe", "Mehmet"],
-                edited_schedule, rows_liste=reconciled_rows,
+                edited_schedule, rows_liste=reconciled_rows, expected_version=db.FORCE,
             ))
 
         load_cursor = _FakeDbCursor(
             schedule_row={
                 "id": 9,
                 "team_members": json.dumps(["Ali", "Ayşe", "Mehmet"]),
-                "rows_liste_json": save_cursor.executed[0][1][6],
+                "rows_liste_json": _writes(save_cursor)[0][1][6],
             },
             data_rows=[
                 {"person": "Ayşe", "day_col": "1 Çar", "assigned": True},
@@ -3375,10 +3388,10 @@ class TestReviewFixes(unittest.TestCase):
         save_cursor = _FakeDbCursor()
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(save_cursor)), \
                 patch.object(db, "execute_values"):
-            self.assertTrue(db.save_schedule("Ocak", 2025, 1, ["1", "2"], schedule, pref_df=prefs))
+            self.assertTrue(db.save_schedule("Ocak", 2025, 1, ["1", "2"], schedule, pref_df=prefs, expected_version=db.FORCE))
         load_cursor = _FakeDbCursor(
             schedule_row={"id": 1, "team_members": json.dumps(["1", "2"]),
-                          "pref_json": save_cursor.executed[0][1][4]},
+                          "pref_json": _writes(save_cursor)[0][1][4]},
             data_rows=[{"person": "1", "day_col": "1 Çar", "assigned": False}],
         )
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(load_cursor)):
@@ -3635,7 +3648,7 @@ class TestFullAppRender(unittest.TestCase):
             load_schedule=lambda *a, **k: None, save_schedule=lambda *a, **k: True,
             load_auto_saved_assignments=lambda *a, **k: ({}, {}), list_backup_snapshots=lambda **k: [],
             get_schedule_version=lambda *a, **k: None, get_settings_version=lambda *a, **k: None,
-            get_share_link=lambda *a: None,
+            get_share_link=lambda *a: None, ping_db=lambda: True,
         )
         with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, **fakes):
             at = AppTest.from_file(str(Path(__file__).with_name("nobet.py")), default_timeout=120)

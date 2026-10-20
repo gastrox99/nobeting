@@ -64,9 +64,11 @@ for _attempt in range(2):
             get_last_error,
             is_database_configured,
             load_auto_saved_assignments,
-            get_schedule_version,
-            get_settings_version,
             SaveConflict,
+            VersionUnknown,
+            log_unexpected,
+            prepare_schema,
+            ping_db,
             SCHEMA_VERSION,
         )
         from nobet_core import (
@@ -119,6 +121,7 @@ for _attempt in range(2):
             locks_to_json,
             assignment_warnings,
             collect_app_settings,
+            PERIOD_STATE_KEYS,
             merge_app_settings,
             settings_difference_labels,
             writer_tag,
@@ -183,11 +186,12 @@ def _db_init_state(schema_version):
     return {"ready": False, "error": None}
 
 _db_state = _db_init_state(SCHEMA_VERSION)
-if not _db_state["ready"] and st.session_state.get("_db_init_attempted") != SCHEMA_VERSION:
-    st.session_state["_db_init_attempted"] = SCHEMA_VERSION
-    _db_state["ready"] = init_db()
-    _db_state["error"] = get_last_error()
-_db_ready = _db_state["ready"]
+# Başarı bayrağı yalnızca True yönünde değişir; başarısız oturum 30 sn sonra yeniden dener.
+# Şema hazırsa yeni oturum tek bir uyandırma bağlantısı açar (Neon uyuyor olabilir);
+# ulaşılamazsa bu çalışmadaki diğer okumalar atlanır, her biri ayrı ayrı beklemez.
+_db_ready = prepare_schema(
+    _db_state, st.session_state, SCHEMA_VERSION, init_fn=init_db, error_fn=get_last_error, ping_fn=ping_db,
+)
 
 # Sayfa Ayarları
 _APP_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "ikon-64.png")
@@ -271,7 +275,13 @@ else:
 
 # Bağlantı hatasının nedeni (sunucu adı içerebilir) yalnızca giriş yapmış
 # kullanıcıya gösterilir; paylaşım ve giriş sayfalarında görünmez.
-if not _db_ready:
+if not _db_ready and st.session_state.get("_db_unreachable"):
+    st.warning(
+        "⏳ Veritabanına şu an ulaşılamıyor (uykudan uyanıyor olabilir). Kayıtlı ekip ve "
+        "çizelge yüklenmedi; bu sırada yapılan değişiklikler kaydedilmez. Biraz sonra "
+        "sayfayı yenileyin."
+    )
+elif not _db_ready:
     _db_reason = f" Sebep: {_db_state['error']}" if _db_state.get("error") else ""
     st.warning(
         "⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt "
@@ -311,19 +321,50 @@ def _own_writer_tag():
 _writer = _own_writer_tag()
 
 
+# --- Veritabanı açılışta yoktu, şimdi var: kayıtlı veri bu oturumda yüklenir ---
+# Ekip/ayarlar ve ay, veritabanına ulaşılamadığı için yüklenmeden açıldıysa ve o
+# zamandan beri bir şey değiştirilmediyse şimdi yüklenir. Değiştirildiyse üzerine
+# yazılmaz; kayıt kapalı kalır ve yenileme istenir.
+_offline = st.session_state.get("loaded_without_db")
+if _db_ready and _offline:
+    _offline_clean = _offline.get("schedule_clean", True) and (
+        not _offline.get("settings_skipped")
+        or collect_app_settings(st.session_state) == _offline.get("settings")
+    )
+    if _offline_clean:
+        if _offline.get("settings_skipped"):
+            st.session_state.pop("app_settings_loaded", None)
+        if _offline.get("period") is not None:
+            for _key in PERIOD_STATE_KEYS:
+                st.session_state.pop(_key, None)
+        st.session_state.loaded_without_db = None
+    else:
+        st.warning(
+            "⚠️ Veritabanına yeniden ulaşıldı, ancak bağlantı yokken değişiklik yapıldığı için "
+            "kayıtlı ekip ve çizelge yüklenmedi; kayıt yapılmıyor. Değişiklikleri "
+            "kaybetmek istemiyorsanız önce Excel olarak indirin, sonra sayfayı yenileyin."
+        )
+
 # --- Ekip ve ayarları veritabanından geri yükle (sayfa yenilemesinde) ---
 if 'app_settings_loaded' not in st.session_state:
     _stored_settings = None
     # Okuma başarısızsa kayıtlı ayarların üzerine boş ayar yazılmasın.
     st.session_state.app_settings_load_failed = not _db_ready
+    if not _db_ready:
+        # Veritabanı gelince yüklenecek; o zamana kadar değişiklik olursa yüklenmez.
+        st.session_state.loaded_without_db = {
+            **(st.session_state.get("loaded_without_db") or {}),
+            "settings_skipped": True, "settings": None,
+        }
     if _db_ready:
         try:
-            # Sürüm önce okunur: arada başka yerde kayıt olursa sürüm eski kalır ve
-            # ilk kayıtta uyarı verilir (yeni veri sessizce ezilmez).
-            # Sürüm değiştirilebilir bir kutuda tutulur: kayıt bu kutuyu yerinde
-            # günceller (bkz. _version_box).
-            st.session_state.settings_version = {"version": get_settings_version(owner=current_owner)}
-            _stored_settings = load_app_settings(owner=current_owner, raise_on_error=True)
+            # Sürüm, ayarlarla aynı okumadan gelir (ayrı okunup hata verince None
+            # kalıyor, çakışma denetimi kapanıyordu). Sürüm değiştirilebilir bir
+            # kutuda tutulur: kayıt bu kutuyu yerinde günceller (bkz. _version_box).
+            st.session_state.settings_version = {"version": None}
+            _stored_settings = load_app_settings(
+                owner=current_owner, raise_on_error=True, version_out=st.session_state.settings_version,
+            )
         except Exception:
             st.session_state.app_settings_load_failed = True
             st.warning("⚠️ Kayıtlı ekip ve ayarlar okunamadı. Sayfayı yenileyin.")
@@ -666,7 +707,14 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(_lim_unknown)}** — limit uygulanmayacak.")
 
 _revert_notice = st.session_state.pop("period_revert_notice", None)
-if _revert_notice == "conflict":
+if _revert_notice == "version_unknown":
+    st.error(
+        "⚠️ Önceki ayın kayıtlı sürümü okunamadığı için (başka bir yerde yapılmış "
+        "değişikliklerin üzerine yazmamak için) bu sekmedeki değişiklikler kaydedilmedi ve "
+        "ay değiştirilmedi. Önce Excel olarak indirebilirsiniz. Ayı yine de değiştirirseniz "
+        "bu sekmedeki değişiklikler atılır; sayfayı yenilemek güncel hâli getirir."
+    )
+elif _revert_notice == "conflict":
     st.error(
         "⚠️ Önceki ay başka bir yerde (telefon ya da başka sekme) değiştirilmiş; bu sekmedeki "
         "değişiklikler kaydedilmedi ve ay değiştirilmedi. Önce Excel olarak indirebilirsiniz. "
@@ -681,6 +729,10 @@ elif _revert_notice:
 
 # Ekip ve ayarlar değiştiyse veritabanına yaz (sayfa yenilenince geri gelir).
 _current_settings = collect_app_settings(st.session_state)
+_offline = st.session_state.get("loaded_without_db")
+if _offline and _offline.get("settings_skipped") and _offline.get("settings") is None:
+    # Yüklenmeden açılan ayarların hâli: veritabanı gelince değişmiş mi diye bakılır.
+    _offline["settings"] = _current_settings
 _nothing_saved_yet = st.session_state.get("last_saved_settings") is None
 if (
     _db_ready
@@ -696,6 +748,11 @@ if (
             expected_version=_settings_version.get("version"), version_out=_settings_version,
             writer=_writer,
         )
+    except VersionUnknown:
+        # Kayıtlı ayarların sürümü bilinmiyor: başka yerdeki değişikliğin üzerine yazma.
+        _settings_saved = False
+        st.session_state.app_settings_load_failed = True
+        st.session_state.settings_version_unknown = True
     except SaveConflict as _conflict:
         # Başka bir yerde (ör. telefonda) ayarlar değişmiş. Öbür yerdeki fark
         # yalnızca bakılan ay ya da bu sekmenin de aynen yaptığı değişiklikse
@@ -703,8 +760,9 @@ if (
         _settings_saved = False
         _their_settings = None
         try:
-            _their_version = get_settings_version(owner=current_owner)
-            _their_settings = load_app_settings(owner=current_owner, raise_on_error=True)
+            _their_box = {"version": None}
+            _their_settings = load_app_settings(owner=current_owner, raise_on_error=True, version_out=_their_box)
+            _their_version = _their_box["version"]
             _merge = merge_app_settings(
                 st.session_state.get("last_saved_settings"), _current_settings, _their_settings,
             )
@@ -718,7 +776,8 @@ if (
                 )
         except SaveConflict:
             _settings_saved = False
-        except Exception:
+        except Exception as _merge_error:
+            log_unexpected("Ayar birleştirme", _merge_error)
             _settings_saved = False
         if not _settings_saved:
             st.session_state.app_settings_load_failed = True
@@ -732,6 +791,11 @@ if (
         st.session_state.last_saved_settings = _current_settings
         # Hazırlanmış yedek artık eski; yeniden hazırlanması gerekir.
         st.session_state.pop("backup_bytes", None)
+if st.session_state.get("settings_version_unknown"):
+    st.warning(
+        "⚠️ Kayıtlı ekip ve ayarların sürümü okunamadı. Başka bir yerde yapılmış "
+        "değişikliklerin üzerine yazmamak için ayarlar kaydedilmiyor. Sayfayı yenileyin."
+    )
 _settings_conflict = st.session_state.get("settings_conflict")
 if _settings_conflict:
     _conflict_fields = (
@@ -767,7 +831,7 @@ def _save_outgoing_period(period, schedule, preferences, rows):
             and st.session_state.get("conflict_leave_ack") != tuple(period)
         ):
             st.session_state.conflict_leave_ack = tuple(period)
-            st.session_state.period_revert_reason = "conflict"
+            st.session_state.period_revert_reason = st.session_state.get("autosave_conflict_kind") or "conflict"
             return False
         return True
     _locks = active_locks(st.session_state.get("locked_cells"), schedule)
@@ -787,8 +851,22 @@ def _save_outgoing_period(period, schedule, preferences, rows):
     except SaveConflict:
         st.session_state.autosave_blocked_period = tuple(period)
         st.session_state.autosave_conflict_period = tuple(period)
+        st.session_state.autosave_conflict_kind = "conflict"
         st.session_state.conflict_leave_ack = tuple(period)
         st.session_state.period_revert_reason = "conflict"
+        return False
+    except VersionUnknown:
+        # Sürüm bilinmiyor: çakışmadaki gibi bir kez uyarılır, ikinci denemede
+        # bu sekmedeki değişiklikler atılarak ay değişir.
+        st.session_state.autosave_blocked_period = tuple(period)
+        st.session_state.autosave_conflict_period = tuple(period)
+        st.session_state.autosave_conflict_kind = "version_unknown"
+        st.session_state.conflict_leave_ack = tuple(period)
+        st.session_state.period_revert_reason = "version_unknown"
+        return False
+    except Exception as _error:
+        # Kod hatası: ay değişmesin (son değişiklikler kaybolmasın), iz günlüğe.
+        log_unexpected("Ay değişiminde kayıt", _error)
         return False
 
 # Ay/yıl değişince eski ayın çizelgesini yeni aya taşımak yerine kaydet ve
@@ -803,10 +881,18 @@ if 'schedule_bool' not in st.session_state:
     # Sayfa yenilenmesinde otomatik geri yükle
     _auto_name = f"Otomatik_{yil}_{ay:02d}"
 
+    # Sürüm, çizelgeyle aynı okumadan gelir; okuma başarısızsa None kalır ve
+    # kayıt durdurulur (VersionUnknown). Eskiden sürüm ayrı okunuyordu: o okuma
+    # hata verip çizelge yine yüklenince çakışma denetimi kapanıyordu.
+    st.session_state.schedule_version = {"version": None}
+
     def _load_auto_schedule(name, year, month):
         # Keep "no saved schedule yet" distinct from a database failure so the
         # first visit does not show a misleading error.
-        return load_schedule(name, year, month, raise_on_error=True, owner=current_owner)
+        return load_schedule(
+            name, year, month, raise_on_error=True, owner=current_owner,
+            version_out=st.session_state.schedule_version,
+        )
 
     def _on_auto_load_error(_error):
         # Kayıt okunamadıysa boş çizelgeyi kaydedip gerçek verinin üzerine yazma.
@@ -820,12 +906,19 @@ if 'schedule_bool' not in st.session_state:
 
     st.session_state.autosave_blocked_period = None
     st.session_state.autosave_conflict_period = None
+    st.session_state.autosave_conflict_kind = None
     st.session_state.conflict_leave_ack = None
-    # Sürüm önce okunur; arada başka yerde kayıt olursa ilk kayıtta uyarı verilir.
-    st.session_state.schedule_version = {
-        "version": get_schedule_version(_auto_name, yil, ay, owner=current_owner) if _db_ready else None
-    }
-    if not restore_auto_saved_schedule(
+    # Önceki ayın kayıt uyarısı ("bu ayın ...") yeni ayda gösterilmesin.
+    st.session_state.persistence_error = None
+    if not _db_ready:
+        # Veritabanına ulaşılamıyor: okuma denenmez (yeniden zaman aşımı beklenmesin)
+        # ve boş çizelge kayıtlı olanın üzerine yazılmasın. Veritabanı gelince yüklenir.
+        st.session_state.autosave_blocked_period = (yil, ay)
+        st.session_state.loaded_without_db = {
+            **(st.session_state.get("loaded_without_db") or {}), "period": (yil, ay), "schedule_clean": True,
+        }
+        st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+    elif not restore_auto_saved_schedule(
         st.session_state,
         _load_auto_schedule,
         _auto_name,
@@ -1640,6 +1733,7 @@ elif (
         _save_conflict = True
         st.session_state.autosave_blocked_period = (yil, ay)
         st.session_state.autosave_conflict_period = (yil, ay)
+        st.session_state.autosave_conflict_kind = "conflict"
         update_persistence_feedback(
             st.session_state,
             False,
@@ -1648,8 +1742,30 @@ elif (
             "bu sekmedeki değişiklikleri kaybetmek istemiyorsanız önce Excel olarak indirin."
             + conflict_writer_text(_conflict.writer, _conflict.saved_at, _writer),
         )
-    except Exception:
-        _saved_ok = False
+    except VersionUnknown:
+        # Çakışmadaki gibi: kayıt durur, ay değiştirilirse bir kez uyarılıp
+        # ikinci denemede bu sekmedeki değişiklikler atılarak geçilir.
+        _save_conflict = True
+        st.session_state.autosave_blocked_period = (yil, ay)
+        st.session_state.autosave_conflict_period = (yil, ay)
+        st.session_state.autosave_conflict_kind = "version_unknown"
+        update_persistence_feedback(
+            st.session_state,
+            False,
+            "⚠️ Bu ayın kayıtlı sürümü okunamadı. Başka bir yerde yapılmış değişikliklerin "
+            "üzerine yazmamak için kayıt yapılmadı. Sayfayı yenileyin; bu sekmedeki "
+            "değişiklikleri kaybetmek istemiyorsanız önce Excel olarak indirin.",
+        )
+    except Exception as _error:
+        # Veritabanı değil, kod hatası: "bağlantı" diye gösterme, izi günlüğe yaz.
+        log_unexpected("Otomatik kayıt", _error)
+        _save_conflict = True
+        update_persistence_feedback(
+            st.session_state,
+            False,
+            f"❌ Çizelge kaydedilemedi: beklenmeyen bir program hatası ({type(_error).__name__}). "
+            "Veritabanı bağlantısında sorun yok; sayfayı yenilemeden önce Excel/PNG olarak indirin.",
+        )
     if _save_conflict:
         pass
     elif _saved_ok:
@@ -1667,6 +1783,11 @@ elif (
             "❌ Çizelge kaydedilemedi — otomatik kayıt veritabanına yazılamıyor! "
             "Sayfayı yenilemeden önce Excel/PNG olarak indirin.",
         )
+
+_offline = st.session_state.get("loaded_without_db")
+if _offline and _offline.get("period") == (yil, ay):
+    # Veritabanı yokken açılan ay: değiştirilmediyse veritabanı gelince yüklenir.
+    _offline["schedule_clean"] = _persist_fp == st.session_state.get("last_saved_fingerprint")
 
 # Onaylanan ekip talepleri ancak ay kaydedildiyse silinir.
 if _db_ready:
