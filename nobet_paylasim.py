@@ -110,11 +110,12 @@ def render_shared_view(token, db_ready):
     if not _person:
         st.info("Nöbetlerini görmek ve talep göndermek için adını seç.")
         return
-    _tab_list, _tab_request = st.tabs(["📋 Nöbet Listesi", "📝 Talep Gönder"])
-    with _tab_list:
-        _render_list(_owner, _year, _month, _person)
+    # Talep sekmesi önce açılır: link çoğunlukla talep göndermek için açılıyor.
+    _tab_request, _tab_list = st.tabs(["📝 Talep Gönder", "📋 Nöbet Listesi"])
     with _tab_request:
         _render_request_form(_owner, _person)
+    with _tab_list:
+        _render_list(_owner, _year, _month, _person)
     # Sekmelerden sonra yazılır: üstte geçici bir öğe sekmeleri ilk sekmeye döndürürdü.
     if _person and _person != st.session_state.paylasim_ad_kayitli:
         st.session_state.paylasim_ad_kayitli = _person
