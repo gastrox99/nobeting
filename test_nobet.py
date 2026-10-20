@@ -3412,7 +3412,7 @@ class TestFullAppRender(unittest.TestCase):
             steps = [
                 lambda: next(b for b in at.button if b.label == "⚡ Simülasyon").click(),
                 lambda: at.session_state.__setitem__("cal_person_filter", ["Ali"]),
-                lambda: next(b for b in at.button if b.label.startswith("🤖 Görev")).click(),
+                lambda: next(b for b in at.button if b.label.startswith("🤖")).click(),
                 lambda: next(b for b in at.button if b.label == "↩️ Geri").click(),
                 lambda: at.radio(key="mode_radio").set_value("✏️ Nöbet Ata/Kaldır"),
                 lambda: next(b for b in at.button if b.key and b.key.startswith("g_Ali_")).click(),
@@ -3551,3 +3551,14 @@ class TestHizliGiris(unittest.TestCase):
         # Aynı günlere tekrar yazmak değişiklik saymaz; Nötr siler.
         self.assertEqual(apply_quick_entry(pref, "Ali", days, 3, gun), 0)
         self.assertEqual(apply_quick_entry(pref, "Ali", {15}, 0, gun), 1)
+
+
+class TestWhatsappBaglantisi(unittest.TestCase):
+    def test_metin_kodlanir(self):
+        from nobet_disa_aktar import whatsapp_url
+        url = whatsapp_url("*1 Kasım Paz* — AYB: Ayşe\n2 Kasım & Can")
+        self.assertTrue(url.startswith("https://wa.me/?text="))
+        self.assertNotIn("\n", url)
+        self.assertNotIn("&", url.split("text=", 1)[1])
+        from urllib.parse import unquote
+        self.assertEqual(unquote(url.split("text=", 1)[1]), "*1 Kasım Paz* — AYB: Ayşe\n2 Kasım & Can")

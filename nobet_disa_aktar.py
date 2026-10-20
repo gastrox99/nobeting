@@ -5,6 +5,7 @@ PNG/Excel/HTML dosyaları yalnızca düğmeye tıklanınca üretilir.
 """
 import importlib.util
 import re
+from urllib.parse import quote
 from io import BytesIO
 
 import matplotlib.pyplot as plt
@@ -97,6 +98,11 @@ def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance, yil=None):
     return output.getvalue()
 
 
+def whatsapp_url(text):
+    """WhatsApp'ı verilen metin yazılı açan bağlantı (telefonda uygulama açılır)."""
+    return "https://wa.me/?text=" + quote(text, safe="")
+
+
 def app_base_url():
     try:
         _url = st.context.url
@@ -144,14 +150,14 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                                f"nobet_{yil}_{ay:02d}.csv", "text/csv",
                                on_click="ignore", width="stretch")
             st.markdown("**💬 WhatsApp metni**")
-            st.caption("Sağ üstteki simgeyle kopyalayıp yapıştırın. Hafta sonu ve tatiller kalın görünür.")
-            st.code(
-                build_share_text(
-                    liste_rows, liste_roles, yil, ay,
-                    special_days=[d["day_num"] for d in gun_detaylari.values() if d["weekend"] or d["holiday"]],
-                ),
-                language=None,
+            _wa_text = build_share_text(
+                liste_rows, liste_roles, yil, ay,
+                special_days=[d["day_num"] for d in gun_detaylari.values() if d["weekend"] or d["holiday"]],
             )
+            # Telefonda WhatsApp'ı metin yazılı açar; kişi ya da grup orada seçilir.
+            st.link_button("💬 WhatsApp'ta gönder", whatsapp_url(_wa_text), type="primary", width="stretch")
+            st.caption("Ya da sağ üstteki simgeyle kopyalayıp yapıştırın. Hafta sonu ve tatiller kalın görünür.")
+            st.code(_wa_text, language=None)
     with _share_col:
         with st.popover("🔗 Paylaş", width="stretch"):
             if not db_ready:
@@ -166,7 +172,13 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                     "her ay yeni bağlantı göndermeniz gerekmez. Kendi adlarını seçip nöbetlerini takvimlerine ekleyebilirler."
                 )
                 if _token:
-                    st.code(f"{app_base_url()}?paylas={_token}", language=None)
+                    _share_url = f"{app_base_url()}?paylas={_token}"
+                    st.code(_share_url, language=None)
+                    st.link_button(
+                        "💬 Bağlantıyı WhatsApp'ta gönder",
+                        whatsapp_url(f"Nöbet listesi (kendi adını seçip nöbetlerini görebilirsin): {_share_url}"),
+                        width="stretch",
+                    )
                     if st.button("🔄 Yeni bağlantı oluştur (eskileri çalışmaz)", width="stretch"):
                         # Eski aylık bağlantılar da kapanır.
                         if delete_all_share_links(current_owner):

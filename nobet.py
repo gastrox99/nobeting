@@ -497,7 +497,17 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             st.session_state.nobet_ucreti_kaynak = None
         if "w_nobet_ucreti_val" not in st.session_state:
             st.session_state["w_nobet_ucreti_val"] = float(st.session_state.get("nobet_ucreti_val", 1.0))
-        nobet_ucreti = st.number_input("💰 Saat Ücreti (TL):", key="w_nobet_ucreti_val")
+        nobet_ucreti = st.number_input(
+            "💰 Saat Ücreti (TL):", key="w_nobet_ucreti_val",
+            # Uzun açıklama "?" içinde; altta yalnızca ücretler görünür. Metin sabit
+            # kalır (değişen yardım metni kutunun değerini sıfırlayabilir).
+            help=(
+                "Yalnız fazla mesai ödenir. Ünvan seçiliyse gece ücreti, ayın gece saati ile "
+                "fazla mesai saatinden küçük olanına (her nöbet 12 sa gece), kalan fazla "
+                "mesaiye gündüz ücreti uygulanır. Bayram ücreti yalnız resmi ve dini "
+                "bayramlara (elle eklenen tatillere değil). Tutarlardan damga vergisi düşülmüştür."
+            ),
+        )
         st.session_state.nobet_ucreti_val = nobet_ucreti
         # Ünvan tablosundaki ücretler; gündüz ücreti elle değişirse gece ve
         # bayram ücretleri ondan türetilir. Elle girişte her saat aynı ücret.
@@ -511,11 +521,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             _rate_note = (
                 f"Gündüz {tr_sayi(_rate_info['gunduz'])} · gece (20-08) {tr_sayi(_rate_info['gece'])} · "
                 f"bayram {tr_sayi(_rate_info['tatil'])} · bayram gece {tr_sayi(_rate_info['tatil_gece'])} TL/sa "
-                f"({donem_adi(_rate_info['donem'])}, damga vergisi düşülmüş). "
-                "Yalnız fazla mesai ödenir: gece ücreti, ayın gece saati ile fazla mesai "
-                "saatinden küçük olanına (her nöbet 12 sa gece), kalan fazla mesaiye "
-                "gündüz ücreti. Bayram ücreti yalnız resmi ve dini bayramlara "
-                "(elle eklenen tatillere değil)."
+                f"({donem_adi(_rate_info['donem'])}, damga vergisi düşülmüş)."
             )
             if not _rate_info["tam"]:
                 _rate_note += " Bu dönemin katsayısı henüz eklenmedi, son bilinen kullanıldı."
@@ -1187,6 +1193,7 @@ if sim_clicked:
                 st.session_state.schedule_bool = _new_schedule
                 st.session_state.should_regenerate_assignments = True
                 st.session_state.simulation_success_pending = True
+                st.session_state.switch_to_assign_mode = True
                 st.session_state.auto_improved_pending = _auto_improved
                 st.rerun()
 
@@ -1281,6 +1288,7 @@ if _incomplete is not None:
                 save_undo_state()
                 st.session_state.schedule_bool = _incomplete["schedule"]
                 st.session_state.should_regenerate_assignments = True
+                st.session_state.switch_to_assign_mode = True
                 st.session_state.incomplete_simulation = None
                 st.rerun()
 

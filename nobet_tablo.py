@@ -27,6 +27,10 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
     # Mode selector and paint color
     mode_cols = st.columns([2, 3])
     with mode_cols[0]:
+        # Simülasyondan sonra düzeltme yapılacağı için tablo Nöbet Ata moduna geçer
+        # (tercih modunda dokunulan hücre nöbet yerine tercih boyuyordu).
+        if st.session_state.pop("switch_to_assign_mode", False):
+            st.session_state.mode_radio = "✏️ Nöbet Ata/Kaldır"
         edit_mode = st.radio(
             "Düzenleme Modu:",
             ["🎨 Tercih Belirle", "✏️ Nöbet Ata/Kaldır"],
@@ -54,7 +58,8 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                         st.session_state.paint_color = val
                         st.rerun()
         else:
-            st.info("Tıklayarak nöbet ekle/kaldır. Elle atadığın nöbetler (sarı çerçeve) simülasyonda korunur.")
+            st.caption("Hücreye dokununca nöbet eklenir ya da kalkar. Elle eklenen nöbetler "
+                       "(sarı çerçeve) simülasyonda korunur.")
 
     # Quick actions row
     # Simülasyon/İyileştir geniş, Sıfırla/Geri/İleri dar; telefonda iki satıra

@@ -403,7 +403,7 @@ def run_round(page, rnd, seed, plan=None):
 
     def act_redistribute():
         history.append("otomatik-dağıt")
-        page.get_by_role("button", name="🤖 Görev Yerlerini Otomatik Dağıt").click()
+        page.get_by_role("button", name=re.compile(r"^🤖")).first.click()
 
     def act_team():
         nonlocal team
