@@ -1062,7 +1062,7 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
         self.assertIn(".st-key-preference-grid", self.app_source)
         self.assertIn(".st-key-preference-legend", self.app_source)
 
-    def test_mobil_hucreler_44px_ve_renk_anlamli_etiketler_tasir(self):
+    def test_mobil_hucreler_bir_haftayi_sigdirir_ve_renk_anlamli_etiketler_tasir(self):
         mobile_rule = (
             "@media (max-width: 768px) {{\n"
             "    /*\n"
@@ -1079,8 +1079,10 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
         self.assertGreater(mobile_rule_position, shared_button_position)
         self.assertGreater(mobile_rule_position, shared_hover_position)
         mobile_css = self.app_source[mobile_rule_position:]
-        self.assertIn("min-width: 44px !important", mobile_css)
-        self.assertIn("min-height: 44px !important", mobile_css)
+        # 390 px telefonda 88 px isim + 7 × 36 px gün sığar.
+        self.assertIn("min-width: 34px !important", mobile_css)
+        self.assertIn("min-height: 40px !important", mobile_css)
+        self.assertIn("flex: 0 0 88px !important", mobile_css)
         self.assertIn("transform: none !important", mobile_css)
         for color in ("#166534", "#92400e", "#991b1b"):
             self.assertIn(color, self.app_source)
@@ -1138,7 +1140,7 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
         self.assertNotIn("sim_pending_confirm", self.app_source)
         self.assertIn('st.session_state.run_simulation = True', self.app_source)
         self.assertNotIn("100 Simülasyon yapıldı", self.app_source)
-        self.assertIn('st.toast("En adil sonuç seçildi."', self.app_source)
+        self.assertIn('st.toast("En adil sonuç seçildi. " + simulation_summary(', self.app_source)
 
 
 # ------------------------------------------------------------------------------
@@ -1861,13 +1863,71 @@ class TestGridAppearance(unittest.TestCase):
         self.assertIn("flex: 0 0 {name_col_px}px !important;", self.source)
         self.assertIn("display:flex;flex-wrap:nowrap;", self.source)
         self.assertIn("text-overflow:ellipsis;", self.source)
-        self.assertIn("<span style='flex-shrink:0;background:{badge_bg}", self.source)
+        self.assertIn("<span class='nm-badge' style='flex-shrink:0;background:{badge_bg}", self.source)
+        # Telefonda rozet bilerek adın altına iner (kısa ad + "6 · 2 HS").
+        self.assertIn(".grid-name .nm-short {{ display: inline !important;", self.source)
 
     def test_gunler_alt_satira_kaymaz(self):
         self.assertIn(
             '.st-key-preference-grid [data-testid="stHorizontalBlock"] {{\n    flex-wrap: nowrap !important;',
             self.source,
         )
+
+
+class TestUiCilasiYardimcilari(unittest.TestCase):
+    def test_kisa_adlar_cakismaz(self):
+        from nobet_core import short_display_names
+        short = short_display_names(["Ayşe Yılmaz", "Ayşe Yıldız", "Mehmet Kaya", "Can", "Ali Rıza Demir"])
+        self.assertEqual(short["Mehmet Kaya"], "Mehmet K.")
+        self.assertEqual(short["Can"], "Can")
+        self.assertEqual(short["Ali Rıza Demir"], "Ali Rıza D.")
+        self.assertEqual({short["Ayşe Yılmaz"], short["Ayşe Yıldız"]}, {"Ayşe Yılm.", "Ayşe Yıld."})
+        same = short_display_names(["Ece Ak", "Ece Ak "])
+        self.assertEqual(len(set(same.values())), 2)
+
+    def test_siradaki_nobet(self):
+        from datetime import date
+        from nobet_core import next_shift, next_shift_text
+        nov = [{"Tarih": "02.11.2026 Pzt", "AYB": "Can", "GYB": "Elif"},
+               {"Tarih": "04.11.2026 Çar", "AYB": "Elif", "GYB": "Can"}]
+        dec = [{"Tarih": "01.12.2026 Sal", "AYB": "Can", "GYB": "Ali"}]
+        today = date(2026, 11, 3)
+        shift = next_shift([((2026, 11), nov, ["AYB", "GYB"]), ((2026, 12), dec, ["AYB", "GYB"])], "Can", today)
+        self.assertEqual(shift, {"date": date(2026, 11, 4), "roles": ["GYB"], "partners": ["Elif"]})
+        self.assertEqual(next_shift_text(shift, today), "4 Kasım Çarşamba · yarın · GYB · Elif ile")
+        later = next_shift([((2026, 11), nov, ["AYB", "GYB"]), ((2026, 12), dec, ["AYB", "GYB"])],
+                           "Can", date(2026, 11, 20))
+        self.assertEqual(later["date"], date(2026, 12, 1))
+        self.assertIn("11 gün sonra", next_shift_text(later, date(2026, 11, 20)))
+        self.assertIsNone(next_shift([((2026, 11), nov, ["AYB", "GYB"])], "Can", date(2026, 11, 5)))
+        plain = [{"Tarih": "05.11.2026 Per", "Nöbetçiler": "Can, Elif"}]
+        self.assertEqual(next_shift([((2026, 11), plain, ["Nöbetçiler"])], "Can", today)["partners"], ["Elif"])
+        self.assertEqual(next_shift_text(next_shift([((2026, 11), nov, ["AYB", "GYB"])], "Can", date(2026, 11, 4)),
+                                         date(2026, 11, 4)).split(" · ")[1], "bugün")
+
+    def test_paylasim_tarih_ve_gun_turu(self):
+        from nobet_core import shared_date_label, shared_day_kinds
+        rows = [{"Tarih": "04.11.2026 Çar"}, {"Tarih": "07.11.2026 Cmt"}, {"Tarih": "29.10.2026 Per"}, {"Tarih": "?"}]
+        self.assertEqual(shared_date_label(rows[0], 2026, 11), "4 Kas Çar")
+        self.assertEqual(shared_date_label(rows[3], 2026, 11), "?")
+        self.assertEqual(shared_day_kinds(rows[:2], 2026, 11), ["", "weekend"])
+        self.assertEqual(shared_day_kinds([rows[2]], 2026, 10), ["holiday"])
+
+    def test_en_cok_birlikte_ve_simulasyon_ozeti(self):
+        from nobet_core import most_paired, simulation_summary
+        gd = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(gd)
+        people = ["A", "B", "C", "D"]
+        sched = pd.DataFrame(False, index=people, columns=cols)
+        for i, c in enumerate(cols):
+            pair = [("A", "B"), ("C", "D"), ("A", "C")][i % 3]
+            for p in pair:
+                sched.at[p, c] = True
+        self.assertEqual(most_paired(sched, people, cols, limit=2), [("A", "B", 10), ("A", "C", 10)])
+        text = simulation_summary(sched, people, cols, gd)
+        self.assertTrue(text.startswith("Bu ay: hafta sonu farkı "))
+        self.assertIn("toplam farkı 10", text)
+        self.assertIn("en çok birlikte 10 nöbet", text)
 
 
 class TestOfficialHolidaysAndReminder(unittest.TestCase):

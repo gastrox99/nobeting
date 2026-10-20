@@ -45,6 +45,10 @@ from nobet_core import (
     shared_default_month,
     shared_updated_text,
     shared_visible_months,
+    shared_date_label,
+    shared_day_kinds,
+    next_shift,
+    next_shift_text,
     team_request_summary,
 )
 
@@ -85,7 +89,8 @@ def _cached_person_pay(owner, year, month, person, list_days):
 
 
 def render_shared_view(token, db_ready):
-    st.markdown("<h1 style='text-align: center; font-size: 2.2rem;'>Nöbet Listesi</h1>", unsafe_allow_html=True)
+    # Sekme adı "Nöbet Listesi" olduğu için başlık uygulamanın adı.
+    st.markdown("<h1 style='text-align: center; font-size: 2rem;'>Adil Nöbet</h1>", unsafe_allow_html=True)
     _target = resolve_share_token(token) if db_ready else None
     if not _target:
         st.error("Bu paylaşım bağlantısı geçersiz ya da kapatılmış.")
@@ -139,6 +144,8 @@ def _render_list(_owner, _year, _month, _person):
     _months = _cached_shared_months(_owner)
     _updated = {(_y, _m): _t for _y, _m, _t in _months}
     _today = now_tr().date()
+    if _person:
+        _render_next_shift(_owner, _person, _updated, _today)
     if (_year, _month) == (0, 0):
         # Kalıcı bağlantı: geçmiş aylar, bu ay ve sonraki ay gösterilir (daha
         # ileri aylar taslaktır); bu ay önce açılır.
@@ -197,20 +204,32 @@ def _render_list(_owner, _year, _month, _person):
     if not _shown:
         st.info(f"{TR_AY_ADLARI[_month]} {_year} listesinde nöbetin yok.")
     _table = pd.DataFrame(
-        [{_k: _row.get(_k, "-") for _k in ["Tarih"] + _roles} for _row, _ in _shown],
+        [{"Tarih": shared_date_label(_row, _year, _month), **{_k: _row.get(_k, "-") for _k in _roles}}
+         for _row, _ in _shown],
         columns=["Tarih"] + _roles,
     )
-    # Geçmiş günler soluk, bugün vurgulu görünür.
+    # Geçmiş günler soluk, bugün vurgulu; hafta sonu mavi, resmi tatil kırmızı zeminli.
     _row_styles = {
         "past": "color: rgba(128,128,128,.55);",
         "today": "font-weight: 700; background-color: rgba(255,200,0,.18);",
         "future": "",
     }
+    _kind_styles = {
+        "weekend": "background-color: rgba(59,130,246,.10);",
+        "holiday": "background-color: rgba(239,68,68,.12);",
+        "": "",
+    }
     _shown_states = [_state for _, _state in _shown]
-    st.dataframe(
-        _table.style.apply(lambda _r: [_row_styles[_shown_states[_r.name]]] * len(_r), axis=1),
-        hide_index=True, width="stretch",
-    )
+    _shown_kinds = shared_day_kinds([_row for _row, _ in _shown], _year, _month)
+
+    def _row_style(_r):
+        _state = _shown_states[_r.name]
+        _style = _row_styles[_state] if _state != "future" else ""
+        if _state != "today":
+            _style += _kind_styles[_shown_kinds[_r.name]]
+        return [_style] * len(_r)
+
+    st.dataframe(_table.style.apply(_row_style, axis=1), hide_index=True, width="stretch")
     if _selected != "Tümü":
         st.download_button(
             "📅 Nöbetlerimi takvime ekle",
@@ -221,6 +240,26 @@ def _render_list(_owner, _year, _month, _person):
     if _person:
         _render_pay(_owner, _year, _month, _person, _rows, _roles)
     st.caption("Liste, liste sahibi değişiklik yaptıkça güncellenir.")
+
+
+def _render_next_shift(_owner, _person, _updated, _today):
+    """"Sıradaki nöbetin" kartı: bu ayın ve (paylaşılmışsa) sonraki ayın listesinden."""
+    _following = (_today.year + 1, 1) if _today.month == 12 else (_today.year, _today.month + 1)
+    _periods = []
+    for _period in ((_today.year, _today.month), _following):
+        if _period in _updated:
+            _rows, _roles = _cached_shared_rows(_owner, *_period)
+            _periods.append((_period, _rows, _roles))
+    _shift = next_shift(_periods, _person, _today)
+    if _shift is None:
+        return
+    st.markdown(
+        "<div style='border:2px solid #0d9488;border-radius:12px;padding:10px 14px;margin:4px 0 12px;"
+        "background:rgba(13,148,136,.08);'>"
+        "<div style='font-size:12px;opacity:.75;'>Sıradaki nöbetin</div>"
+        f"<div style='font-weight:700;font-size:17px;'>{escape_html(next_shift_text(_shift, _today))}</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_pay(_owner, _year, _month, _person, _rows, _roles):

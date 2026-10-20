@@ -142,7 +142,7 @@ def _open(playwright, url):
     )
     page = browser.new_page(viewport={"width": 1400, "height": 1000})
     page.goto(url)
-    page.get_by_text("Nöbet Listesi", exact=True).wait_for()
+    page.get_by_text("Adil Nöbet", exact=True).wait_for()
     _wait_idle(page)
     return browser, page
 
@@ -174,6 +174,9 @@ def test_once_ad_sorulur_sonra_kendi_nobetleri(shared):
             expect(grid).to_contain_text("Bugün Ali")
             if data["tomorrow_in_month"]:
                 expect(grid).not_to_contain_text("Yarın Can")
+            # Bugünkü nöbeti "Sıradaki nöbetin" kartında; tarih kısa yazılır.
+            expect(page.get_by_text("Sıradaki nöbetin")).to_be_visible()
+            expect(page.get_by_text("bugün · AYB · Bugün Ayşe ile", exact=False)).to_be_visible()
         finally:
             browser.close()
 

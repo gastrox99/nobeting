@@ -12,17 +12,7 @@ GLOBAL_CSS = """
     padding-bottom: 8px;
 }
 
-/* Mobile hint - hidden on desktop by default */
-.mobile-hint {
-    display: none;
-}
-
 @media (max-width: 768px) {
-    /* Show mobile hint only on mobile */
-    .mobile-hint {
-        display: block !important;
-    }
-    
     /* Settings panel columns - stack vertically */
     [data-testid="stExpander"] [data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
@@ -43,10 +33,7 @@ GLOBAL_CSS = """
     }
     .st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]) {
         flex-shrink: 0 !important;
-        min-width: 44px !important;
-    }
-    .st-key-schedule-grid :is([data-testid="column"],[data-testid="stColumn"]):first-child {
-        min-width: 112px !important;
+        min-width: 36px !important;
     }
     
     /* Reduce text sizes */
@@ -231,6 +218,30 @@ GLOBAL_CSS = """
 /* Takvim: geniş ekranda gün adı başlık satırında; telefonda sütunlar alt alta
    dizildiği için başlık ve boş kutular gizlenir, gün adı kartta yazar. */
 .cal-gun-adi { display: none; font-weight: 600; }
+/* Görev yeri değiştir (🔄): kartın altında ayrı satır yerine sağ üst köşede küçük simge. */
+.st-key-cal-grid :is([data-testid="column"],[data-testid="stColumn"]) > [data-testid="stVerticalBlock"] {
+    position: relative;
+}
+.st-key-cal-grid [class*="st-key-cal_swap_"] {
+    position: absolute !important;
+    top: 4px;
+    right: 4px;
+    width: auto !important;
+    z-index: 5;
+}
+.st-key-cal-grid [class*="st-key-cal_swap_"] button {
+    min-height: 26px !important;
+    height: 26px !important;
+    width: 30px !important;
+    padding: 0 !important;
+    font-size: 13px !important;
+    background: transparent !important;
+    border: 1px solid rgba(128,128,128,.3) !important;
+    border-radius: 7px !important;
+}
+.st-key-cal-grid [class*="st-key-cal_swap_"] button:hover {
+    background: rgba(128,128,128,.15) !important;
+}
 @media (max-width: 640px) {
     .st-key-cal-head { display: none !important; }
     .st-key-cal-grid :is([data-testid="column"],[data-testid="stColumn"]):has(.cal-empty) { display: none !important; }
@@ -452,10 +463,36 @@ def grid_css(ui, name_col_px, col_bg_css):
      * This must follow the shared grid-button rule above. Otherwise its
      * min-height:30px declaration wins in the mobile cascade.
      */
+    /* Telefonda bir hafta (7 gün) ekrana sığsın: hücre 36 px, isim sütunu
+       88 px ve kısa ad ("Ayşe Y."), rozet adın altında. */
+    :is(.st-key-schedule-grid, .st-key-preference-grid) [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]) {{
+        min-width: 36px !important;
+        flex-shrink: 0 !important;
+    }}
+    :is(.st-key-schedule-grid, .st-key-preference-grid) [data-testid="stHorizontalBlock"] > :is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {{
+        flex: 0 0 88px !important;
+        min-width: 88px !important;
+        max-width: 88px !important;
+    }}
+    .grid-name {{
+        flex-wrap: wrap !important;
+        row-gap: 1px !important;
+        font-size: 12px !important;
+        line-height: 1.2;
+        /* Düğme (40 px) boyunda; iki satır (ad + rozet) dikeyde ortalı. */
+        min-height: 40px !important;
+        align-content: center;
+    }}
+    .grid-name .nm-full {{ display: none !important; }}
+    .grid-name .nm-short {{ display: inline !important; max-width: 68px; }}
+    .grid-name .nm-dot {{ width: 8px !important; height: 8px !important; }}
+    .grid-name .nm-badge {{ font-size: 10px !important; padding: 0 5px !important; }}
+    .st-key-preference-legend .legend-wide {{ display: none !important; }}
+    .st-key-preference-legend .legend-fold {{ display: block !important; }}
     :is(.st-key-preference-grid, .st-key-schedule-grid) .stButton > button {{
-        min-width: 44px !important;
-        min-height: 44px !important;
-        width: 44px !important;
+        min-width: 34px !important;
+        min-height: 40px !important;
+        width: 34px !important;
         padding: 0 !important;
         font-size: 16px !important;
         font-weight: 800 !important;
@@ -465,6 +502,9 @@ def grid_css(ui, name_col_px, col_bg_css):
         transform: none !important;
     }}
 }}
+.grid-name .nm-short {{ display: none; }}
+.st-key-preference-legend .legend-fold {{ display: none; }}
+.st-key-preference-legend .legend-fold summary {{ margin: 6px 0 2px; }}
 .st-key-preference-legend .preference-legend-swatch {{
     display: inline-flex;
     align-items: center;

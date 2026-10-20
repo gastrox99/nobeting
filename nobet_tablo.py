@@ -14,6 +14,7 @@ from nobet_core import (
     normalize_preference_grid,
     parse_holiday_days,
     redo_history_state,
+    short_display_names,
     undo_history_state,
     update_locked_cells,
     use_compact_schedule_editor,
@@ -153,7 +154,8 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                 f"{{ background:{ui['weekend_bg']}!important; border-radius:6px; }}"
             )
     col_bg_css = "\n".join(col_bg_css_parts)
-    name_col_px = name_column_width(isimler)
+    # Rozet "6 · 2 HS" (toplam · hafta sonu/tatil) için yer ayrılır.
+    name_col_px = name_column_width(isimler, maximum=240, badge_px=56)
 
     st.markdown(grid_css(ui, name_col_px, col_bg_css), unsafe_allow_html=True)
 
@@ -166,7 +168,11 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
     def _draw_day_header():
         header_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
         with header_cols[0]:
-            st.markdown(f"<div class='grid-head' style='font-size:13px;font-weight:700;color:{ui['muted']};padding:2px 4px;'>İSİM&nbsp;&nbsp;#</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='grid-head' style='font-size:12px;font-weight:700;color:{ui['muted']};padding:2px 4px;'"
+                " title='Kişi · toplam nöbet · hafta sonu/tatil (HS) nöbeti'>Kişi · Nöbet</div>",
+                unsafe_allow_html=True,
+            )
         for i, col in enumerate(sutunlar):
             with header_cols[i + 1]:
                 day_num = gun_detaylari[col]['day_num']
@@ -247,24 +253,34 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                 st.rerun()
     else:
         _person_limits = st.session_state.get('person_limits', {})
+        _short_names = short_display_names(isimler)
+        _special_cols = [c for c in sutunlar if gun_detaylari[c]['weekend'] or gun_detaylari[c]['holiday']]
         _locked_now = active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)
         for person in isimler:
             row_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
             with row_cols[0]:
                 count = int(st.session_state.schedule_bool.loc[person].sum()) if person in st.session_state.schedule_bool.index else 0
+                special_count = int(st.session_state.schedule_bool.loc[person, _special_cols].sum()) if (
+                    person in st.session_state.schedule_bool.index and _special_cols) else 0
                 p_lim = _person_limits.get(person, {})
                 min_l = p_lim.get('min', 0)
                 max_l = p_lim.get('max', 999)
                 badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
                 pc = person_colors.get(person, "#e2e8f0")
+                # Telefonda kısa ad ("Ayşe Y.") ve rozet alt satırda (CSS: .grid-name);
+                # rozet: toplam · hafta sonu/tatil nöbeti.
                 st.markdown(
-                    f"<div style='font-size:13px;white-space:nowrap;padding:2px 4px;color:{ui['name_text']};"
+                    f"<div class='grid-name' style='font-size:13px;white-space:nowrap;padding:2px 4px;color:{ui['name_text']};"
                     f"display:flex;flex-wrap:nowrap;align-items:center;gap:4px;min-height:30px;overflow:hidden;'"
-                    f" title='{escape_html(person)}'>"
-                    f"<span style='flex-shrink:0;width:11px;height:11px;border-radius:50%;"
+                    f" title='{escape_html(person)}: {count} nöbet, {special_count} hafta sonu/tatil'>"
+                    f"<span class='nm-dot' style='flex-shrink:0;width:11px;height:11px;border-radius:50%;"
                     f"background:{pc};border:1px solid rgba(0,0,0,0.12);'></span>"
-                    f"<b style='min-width:0;overflow:hidden;text-overflow:ellipsis;'>{escape_html(person)}</b>"
-                    f"<span style='flex-shrink:0;background:{badge_bg};color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;'>{count}</span>"
+                    f"<b class='nm-full' style='min-width:0;overflow:hidden;text-overflow:ellipsis;'>{escape_html(person)}</b>"
+                    f"<b class='nm-short' style='min-width:0;overflow:hidden;text-overflow:ellipsis;'>"
+                    f"{escape_html(_short_names.get(person, person))}</b>"
+                    f"<span class='nm-badge' style='flex-shrink:0;background:{badge_bg};color:#fff;border-radius:10px;"
+                    f"padding:1px 7px;font-size:11px;font-weight:700;'>{count}"
+                    f"<span style='font-weight:600;opacity:.85;'> · {special_count} HS</span></span>"
                     f"</div>",
                     unsafe_allow_html=True
                 )
@@ -329,18 +345,22 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
     _on = [x for x in _legend_states if not x.get("soft")]
     _off = [x for x in _legend_states if x.get("soft")]
     _row_label = f"style='color:{ui['muted']};font-size:11px;font-weight:700;letter-spacing:.04em;margin-right:10px;'"
-    legend_container.markdown(
+    _legend_rows = (
         "<div style='display:flex;flex-direction:column;gap:4px;margin-top:6px;'>"
         f"<div style='display:flex;flex-wrap:wrap;align-items:center;'><span {_row_label}>NÖBETLİ</span>"
         + "".join(_legend_item(x, x["description"].replace("Atandı + ", "")) for x in _on)
         + "</div>"
         f"<div style='display:flex;flex-wrap:wrap;align-items:center;'><span {_row_label}>NÖBETSİZ</span>"
         + "".join(_legend_item(x, x["description"]) for x in _off)
-        + "</div></div>",
+        + "</div></div>"
+    )
+    # Masaüstünde açık; telefonda "🎨 Renkler" altında katlı (CSS: .legend-wide/.legend-fold).
+    legend_container.markdown(
+        f"<div class='legend-wide'>{_legend_rows}</div>"
+        f"<details class='legend-fold'><summary style='cursor:pointer;color:{ui['legend_text']};font-size:13px;'>"
+        f"🎨 Renkler</summary>{_legend_rows}</details>",
         unsafe_allow_html=True,
     )
-
-    st.markdown('<p class="mobile-hint" style="color:#888;font-size:12px;margin:4px 0;">📱 Mobilde yana kaydırın →</p>', unsafe_allow_html=True)
 
 
 # Hızlı giriş türleri: tablodaki boya düğmeleriyle aynı kodlar.
