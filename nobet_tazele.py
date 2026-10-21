@@ -65,7 +65,7 @@ def fresh_modules(names, force=False):
     return reloaded
 
 
-# --- Çalışan kodun sürüm etiketi ------------------------------------------------
+# --- Diskteki kodun sürüm etiketi -----------------------------------------------
 
 _version_cache = {}
 
@@ -152,10 +152,12 @@ def _git_commit():
 
 
 def code_version():
-    """Ör. ``"b141db1 · 3f9a2c1"``: commit (varsa) ve dosya içeriklerinin özeti.
+    """Diskteki kodun etiketi, ör. ``"b141db1 · 3f9a2c1"``: commit (varsa) ve dosya içeriklerinin özeti.
 
     Commit, Cloud'un çektiği kodu; özet, diskteki dosyaların gerçekten ne olduğunu
     gösterir (commit okunamasa ya da elle değiştirilmiş dosya olsa da doğru kalır).
+    Hafızadaki modüller bununla ancak tazeleme başarılı olduysa aynıdır; bu yüzden
+    günlükteki "yeniden yüklenemedi" satırıyla birlikte okunmalıdır.
     """
     commit = _git_commit()
     digest = _content_digest()

@@ -101,7 +101,7 @@ def log_unexpected(action, exc):
 
 
 def _code_version():
-    """Çalışan kodun kısa etiketi (nobet_tazele.py); günlükte hangi kodun hata verdiği görünsün."""
+    """Diskteki kodun kısa etiketi (nobet_tazele.py); günlükte hangi kodla hata alındığı görünsün."""
     try:
         from nobet_tazele import code_version
         return code_version()

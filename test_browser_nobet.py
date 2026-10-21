@@ -112,7 +112,7 @@ def test_manual_assignment_updates_visible_total_without_simulation(app_url):
                 permissions=["clipboard-read", "clipboard-write"],
             )
             page = context.new_page()
-            page.goto(app_url)
+            _goto(page, app_url)
             _set_team(page, f"{PERSON}, Browser Test Ayşe")
             # Streamlit hides the native radio input; click its visible label.
             page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
@@ -138,10 +138,22 @@ def _open_app(playwright, app_url, team, color_scheme="light"):
     browser_path = os.environ.get("CHROMIUM_EXECUTABLE") or shutil.which("chromium")
     browser = playwright.chromium.launch(headless=True, executable_path=browser_path, args=["--no-sandbox"])
     page = browser.new_context(viewport={"width": 1600, "height": 1000}, color_scheme=color_scheme).new_page()
-    page.goto(app_url)
+    _goto(page, app_url)
     _set_team(page, team)
     page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
     return browser, page
+
+
+def _goto(page, app_url):
+    """Sayfayı açar ve ilk çizimin bitmesini bekler.
+
+    Ayarlar paneli açılışta kısa bir an kapalı çizilip sonra açılıyor; o arada
+    "görünmüyor" deyip başlığa tıklamak açılacak paneli kapatırdı
+    (test_browser_yedek._open_app ile aynı bekleme).
+    """
+    page.goto(app_url)
+    page.get_by_text("⚙️ Ayarlar").wait_for()
+    _wait_idle(page)
 
 
 def _settings_box(page, role, name):

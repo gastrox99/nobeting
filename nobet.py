@@ -40,11 +40,7 @@ def _fresh_modules(force=False):
 
 
 def _render_version_footer():
-    """Sayfanın en altında küçük, soluk sürüm satırı: canlıda hangi kodun çalıştığı görünür.
-
-    Ekip boşken (ilk açılış) çizilmez: orada Ayarlar kutusunun hemen altına düşüyor
-    ve tarayıcı testinde açılışların bir kısmında (2/40) Ayarlar kutusu kapalı kaldı.
-    """
+    """Sayfanın en altında küçük, soluk sürüm satırı: sunucudaki kodun sürümü görünür."""
     st.markdown(
         '<div class="surum-etiketi" style="text-align:center;font-size:0.7rem;'
         f'color:#9ca3af;margin-top:2rem;">sürüm {_escape(code_version())}</div>',
@@ -822,6 +818,7 @@ if _settings_conflict:
 if not isimler:
     if _db_ready:
         render_backup_section(current_owner, yil, ay, isimler)
+    _render_version_footer()
     st.stop()
 
 # --- GÜN VERİLERİ ---

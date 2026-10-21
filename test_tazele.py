@@ -90,15 +90,18 @@ def test_gercek_modul_dosyasi_yarida_kalinca_yeniden_denenir(tmp_path, monkeypat
 
 
 def test_baska_oturum_yuklemenin_bitmesini_bekler(tmp_path, monkeypatch):
-    # Oyuncak modül yüklenirken "basladi" der ve "devam" gelene kadar bekler.
+    # Oyuncak modül her yüklenişinde sayacı artırır; yeni sürümü yüklenirken
+    # "basladi" der ve "devam" gelene kadar bekler.
     gate = types.ModuleType("oyuncak_kapi")
-    gate.basladi, gate.devam = threading.Event(), threading.Event()
+    gate.basladi, gate.devam, gate.sayac = threading.Event(), threading.Event(), 0
     monkeypatch.setitem(sys.modules, "oyuncak_kapi", gate)
     write, _ = _toy(tmp_path, monkeypatch, "oyuncak_kilit")
-    write("def surum():\n    return 'v1'\n")
+    write("import oyuncak_kapi\noyuncak_kapi.sayac += 1\ndef surum():\n    return 'v1'\n")
     module = importlib.import_module("oyuncak_kilit")
-    write("import oyuncak_kapi\noyuncak_kapi.basladi.set()\noyuncak_kapi.devam.wait(30)\n"
+    write("import oyuncak_kapi\noyuncak_kapi.sayac += 1\n"
+          "oyuncak_kapi.basladi.set()\noyuncak_kapi.devam.wait(30)\n"
           "def surum():\n    return 'v2'\ndef yeni_fonk():\n    return 2\n")
+    assert gate.sayac == 1
 
     # B oturumu kilide vardığını (ya da beklemeden bittiğini) bildirir; böylece
     # A'yı ancak B gerçekten kilitte beklerken (ya da işini bitirmişken) bırakırız.
@@ -119,7 +122,7 @@ def test_baska_oturum_yuklemenin_bitmesini_bekler(tmp_path, monkeypatch):
 
     def session_b():
         try:
-            nobet_tazele.fresh_modules(["oyuncak_kilit"])
+            seen["donus"] = nobet_tazele.fresh_modules(["oyuncak_kilit"])
             seen["surum"], seen["yeni_fonk"] = module.surum(), hasattr(module, "yeni_fonk")
         finally:
             b_vardi.set()
@@ -133,7 +136,12 @@ def test_baska_oturum_yuklemenin_bitmesini_bekler(tmp_path, monkeypatch):
     gate.devam.set()
     a.join(30)
     b.join(30)
-    assert seen == {"surum": "v2", "yeni_fonk": True}
+    assert not a.is_alive() and not b.is_alive()
+    # B, A'nın yüklemesini bekledi ve onu hazır buldu: kendisi yeniden yüklemedi
+    # (kilit olmasa A'nın boşalttığı damgayı görüp modülü ikinci kez yüklerdi;
+    # Python'un içe aktarma kilidi yalnızca sıraya sokar, tekrarı engellemez).
+    assert seen == {"donus": [], "surum": "v2", "yeni_fonk": True}
+    assert gate.sayac == 2
 
 
 def test_onceki_modul_yenilenince_sonrakiler_de_yenilenir(tmp_path, monkeypatch):
