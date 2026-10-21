@@ -2940,6 +2940,22 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
     if isinstance(simulation_count, bool) or not isinstance(simulation_count, Integral) or simulation_count <= 0:
         raise ValueError("Simülasyon sayısı pozitif bir tamsayı olmalıdır.")
 
+    # Tercih ve izin tabloları denemeler boyunca değişmez; iç döngüde pandas'tan
+    # hücre hücre okumak yerine bir kez sözlük/kümeye çevrilir (aynı karşılaştırmalar).
+    pref_bonus_of = {}
+    if df_preferred is not None:
+        pref_cols = [c for c in sutunlar if c in df_preferred.columns]
+        for kisi in isimler:
+            if kisi not in df_preferred.index:
+                continue
+            for c in pref_cols:
+                pref_val = df_preferred.at[kisi, c]
+                if pref_val == 1:
+                    pref_bonus_of[(kisi, c)] = -500
+                elif pref_val == 2:
+                    pref_bonus_of[(kisi, c)] = 300
+    unwanted_cells = {(k, c) for k in isimler for c in sutunlar if df_unwanted_bool.at[k, c]}
+
     best_schedule = None
     best_score = float('inf')
     best_empty = 0
@@ -2987,13 +3003,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             total = done + history_total.get(p, 0) + (random.random() * 0.5)
             sp_count = stat_special[p] + history_special.get(p, 0)
             consecutive_penalty = stat_consecutive_weekend[p] * 200
-            pref_bonus = 0
-            if df_preferred is not None and p in df_preferred.index and col in df_preferred.columns:
-                pref_val = df_preferred.at[p, col]
-                if pref_val == 1:
-                    pref_bonus = -500
-                elif pref_val == 2:
-                    pref_bonus = 300
+            pref_bonus = pref_bonus_of.get((p, col), 0)
             limit_penalty = 0
             min_bonus = 0
             if person_limits and p in person_limits:
@@ -3051,7 +3061,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             for k in isimler:
                 if k in sabitler:
                     continue
-                if df_unwanted_bool.at[k, col]:
+                if (k, col) in unwanted_cells:
                     continue
                 if (gun_no - last_shift_day[k]) <= min_bosluk:
                     continue

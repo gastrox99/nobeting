@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import calendar
+import contextlib
 import time
 import os
 # Streamlit Cloud yeni kodu çektiğinde db / nobet_core / nobet_iyilestir'in
@@ -487,18 +488,51 @@ if "settings_expanded" not in st.session_state:
     st.session_state.settings_expanded = not st.session_state.get("isimler_text", "").strip()
 settings_expanded = st.session_state.settings_expanded
 
-with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
+
+def _toggle_settings():
+    st.session_state.settings_expanded = not st.session_state.get("settings_expanded", False)
+
+
+def _ayar_kutusu(widget, key, closed_value, *args, **kwargs):
+    """Ayarlar açıksa kutuyu çizer; kapalıysa çizmeden kutunun son değerini döner.
+
+    Kapalı kutunun durumu Streamlit'te silinir; o zaman ayarlarda saklanan değer
+    (açıkken kutuya verilen başlangıç değeri) kullanılır.
+    """
+    if settings_expanded:
+        return widget(*args, key=key, **kwargs)
+    return st.session_state.get(key, closed_value)
+
+
+# st.expander kapalıyken de içini her çalışmada çizer (14 kişide ~360 öğe, her
+# tıklamada ~160 ms). Bu yüzden başlık bir düğme; açık/kapalı oturumda saklanır
+# ve kapalıyken yalnızca hesaplar yapılır, kutular çizilmez.
+_settings_panel = st.container(border=True, key="ayarlar-panel")
+_settings_panel.button(
+    "⚙️ Ayarlar", key="ayarlar_ac_kapa", on_click=_toggle_settings, type="tertiary",
+    width="stretch", icon=":material/expand_more:" if settings_expanded else ":material/chevron_right:",
+)
+if not settings_expanded:
+    # Açılınca ekip tablosu kutuları ayarlardaki metinden yeniden kurulsun
+    # (kapalıyken silinen kutu durumu boş isim sanılmasın).
+    st.session_state.pop("_ekip_source", None)
+
+with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else _settings_panel):
     # Sol: ekip tablosu. Sağ: dönem, tatil, ücret ve görev ayarları alt alta.
-    set_col1, set_col2 = st.columns([3, 2])
+    if settings_expanded:
+        set_col1, set_col2 = st.columns([3, 2])
+    else:
+        set_col1 = set_col2 = contextlib.nullcontext()
     
     with set_col1:
         # Ekip tablosu (isim + limitler) ayarlardaki metinleri düzenler (nobet_ekip.py).
-        render_team_table()
+        if settings_expanded:
+            render_team_table()
         isimler_input = st.session_state.get("isimler_text", "")
         _raw_isimler = [x.strip() for x in isimler_input.split(",") if x.strip()]
         # Aynı isim iki kez yazılırsa tablo çöküyordu; her ismi bir kez kullan.
         isimler = list(dict.fromkeys(_raw_isimler))
-        if len(isimler) < len(_raw_isimler):
+        if settings_expanded and len(isimler) < len(_raw_isimler):
             _dupes = sorted({x for x in _raw_isimler if _raw_isimler.count(x) > 1})
             st.warning(f"⚠️ Birden fazla yazılan isim(ler) bir kez kullanıldı: **{', '.join(_dupes)}**")
         # Bir ismin yazımı düzeltilince o kişinin nöbetleri/tercihleri silinmesin.
@@ -528,18 +562,21 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             st.session_state.last_stored_team_text = isimler_input
     
     with set_col2:
-        yil = st.number_input("📅 Yıl", YEAR_MIN, YEAR_MAX, value=st.session_state.get('yil_val', current_year), key='yil_input_direct')
+        yil = _ayar_kutusu(st.number_input, 'yil_input_direct', st.session_state.get('yil_val', current_year),
+                           "📅 Yıl", YEAR_MIN, YEAR_MAX, value=st.session_state.get('yil_val', current_year))
         st.session_state.yil_val = yil
         
         ay_options = list(range(1, 13))
-        ay = st.selectbox("📆 Ay", ay_options, index=ay_options.index(st.session_state.get('ay_val', current_month)), key='ay_input_direct',
+        ay = _ayar_kutusu(st.selectbox, 'ay_input_direct', st.session_state.get('ay_val', current_month),
+                          "📆 Ay", ay_options, index=ay_options.index(st.session_state.get('ay_val', current_month)),
                           format_func=lambda m: TR_AY_ADLARI[m])
         st.session_state.ay_val = ay
         # Tarayıcı sekmesinde/Ana Ekranda hangi ayın açık olduğu görünsün.
         st.set_page_config(page_title=f"{TR_AY_ADLARI[ay]} {yil} · Adil Nöbet")
         
         gun_sayisi = calendar.monthrange(yil, ay)[1]
-        kişi_sayısı = st.slider("👤 Nöbet Başına Kişi:", 1, 5, value=st.session_state.get('kisi_sayisi_val', 2), key='kisi_slider_direct')
+        kişi_sayısı = _ayar_kutusu(st.slider, 'kisi_slider_direct', st.session_state.get('kisi_sayisi_val', 2),
+                                   "👤 Nöbet Başına Kişi:", 1, 5, value=st.session_state.get('kisi_sayisi_val', 2))
         st.session_state.kisi_sayisi_val = kişi_sayısı
     
         # Dinlenme ayarı kaldırıldı: nöbetten sonra her zaman 1 gün boş kalır.
@@ -553,10 +590,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         _official = official_holidays(yil, ay)
         # %25 tatil artırımı yalnız resmi/dini bayramlara; elle eklenenlere değil.
         resmi_tatil_gunleri = frozenset(day for day, _ in _official)
-        holiday_input = st.text_input(
+        holiday_input = _ayar_kutusu(
+            st.text_input, f"w_holiday_text_{_holiday_period}",
+            holiday_text_for_period(_holidays_by_period, yil, ay),
             "🎉 Tatiller (bu ay):",
             value=holiday_text_for_period(_holidays_by_period, yil, ay),
-            key=f"w_holiday_text_{_holiday_period}",
             placeholder="1,2,5-10,23",
         )
         # Yalnızca elle değiştirilen tatiller saklanır; varsayılan resmi
@@ -565,12 +603,12 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             _holidays_by_period.pop(_holiday_period, None)
         else:
             _holidays_by_period[_holiday_period] = holiday_input
-        if _official:
+        if settings_expanded and _official:
             st.caption("Resmi tatiller: " + ", ".join(official_holidays_summary(yil, ay)))
-        if not religious_holidays_known(yil):
+        if settings_expanded and not religious_holidays_known(yil):
             st.caption(f"{yil} dini bayram tarihleri tanımlı değil; varsa elle ekleyin.")
         tatil_gunleri, invalid_holiday_parts = parse_holiday_days(holiday_input, gun_sayisi)
-        if invalid_holiday_parts:
+        if settings_expanded and invalid_holiday_parts:
             invalid_text = ", ".join(f"'{part}'" for part in invalid_holiday_parts)
             st.warning(
                 f"⚠️ Şu tatil girdileri uygulanmadı: {invalid_text}. "
@@ -581,11 +619,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         # gelir; elle değiştirilen ücret, ünvan/dönem/birim değişene kadar kalır.
         _unvan_options = list(NOBET_UNVANLARI) + [ELLE_UNVAN]
         _unvan_saved = st.session_state.get("unvan_val", ELLE_UNVAN)
-        unvan = st.selectbox(
+        unvan = _ayar_kutusu(
+            st.selectbox, "w_unvan_val", _unvan_saved if _unvan_saved in _unvan_options else ELLE_UNVAN,
             "🩺 Ünvan:",
             _unvan_options,
             index=_unvan_options.index(_unvan_saved) if _unvan_saved in _unvan_options else len(_unvan_options) - 1,
-            key="w_unvan_val",
         )
         st.session_state.unvan_val = unvan
         _rate_info = None
@@ -594,11 +632,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
         tatil_artirimi = TATIL_ARTIRIMI if unvan != ELLE_UNVAN else 0.0
         gece_artirimi = GECE_FARKI if unvan != ELLE_UNVAN else 0.0
         if unvan != ELLE_UNVAN:
-            riskli = st.checkbox(
+            riskli = _ayar_kutusu(
+                st.checkbox, "w_riskli_birim_val", st.session_state.get("riskli_birim_val", False),
                 "Riskli birim (%50 artırımlı)",
                 help="Acil, yoğun bakım, ameliyathane, diyaliz, 112 gibi birimler.",
                 value=st.session_state.get("riskli_birim_val", False),
-                key="w_riskli_birim_val",
             )
             st.session_state.riskli_birim_val = riskli
             _rate_info = unvan_saat_ucreti(unvan, yil, ay, riskli)
@@ -612,8 +650,9 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             st.session_state.nobet_ucreti_kaynak = None
         if "w_nobet_ucreti_val" not in st.session_state:
             st.session_state["w_nobet_ucreti_val"] = float(st.session_state.get("nobet_ucreti_val", 1.0))
-        nobet_ucreti = st.number_input(
-            "💰 Saat Ücreti (TL):", key="w_nobet_ucreti_val",
+        nobet_ucreti = _ayar_kutusu(
+            st.number_input, "w_nobet_ucreti_val", st.session_state["w_nobet_ucreti_val"],
+            "💰 Saat Ücreti (TL):",
             # Uzun açıklama "?" içinde; altta yalnızca ücretler görünür. Metin sabit
             # kalır (değişen yardım metni kutunun değerini sıfırlayabilir).
             help=(
@@ -632,7 +671,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             saat_ucretleri_secili = saat_ucretleri(nobet_ucreti, tatil_artirimi, gece_artirimi)
         else:
             saat_ucretleri_secili = nobet_ucreti
-        if _rate_info:
+        if settings_expanded and _rate_info:
             _rate_note = (
                 f"Gündüz {tr_sayi(_rate_info['gunduz'])} · gece (20-08) {tr_sayi(_rate_info['gece'])} · "
                 f"bayram {tr_sayi(_rate_info['tatil'])} · bayram gece {tr_sayi(_rate_info['tatil_gece'])} TL/sa "
@@ -644,23 +683,23 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
                 _rate_note += " Ücret elle değiştirildi."
             st.caption(_rate_note)
     
-        role_names_input = st.text_input(
+        role_names_input = _ayar_kutusu(
+            st.text_input, "w_role_names_text", st.session_state.get("role_names_text", ""),
             "🏷️ Görev İsimleri:",
             value=st.session_state.get("role_names_text", ""),
-            key="w_role_names_text",
             placeholder="Örn: AYB, GYB"
         )
         st.session_state.role_names_text = role_names_input
         
         # Aynı ad iki kez ya da "Tarih" yazılırsa kişiler listeden kayboluyordu.
         role_names, _role_adjusted = normalize_role_names(role_names_input, kişi_sayısı)
-        if _role_adjusted:
+        if settings_expanded and _role_adjusted:
             st.caption("Görev adları benzersiz olmalı: " + ", ".join(f"{a} → {b}" for a, b in _role_adjusted))
         st.session_state.rol_isimleri = role_names
-        st.session_state.balance_history = st.checkbox(
+        st.session_state.balance_history = _ayar_kutusu(
+            st.checkbox, "w_balance_history", st.session_state.get("balance_history", True),
             "⚖️ Önceki aylarla dengele",
             value=st.session_state.get("balance_history", True),
-            key="w_balance_history",
             help=(
                 "Son 3 ayda daha çok hafta sonu/tatil ya da toplamda daha çok nöbet tutanlara "
                 "bu ay biraz daha az verilir. Bayram ve diğer tatil günleri son 12 ayda "
@@ -668,16 +707,17 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
             ),
         )
 
-    st.divider()
-    # Kişi kuralları yan yana: birlikte çalışamayan, birlikte çalışmak isteyen,
-    # sabit görev yeri (görev 2 ve üstüyse).
-    _yasak_col, _birlikte_col, _sabit_col = st.columns([2, 2, 1.3], gap="large")
-    with _yasak_col:
-        render_pair_matrix(isimler)
-    with _birlikte_col:
-        render_pair_matrix(isimler, "birlikte")
-    with _sabit_col:
-        render_fixed_roles(isimler, role_names)
+    if settings_expanded:
+        st.divider()
+        # Kişi kuralları yan yana: birlikte çalışamayan, birlikte çalışmak isteyen,
+        # sabit görev yeri (görev 2 ve üstüyse).
+        _yasak_col, _birlikte_col, _sabit_col = st.columns([2, 2, 1.3], gap="large")
+        with _yasak_col:
+            render_pair_matrix(isimler)
+        with _birlikte_col:
+            render_pair_matrix(isimler, "birlikte")
+        with _sabit_col:
+            render_fixed_roles(isimler, role_names)
     forbidden_input = st.session_state.get("forbidden_pairs_text", "")
     limits_text = st.session_state.get("limits_text", "")
 
@@ -686,7 +726,7 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     _fp_unknown = unknown_names([name for pair in forbidden_pairs for name in pair], isimler)
     st.session_state.forbidden_pairs = forbidden_pairs
     st.session_state.fp_unknown_names = _fp_unknown
-    if _fp_unknown:
+    if settings_expanded and _fp_unknown:
         st.warning(f"⚠️ Yasak çiftte ekip listesinde olmayan isim(ler): **{', '.join(_fp_unknown)}** — kısıtlama uygulanmayacak.")
     # Birlikte nöbet isteyenler; aynı ikili yasaksa yasak geçerlidir.
     st.session_state.together_pairs = {
@@ -705,11 +745,11 @@ with st.expander("⚙️ Ayarlar", expanded=settings_expanded):
     }
     st.session_state.person_limits = person_limits
     st.session_state.lim_unknown_names = _lim_unknown
-    if _lim_errors:
+    if settings_expanded and _lim_errors:
         st.error("❌ Kişisel limit sorunları:\n" + "\n".join(_lim_errors))
-    if _lim_invalid_lines:
+    if settings_expanded and _lim_invalid_lines:
         st.warning(f"⚠️ {len(_lim_invalid_lines)} satır geçersiz format (doğru format: `İsim:min-max`) — atlandı.")
-    if _lim_unknown:
+    if settings_expanded and _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(_lim_unknown)}** — limit uygulanmayacak.")
 
 _revert_notice = st.session_state.pop("period_revert_notice", None)

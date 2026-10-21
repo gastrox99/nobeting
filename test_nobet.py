@@ -1786,7 +1786,7 @@ class TestBackup(unittest.TestCase):
         cursor = _FakeDbCursor()
         inserted = []
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)), \
-                patch.object(db, "execute_values", side_effect=lambda _c, _sql, rows: inserted.extend(rows)):
+                patch.object(db, "execute_values", side_effect=lambda _c, _sql, rows, **_k: inserted.extend(rows)):
             self.assertTrue(db.restore_owner_data(backup, owner="ali@gmail.com"))
         upsert_sql, upsert_params = cursor.executed[0]
         self.assertIn("ON CONFLICT (owner, name, year, month)", upsert_sql)

@@ -527,10 +527,11 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
                     for col in schedule_df.columns
                 ]
                 if rows:
+                    # Tek INSERT: varsayılan sayfa 100 satır, 434 satırda 5 gidiş-dönüş ediyordu.
                     execute_values(cur, '''
                         INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
                         VALUES %s
-                    ''', rows)
+                    ''', rows, page_size=len(rows))
                 saved_version = _schedule_content_version(cur, schedule_id)
                 if conflict_version is not None and conflict_version != saved_version:
                     # Başka yerde farklı içerik yazılmış: geri al (with conn), üzerine yazma.
@@ -1190,7 +1191,7 @@ def restore_owner_data(backup, owner=""):
                         execute_values(cur, '''
                             INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
                             VALUES %s
-                        ''', rows)
+                        ''', rows, page_size=len(rows))
                 if backup.get("settings") is not None:
                     cur.execute('''
                         INSERT INTO app_settings (key, value, updated_at)

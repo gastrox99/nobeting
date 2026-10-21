@@ -157,10 +157,17 @@ def _goto(page, app_url):
 
 
 def _settings_box(page, role, name):
-    """Ayarlar paneli ekip girilince kapanır; gerekirse açıp alanı döndür."""
+    """Ayarlar paneli ekip girilince kapanır; gerekirse açıp alanı döndür.
+
+    Panelin açık/kapalı durumu sunucuda tutulur: sayfa ilk yüklenirken (içi henüz
+    çizilmeden) başlığa tıklamak açık gelecek paneli kapatırdı, önce çizim beklenir.
+    """
     box = page.get_by_role(role, name=name)
+    page.get_by_text("⚙️ Ayarlar").wait_for()
     if not box.is_visible():
-        page.get_by_text("⚙️ Ayarlar").click()
+        _wait_idle(page, 1.0)
+        if not box.is_visible():
+            page.get_by_text("⚙️ Ayarlar").click()
     box.wait_for()
     return box
 
