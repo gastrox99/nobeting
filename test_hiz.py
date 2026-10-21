@@ -405,3 +405,82 @@ def test_paylasim_ekip_onbellegi_sahipleri_karistirmaz_hatayi_saklamaz():
     finally:
         nobet_paylasim._cached_team.clear()
     assert calls == ["a@x", "a@x", "b@x"]
+
+
+# --- İnceleme bulguları: kapalı panelde eski değer geri gelmez, kapanırken yazılan kaybolmaz ---
+
+@pytest.fixture
+def kayitli_uygulama():
+    """Ekip kayıtlı açılış; ayar kayıtları ``saved`` listesine düşer."""
+    import streamlit
+    saved = []
+    fakes = _fakes(save_app_settings=lambda settings, *a, **k: saved.append(dict(settings)) or True)
+    streamlit.cache_resource.clear()
+    with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, create=True, **fakes):
+        yield _app, saved
+    streamlit.cache_resource.clear()
+
+
+def test_kapali_panelde_kutudan_secilen_ay_ok_tusunun_eski_ayina_donmez(kayitli_uygulama):
+    app, saved = kayitli_uygulama
+    at = app()
+    at.run()
+    # Açmadan iki kez ileri ok: ok, ay kutusunun anahtarına doğrudan yazar.
+    at.button(key="month_next").click().run()
+    at.button(key="month_next").click().run()
+    assert (at.session_state["yil_val"], at.session_state["ay_val"]) == (2026, 12)
+    _ac_kapa(at)
+    at.selectbox(key="ay_input_direct").set_value(3).run()
+    _ac_kapa(at)
+    for _ in range(3):
+        at.run()
+        assert (at.session_state["yil_val"], at.session_state["ay_val"]) == (2026, 3)
+    at.button(key="month_next").click().run()
+    assert (at.session_state["yil_val"], at.session_state["ay_val"]) == (2026, 4)
+    at.run()
+    assert [e.value for e in at.exception] == []
+    assert saved and (saved[-1]["year"], saved[-1]["month"]) == (2026, 4)
+    _ac_kapa(at)
+    assert at.selectbox(key="ay_input_direct").value == 4
+
+
+def test_kapali_panelde_elle_girilen_ucret_varsayilana_donmez(kayitli_uygulama):
+    app, saved = kayitli_uygulama
+    at = app()
+    at.run()
+    _ac_kapa(at)
+    at.number_input(key="w_nobet_ucreti_val").set_value(250.0).run()
+    _ac_kapa(at)
+    for _ in range(3):
+        at.run()
+        assert at.session_state["nobet_ucreti_val"] == 250.0
+    assert saved and saved[-1]["hourly_rate"] == 250.0
+    _ac_kapa(at)
+    assert at.number_input(key="w_nobet_ucreti_val").value == 250.0
+
+
+def test_ayarlar_kapanirken_yazilan_ekip_ve_kutular_kaybolmaz(kayitli_uygulama):
+    """Enter/Tab'a basmadan doğrudan başlığa tıklanınca kutu değerleri aynı çalışmada gelir."""
+    app, saved = kayitli_uygulama
+    at = app()
+    at.run()
+    _ac_kapa(at)
+    rows = at.session_state["_ekip_rows"]
+    at.text_input(key=f"w_ekip_ad_{rows - 1}").input("Ece")
+    at.number_input(key="w_ekip_max_0").set_value(5)
+    at.checkbox(key="w_birlikte::Ali::Can").check()
+    at.text_input(key="w_role_names_text").input("AYB, GYB")
+    hk = next(t.key for t in at.text_input if str(t.key).startswith("w_holiday_text_"))
+    at.text_input(key=hk).input("3,4")
+    _ac_kapa(at)  # hepsi kapanma tıklamasıyla aynı çalışmada
+    at.run()
+    assert not _acik(at)
+    assert at.session_state["isimler_text"] == "Ali, Ayşe, Can, Deniz, Ece"
+    assert at.session_state["limits_text"] == "Ali:0-5"
+    assert at.session_state["together_pairs_text"] == "Ali-Can"
+    assert at.session_state["role_names_text"] == "AYB, GYB"
+    assert at.session_state["holidays_by_period"]["2026-10"] == "3,4"
+    assert saved and saved[-1]["team"] == "Ali, Ayşe, Can, Deniz, Ece"
+    _ac_kapa(at)
+    assert [at.text_input(key=f"w_ekip_ad_{i}").value for i in range(5)] == ["Ali", "Ayşe", "Can", "Deniz", "Ece"]
+    assert at.checkbox(key="w_birlikte::Ali::Can").value is True

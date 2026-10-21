@@ -43,11 +43,13 @@ def _write_rows(rows):
     state["_ekip_mins"] = [row.get("min", 0) for row in rows]
 
 
-def render_team_table():
+def render_team_table(draw=True):
     """Her satır bir kişi: isim, en fazla nöbet, en fazla hafta sonu (boş = sınırsız).
 
     Sondaki boş satıra isim yazılınca altına yeni boş satır açılır; ismi
     silinen satır kaldırılır. Bir satırdaki ismi değiştirmek ad değişikliğidir.
+    ``draw=False``: kutulardan gelen değerler metne yazılır, tablo çizilmez
+    (Ayarlar kapanırken).
     """
     state = st.session_state
     source = (state.get("isimler_text", ""), state.get("limits_text", ""))
@@ -76,6 +78,8 @@ def render_team_table():
             state.isimler_text = names_text
             state.limits_text = limits_text
     state["_ekip_source"] = (state.get("isimler_text", ""), state.get("limits_text", ""))
+    if not draw:
+        return
 
     with st.container(key="ekip-tablo"):
         st.markdown("**👥 Ekip**")
@@ -106,7 +110,7 @@ def render_team_table():
 _FIXED = "w_sabit_gorev::{}"
 
 
-def render_fixed_roles(isimler, role_names):
+def render_fixed_roles(isimler, role_names, draw=True):
     """Görev başına çoklu seçim: seçilen kişinin nöbetleri hep o görevde olur.
 
     Ayarlarda ``fixed_roles`` ({kişi: görev}) olarak saklanır. Bir kişi tek
@@ -139,6 +143,8 @@ def render_fixed_roles(isimler, role_names):
         shown[role] = [p for p in isimler if fixed.get(p) == role]
         state[_FIXED.format(role)] = list(shown[role])
     state["_sabit_shown"] = shown
+    if not draw:
+        return
 
     with st.container(key="sabit-gorev"):
         st.markdown("**📌 Sabit görev yeri**")
@@ -209,8 +215,11 @@ def _render_pair_list(isimler, text, kind="yasak"):
     return text, options
 
 
-def render_pair_matrix(isimler, kind="yasak"):
-    """Kişi × kişi çapraz tablo, bir tıkla işaretlenir (``kind``: yasak / birlikte)."""
+def render_pair_matrix(isimler, kind="yasak", draw=True):
+    """Kişi × kişi çapraz tablo, bir tıkla işaretlenir (``kind``: yasak / birlikte).
+
+    ``draw=False``: son tıklama metne işlenir, tablo çizilmez (Ayarlar kapanırken).
+    """
     state = st.session_state
     table = PAIR_TABLES[kind]
     text_key = table["text"]
@@ -219,6 +228,8 @@ def render_pair_matrix(isimler, kind="yasak"):
         text, options = _render_pair_list(isimler, text, kind)
         if text != state.get(text_key, ""):
             state[text_key] = text
+        if not draw:
+            return
         with st.container(key=f"{kind}-tablo"):
             st.markdown(table["title"])
             st.multiselect(
@@ -243,6 +254,8 @@ def render_pair_matrix(isimler, kind="yasak"):
     for a, b in _ikililer:
         state[_pair_key(a, b, kind)] = tuple(sorted((a, b))) in pairs
     state[shown_key] = {pair for pair in pairs}
+    if not draw:
+        return
 
     with st.container(key=f"{kind}-tablo"):
         st.markdown(table["title"])

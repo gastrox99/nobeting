@@ -2460,7 +2460,7 @@ class TestSecmeliAyarlar(unittest.TestCase):
         self.assertNotIn('st.text_area(\n            "🚫 Birlikte', source)
         self.assertNotIn('st.text_area(\n            "👥 Ekip', source)
         self.assertNotIn('"📊 Kişisel Limitler:"', source)
-        self.assertIn("render_team_table()", source)
+        self.assertIn("render_team_table(draw=settings_expanded)", source)
         self.assertIn("render_pair_matrix(isimler)", source)
 
 
@@ -2938,7 +2938,7 @@ class TestAppSettingsPersistence(unittest.TestCase):
         # Ayarlar widget'lar çizilmeden önce yüklenmeli.
         self.assertLess(
             source.index("apply_app_settings(st.session_state"),
-            source.index("render_team_table()"),
+            source.index("render_team_table(draw=settings_expanded)"),
         )
 
 

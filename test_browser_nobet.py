@@ -426,6 +426,32 @@ def test_ayar_kutulari_art_arda_duzenlenebilir(app_url):
             browser.close()
 
 
+def test_ayarlar_kapanirken_yazilan_isim_ve_ucret_kaybolmaz(app_url):
+    # Enter/Tab'a basmadan doğrudan "⚙️ Ayarlar" başlığına tıklanınca yazılan
+    # kaybolmamalı; kapalı panelde ay oku ve yeniden çizimler ücreti eskiye döndürmemeli.
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Kapa Ali, Kapa Ayşe")
+        try:
+            _team_values(page)
+            _team_box(page, 3).fill("Kapa Can")
+            page.get_by_text("⚙️ Ayarlar").click()
+            _wait_idle(page)
+            assert not _team_box(page, 1).is_visible()
+            assert _team_values(page) == ["Kapa Ali", "Kapa Ayşe", "Kapa Can"]
+            _settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").fill("275")
+            page.get_by_text("⚙️ Ayarlar").click()
+            _wait_idle(page)
+            page.get_by_role("button", name="›").click()
+            _wait_idle(page)
+            page.get_by_role("button", name="‹").click()
+            _wait_idle(page)
+            assert float(_settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").input_value()) == 275
+            assert _team_values(page) == ["Kapa Ali", "Kapa Ayşe", "Kapa Can"]
+            _no_exception(page)
+        finally:
+            browser.close()
+
+
 def test_unvan_secilince_saat_ucreti_gelir_ve_elle_degisir(app_url):
     with sync_playwright() as playwright:
         browser, page = _open_app(playwright, app_url, "Ücret Ali, Ücret Ayşe")

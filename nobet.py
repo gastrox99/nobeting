@@ -490,18 +490,27 @@ settings_expanded = st.session_state.settings_expanded
 
 
 def _toggle_settings():
-    st.session_state.settings_expanded = not st.session_state.get("settings_expanded", False)
+    _open = not st.session_state.get("settings_expanded", False)
+    st.session_state.settings_expanded = _open
+    # Kapanma çalışmasında, Enter/Tab'a basılmadan yazılıp başlığa tıklanınca gelen
+    # kutu değerleri (ekip tablosu, çapraz tablolar) çizimsiz işlenir.
+    st.session_state._ayarlar_kapaniyor = not _open
 
 
 def _ayar_kutusu(widget, key, closed_value, *args, **kwargs):
-    """Ayarlar açıksa kutuyu çizer; kapalıysa çizmeden kutunun son değerini döner.
+    """Ayarlar açıksa kutuyu çizer; kapalıysa çizmeden değeri döner ve kutu durumunu siler.
 
-    Kapalı kutunun durumu Streamlit'te silinir; o zaman ayarlarda saklanan değer
-    (açıkken kutuya verilen başlangıç değeri) kullanılır.
+    Kapalıyken kutunun durumu tamamen silinir (pop): Streamlit çizilmeyen kutunun
+    son değerini (kutu kimliğiyle saklanan) atar ama aynı anahtara kodla daha önce
+    yazılmış eski değer (ör. ok tuşunun yazdığı ay, varsayılan ücret) kalır ve
+    sonraki çalışmada geri gelirdi. Kalıcı değer ``closed_value`` (``*_val``) içinde;
+    bu çalışmada kutudan ya da koddan gelen değer varsa o döner.
     """
     if settings_expanded:
         return widget(*args, key=key, **kwargs)
-    return st.session_state.get(key, closed_value)
+    if key in st.session_state:
+        return st.session_state.pop(key)
+    return closed_value
 
 
 # st.expander kapalıyken de içini her çalışmada çizer (14 kişide ~360 öğe, her
@@ -512,10 +521,7 @@ _settings_panel.button(
     "⚙️ Ayarlar", key="ayarlar_ac_kapa", on_click=_toggle_settings, type="tertiary",
     width="stretch", icon=":material/expand_more:" if settings_expanded else ":material/chevron_right:",
 )
-if not settings_expanded:
-    # Açılınca ekip tablosu kutuları ayarlardaki metinden yeniden kurulsun
-    # (kapalıyken silinen kutu durumu boş isim sanılmasın).
-    st.session_state.pop("_ekip_source", None)
+_settings_closing = bool(st.session_state.pop("_ayarlar_kapaniyor", False)) and not settings_expanded
 
 with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else _settings_panel):
     # Sol: ekip tablosu. Sağ: dönem, tatil, ücret ve görev ayarları alt alta.
@@ -526,8 +532,12 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
     
     with set_col1:
         # Ekip tablosu (isim + limitler) ayarlardaki metinleri düzenler (nobet_ekip.py).
-        if settings_expanded:
-            render_team_table()
+        if settings_expanded or _settings_closing:
+            render_team_table(draw=settings_expanded)
+        if not settings_expanded:
+            # Açılınca ekip tablosu kutuları ayarlardaki metinden yeniden kurulsun
+            # (kapalıyken silinen kutu durumu boş isim sanılmasın).
+            st.session_state.pop("_ekip_source", None)
         isimler_input = st.session_state.get("isimler_text", "")
         _raw_isimler = [x.strip() for x in isimler_input.split(",") if x.strip()]
         # Aynı isim iki kez yazılırsa tablo çöküyordu; her ismi bir kez kullan.
@@ -718,6 +728,10 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
             render_pair_matrix(isimler, "birlikte")
         with _sabit_col:
             render_fixed_roles(isimler, role_names)
+    elif _settings_closing:
+        render_pair_matrix(isimler, draw=False)
+        render_pair_matrix(isimler, "birlikte", draw=False)
+        render_fixed_roles(isimler, role_names, draw=False)
     forbidden_input = st.session_state.get("forbidden_pairs_text", "")
     limits_text = st.session_state.get("limits_text", "")
 
