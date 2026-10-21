@@ -83,6 +83,13 @@ def _cached_shared_rows(owner, year, month):
     return _shared_rows(owner, year, month)
 
 
+# Ekip listesi de 10 sn önbellekte. Parametre adı "_" ile başlamamalı: Streamlit
+# öyle parametreleri önbellek anahtarına katmaz, sahipler karışırdı.
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_team(owner):
+    return _team_of(owner)
+
+
 @st.cache_data(ttl=10, show_spinner=False)
 def _cached_person_pay(owner, year, month, person, list_days):
     return _person_pay(owner, year, month, person, list_days)
@@ -108,7 +115,10 @@ def render_shared_view(token, db_ready):
         st.error("Bu paylaşım bağlantısı geçersiz ya da kapatılmış.")
         return
     _owner, _year, _month = _target
-    _team = _team_of(_owner)
+    try:
+        _team = _cached_team(_owner)
+    except Exception:
+        _team = []
     if not _team:
         # Ekip girilmemişse eskisi gibi yalnızca liste (talep gönderilemez).
         _render_list(_owner, _year, _month, None)
@@ -146,7 +156,8 @@ def render_shared_view(token, db_ready):
 
 
 def _team_of(_owner):
-    _settings = load_app_settings(owner=_owner) or {}
+    # Okuma hatası yükseltilir: önbelleğe boş ekip yazılmasın (çağıran yakalar).
+    _settings = load_app_settings(owner=_owner, raise_on_error=True) or {}
     return list(dict.fromkeys(
         _name.strip() for _name in str(_settings.get("team") or "").split(",") if _name.strip()
     ))

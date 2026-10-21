@@ -126,6 +126,7 @@ def test_buyuk_ekipte_yasak_ikili_listesi_kullanilir():
         at.session_state["isimler_text"] = names
         at.session_state["storage_init"] = {}
         at.session_state["yil_val"], at.session_state["ay_val"] = 2026, 10
+        at.session_state["settings_expanded"] = True  # Ayarlar açık
         at.run()
         assert [e.value for e in at.exception] == []
         # 27 kişi: 700'den fazla onay kutusu yerine tek seçim listesi.
@@ -197,6 +198,7 @@ def test_cakisan_ayda_ay_degistirmek_once_uyarir():
         at.run()
         assert [e.value for e in at.exception] == []
         assert at.session_state["autosave_conflict_period"] == (2026, 10)
+        at.button(key="ayarlar_ac_kapa").click().run()  # Ayarlar ekip varken kapalı başlar
         # Ay değiştirme: ilk denemede engellenir ve çakışma uyarısı çıkar.
         at.number_input(key="ay_input_direct").set_value(11) if any(
             n.key == "ay_input_direct" for n in at.number_input

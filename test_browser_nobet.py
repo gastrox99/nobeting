@@ -157,10 +157,17 @@ def _goto(page, app_url):
 
 
 def _settings_box(page, role, name):
-    """Ayarlar paneli ekip girilince kapanır; gerekirse açıp alanı döndür."""
+    """Ayarlar paneli ekip girilince kapanır; gerekirse açıp alanı döndür.
+
+    Panelin açık/kapalı durumu sunucuda tutulur: sayfa ilk yüklenirken (içi henüz
+    çizilmeden) başlığa tıklamak açık gelecek paneli kapatırdı, önce çizim beklenir.
+    """
     box = page.get_by_role(role, name=name)
+    page.get_by_text("⚙️ Ayarlar").wait_for()
     if not box.is_visible():
-        page.get_by_text("⚙️ Ayarlar").click()
+        _wait_idle(page, 1.0)
+        if not box.is_visible():
+            page.get_by_text("⚙️ Ayarlar").click()
     box.wait_for()
     return box
 
@@ -414,6 +421,32 @@ def test_ayar_kutulari_art_arda_duzenlenebilir(app_url):
                 box.press("Enter")
                 _wait_idle(page)
                 assert _settings_box(page, "textbox", "🏷️ Görev İsimleri:").input_value() == roles
+            _no_exception(page)
+        finally:
+            browser.close()
+
+
+def test_ayarlar_kapanirken_yazilan_isim_ve_ucret_kaybolmaz(app_url):
+    # Enter/Tab'a basmadan doğrudan "⚙️ Ayarlar" başlığına tıklanınca yazılan
+    # kaybolmamalı; kapalı panelde ay oku ve yeniden çizimler ücreti eskiye döndürmemeli.
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Kapa Ali, Kapa Ayşe")
+        try:
+            _team_values(page)
+            _team_box(page, 3).fill("Kapa Can")
+            page.get_by_text("⚙️ Ayarlar").click()
+            _wait_idle(page)
+            assert not _team_box(page, 1).is_visible()
+            assert _team_values(page) == ["Kapa Ali", "Kapa Ayşe", "Kapa Can"]
+            _settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").fill("275")
+            page.get_by_text("⚙️ Ayarlar").click()
+            _wait_idle(page)
+            page.get_by_role("button", name="›").click()
+            _wait_idle(page)
+            page.get_by_role("button", name="‹").click()
+            _wait_idle(page)
+            assert float(_settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").input_value()) == 275
+            assert _team_values(page) == ["Kapa Ali", "Kapa Ayşe", "Kapa Can"]
             _no_exception(page)
         finally:
             browser.close()

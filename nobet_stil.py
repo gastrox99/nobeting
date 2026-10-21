@@ -14,10 +14,10 @@ GLOBAL_CSS = """
 
 @media (max-width: 768px) {
     /* Settings panel columns - stack vertically */
-    [data-testid="stExpander"] [data-testid="stHorizontalBlock"] {
+    :is([data-testid="stExpander"], .st-key-ayarlar-panel) [data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
     }
-    [data-testid="stExpander"] :is([data-testid="column"],[data-testid="stColumn"]) {
+    :is([data-testid="stExpander"], .st-key-ayarlar-panel) :is([data-testid="column"],[data-testid="stColumn"]) {
         flex: 1 1 100% !important;
         min-width: 100% !important;
     }
@@ -47,7 +47,7 @@ GLOBAL_CSS = """
     }
     
     /* Make expander title smaller */
-    [data-testid="stExpander"] summary {
+    :is([data-testid="stExpander"] summary, .st-key-ayarlar_ac_kapa button) {
         font-size: 13px !important;
     }
 
@@ -74,42 +74,60 @@ GLOBAL_CSS = """
 
 /* Tablet adjustments */
 @media (max-width: 1024px) and (min-width: 769px) {
-    [data-testid="stExpander"] :is([data-testid="column"],[data-testid="stColumn"]) {
+    :is([data-testid="stExpander"], .st-key-ayarlar-panel) :is([data-testid="column"],[data-testid="stColumn"]) {
         flex: 1 1 45% !important;
         min-width: 45% !important;
     }
 }
+/* Ayarlar paneli: başlığı bir düğme (açık/kapalı oturumda saklanır); eski açılır
+   kutu gibi görünür: ok ve yazı solda, açıkken başlığın altında ince çizgi. */
+.st-key-ayarlar-panel { padding: 0 !important; gap: 0 !important; overflow: hidden; }
+.st-key-ayarlar_ac_kapa button {
+    justify-content: flex-start !important;
+    width: 100% !important;
+    min-height: 2.5rem;
+    padding: 0.5rem 1rem !important;
+    border-radius: 0 !important;
+    font-weight: 400;
+    color: inherit !important;
+}
+.st-key-ayarlar_ac_kapa button > div { justify-content: flex-start !important; }
+.st-key-ayarlar_ac_kapa button:hover { background-color: rgba(151, 166, 195, 0.15); }
+.st-key-ayarlar-icerik {
+    padding: 1rem;
+    border-top: 1px solid rgba(128, 128, 128, 0.25);
+}
 /* Ayarlar: ekip tablosu ve birlikte çalışamayanlar çapraz tablosu.
    Satırlar dar ekranda da yan yana kalır; çapraz tablo yana kayar. */
-[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stHorizontalBlock"],
-[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stHorizontalBlock"] {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-ekip-tablo [data-testid="stHorizontalBlock"],
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stHorizontalBlock"] {
     flex-wrap: nowrap !important;
     gap: 6px;
 }
-[data-testid="stExpander"] .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]) {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]) {
     min-width: 0 !important;
     flex-basis: auto !important;
 }
-[data-testid="stExpander"] .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]):first-child {
     flex: 3 1 0 !important;
 }
-[data-testid="stExpander"] .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]):not(:first-child) {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-ekip-tablo :is([data-testid="column"],[data-testid="stColumn"]):not(:first-child) {
     flex: 2 1 0 !important;
 }
-[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stVerticalBlock"] { gap: 4px; }
-[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stNumberInputStepDown"],
-[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stNumberInputStepUp"] { display: none; }
-[data-testid="stExpander"] .st-key-ekip-tablo [data-testid="stCaptionContainer"] { line-height: 1.2; }
-[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-ekip-tablo [data-testid="stVerticalBlock"] { gap: 4px; }
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-ekip-tablo [data-testid="stNumberInputStepDown"],
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-ekip-tablo [data-testid="stNumberInputStepUp"] { display: none; }
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-ekip-tablo [data-testid="stCaptionContainer"] { line-height: 1.2; }
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
 }
-[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stVerticalBlock"] { gap: 0; }
-[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stHorizontalBlock"] {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stVerticalBlock"] { gap: 0; }
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stHorizontalBlock"] {
     min-width: max-content;
     gap: 0;
 }
-[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) :is([data-testid="column"],[data-testid="stColumn"]) {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) :is([data-testid="column"],[data-testid="stColumn"]) {
     flex: 0 0 34px !important;
     width: 34px !important;
     min-width: 34px !important;
@@ -117,14 +135,14 @@ GLOBAL_CSS = """
     align-items: center;
     justify-content: center;
 }
-[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) :is([data-testid="column"],[data-testid="stColumn"]):first-child {
     flex: 0 0 110px !important;
     width: 110px !important;
     min-width: 110px !important;
     justify-content: flex-start;
 }
-[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stCheckbox"] { margin: 0 auto; min-height: 0; }
-[data-testid="stExpander"] :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stCheckbox"] label { margin: 0; padding: 0; }
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stCheckbox"] { margin: 0 auto; min-height: 0; }
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) :is(.st-key-yasak-tablo, .st-key-birlikte-tablo) [data-testid="stCheckbox"] label { margin: 0; padding: 0; }
 .yasak-baslik {
     writing-mode: vertical-rl;
     transform: rotate(180deg);
@@ -203,12 +221,12 @@ GLOBAL_CSS = """
 }
 
 /* Hızlı giriş: Kişi · Günler · Tür · Uygula telefonda da tek satır. */
-[data-testid="stExpander"] .st-key-quick-entry [data-testid="stHorizontalBlock"] {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-quick-entry [data-testid="stHorizontalBlock"] {
     flex-wrap: nowrap !important;
     gap: 6px !important;
     align-items: center;
 }
-[data-testid="stExpander"] .st-key-quick-entry :is([data-testid="column"],[data-testid="stColumn"]) {
+:is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-quick-entry :is([data-testid="column"],[data-testid="stColumn"]) {
     min-width: 0 !important;
     width: auto !important;
 }

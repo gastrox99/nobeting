@@ -634,6 +634,8 @@ def _month(at):
 
 def _pick_month(at, month):
     """Ayı seçer; geri alınırsa uyarı bu çalışmada görünür, mesajları döndürür."""
+    if not any(box.key == "ay_input_direct" for box in at.selectbox):
+        at.button(key="ayarlar_ac_kapa").click().run()  # Ayarlar ekip varken kapalı başlar
     at.selectbox(key="ay_input_direct").set_value(month).run()
     messages = _messages(at)
     at.run()
