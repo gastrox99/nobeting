@@ -311,6 +311,37 @@ def _version_box(key):
     return box
 
 
+# Okunamayan (bozuk) kayıt bölümleri: kullanıcının gördüğü adlar.
+CORRUPT_PART_LABELS = {
+    "pref_json": "Tercihler",
+    "settings_json": "Kilitler ve saklı kişiler",
+    "rows_liste_json": "Görev yerleri",
+    "app_settings": "Ekip ve ayarlar",
+}
+CORRUPT_RECOVER_LABEL = "Okunamayan bölümü boşaltıp devam et"
+_BACKUP_HINT = (
+    "Bu ayın yedeği varsa sayfanın altındaki «Yedek ve Excel yükleme» bölümünden "
+    "geri yükleyebilirsiniz"
+)
+
+
+def _corrupt_labels(fields):
+    return ", ".join(dict.fromkeys(CORRUPT_PART_LABELS.get(_f, _f) for _f in fields))
+
+
+def _render_corrupt_notice(kind, message, labels, on_confirm):
+    """Bozuk kayıt uyarısı ve açık onaylı "boşaltıp devam et" düğmesi."""
+    st.warning(message)
+    _confirmed = st.checkbox(
+        f"Okunamayan bölüm ({labels}) boş kabul edilsin; bu bölümdeki kayıtlı bilgi silinir.",
+        key=f"corrupt_confirm_{kind}",
+    )
+    st.button(
+        CORRUPT_RECOVER_LABEL, key=f"corrupt_recover_{kind}",
+        disabled=not _confirmed, on_click=on_confirm,
+    )
+
+
 def _own_writer_tag():
     """Bu oturumun cihaz/oturum etiketi; kayıtla birlikte saklanır, çakışmada gösterilir."""
     try:
@@ -369,9 +400,17 @@ if 'app_settings_loaded' not in st.session_state:
             # kalıyor, çakışma denetimi kapanıyordu). Sürüm değiştirilebilir bir
             # kutuda tutulur: kayıt bu kutuyu yerinde günceller (bkz. _version_box).
             st.session_state.settings_version = {"version": None}
+            st.session_state.pop("settings_corrupt", None)
+            _settings_corrupt = []
             _stored_settings = load_app_settings(
                 owner=current_owner, raise_on_error=True, version_out=st.session_state.settings_version,
+                corrupt_out=_settings_corrupt,
             )
+            if _settings_corrupt:
+                # Bozuk kayıt boş sayılıp üzerine yazılmasın (sessiz veri kaybı);
+                # kullanıcı onaylayınca bilinen sürümle yeniden yazılabilir.
+                st.session_state.app_settings_load_failed = True
+                st.session_state.settings_corrupt = _settings_corrupt
         except Exception:
             st.session_state.app_settings_load_failed = True
             st.warning("⚠️ Kayıtlı ekip ve ayarlar okunamadı. Sayfayı yenileyin.")
@@ -875,6 +914,25 @@ if st.session_state.get("settings_version_unknown"):
         "⚠️ Kayıtlı ekip ve ayarların sürümü okunamadı. Başka bir yerde yapılmış "
         "değişikliklerin üzerine yazmamak için ayarlar kaydedilmiyor. Sayfayı yenileyin."
     )
+
+
+def _accept_corrupt_settings():
+    # Okunamayan ayar kaydı boş kabul edilir; sürüm yüklemeden bilindiği için
+    # sonraki kayıt (ekip girilince) çakışma denetimiyle yazılır.
+    st.session_state.pop("settings_corrupt", None)
+    st.session_state.app_settings_load_failed = False
+
+
+if st.session_state.get("settings_corrupt"):
+    _render_corrupt_notice(
+        "settings",
+        f"⚠️ Kayıtlı ayarlarda okunamayan bir bölüm var: {_corrupt_labels(st.session_state.settings_corrupt)}. "
+        "Ekip ve ayarlar boş gösteriliyor; kayıtlı hâlin üzerine yazılmaması için ayarlar "
+        "kaydedilmiyor. Yedeğiniz varsa sayfanın altındaki «Yedek ve Excel yükleme» bölümünden "
+        "geri yükleyebilirsiniz; yoksa aşağıdan okunamayan bölümü boşaltıp ekibi yeniden girebilirsiniz.",
+        _corrupt_labels(st.session_state.settings_corrupt),
+        _accept_corrupt_settings,
+    )
 _settings_conflict = st.session_state.get("settings_conflict")
 if _settings_conflict:
     _conflict_fields = (
@@ -965,13 +1023,17 @@ if 'schedule_bool' not in st.session_state:
     # kayıt durdurulur (VersionUnknown). Eskiden sürüm ayrı okunuyordu: o okuma
     # hata verip çizelge yine yüklenince çakışma denetimi kapanıyordu.
     st.session_state.schedule_version = {"version": None}
+    # Kaydın okunamayan bölümleri (ör. bozuk tercih JSON'u): sağlam kısımlar yüklenir,
+    # bozuk bölüm boş gösterilir ama üzerine yazılmaz (bkz. aşağıdaki uyarı).
+    st.session_state.pop("schedule_corrupt", None)
+    _corrupt_fields = []
 
     def _load_auto_schedule(name, year, month):
         # Keep "no saved schedule yet" distinct from a database failure so the
         # first visit does not show a misleading error.
         return load_schedule(
             name, year, month, raise_on_error=True, owner=current_owner,
-            version_out=st.session_state.schedule_version,
+            version_out=st.session_state.schedule_version, corrupt_out=_corrupt_fields,
         )
 
     def _on_auto_load_error(_error):
@@ -1012,6 +1074,10 @@ if 'schedule_bool' not in st.session_state:
         aliases=st.session_state.get("name_aliases"),
     ):
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
+    if _corrupt_fields:
+        # Okunamayan bölüm boş sayılıp ilk değişiklikte kalıcı olarak silinmesin.
+        st.session_state.autosave_blocked_period = (yil, ay)
+        st.session_state.schedule_corrupt = {"period": (yil, ay), "fields": list(_corrupt_fields)}
     # Yüklenen durum zaten veritabanındakiyle aynı; ilk kayıt ilk değişiklikte yapılır.
     st.session_state.autosave_baseline_pending = True
     # Tercih Belirle'de kaydedilmeden kalan tercihler (sayfa yenilendi ya da
@@ -1091,6 +1157,31 @@ else:
             st.session_state.cached_rows_liste = None  # Reset cache
 
 st.session_state.loaded_period = (yil, ay)
+
+
+def _accept_corrupt_schedule():
+    # Okunamayan bölüm boş kabul edilir; kayıt yeniden açılır ve bu çalışmada
+    # yüklemedeki sürümle (başka yerde değiştiyse çakışma uyarısı) temiz yazılır.
+    _state = st.session_state.pop("schedule_corrupt", None) or {}
+    if st.session_state.get("autosave_blocked_period") == _state.get("period"):
+        st.session_state.autosave_blocked_period = None
+    st.session_state.last_saved_fingerprint = None
+    st.session_state.last_saved_core_fingerprint = None
+    st.session_state.save_preferences_now = True
+    st.session_state.persistence_error = None
+
+
+_schedule_corrupt = st.session_state.get("schedule_corrupt")
+if _schedule_corrupt and _schedule_corrupt.get("period") == (yil, ay):
+    _render_corrupt_notice(
+        "schedule",
+        f"⚠️ Bu ayın kaydında okunamayan bir bölüm var: {_corrupt_labels(_schedule_corrupt['fields'])}. "
+        "Nöbetler gösteriliyor. Okunamayan bölümün üzerine yazılmaması için bu ayın otomatik "
+        "kaydı durduruldu; bu sırada yapılan değişiklikler kaydedilmez. "
+        f"{_BACKUP_HINT}; yoksa aşağıdan okunamayan bölümü boşaltıp devam edebilirsiniz.",
+        _corrupt_labels(_schedule_corrupt["fields"]),
+        _accept_corrupt_schedule,
+    )
 
 if 'inputs' not in st.session_state: st.session_state.inputs = {i: "" for i in isimler}
 if 'cached_rows_liste' not in st.session_state: st.session_state.cached_rows_liste = None

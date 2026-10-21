@@ -66,6 +66,13 @@ def run_requested_snapshot(current_owner, yil, ay):
         st.error("❌ Son değişiklik kaydedilemediği için yedek alınmadı. Tekrar deneyin.")
         return
     _period_sn = (yil, ay)
+    if (st.session_state.get("schedule_corrupt") or {}).get("period") == _period_sn:
+        # Ayın tek yedeği var: bozuk kayıt sağlam yedeğin yerine geçmesin.
+        st.error(
+            "❌ Bu ayın kaydında okunamayan bir bölüm olduğu için yedek alınmadı; "
+            "önceki yedek geri yükleme için saklı kalır."
+        )
+        return
     try:
         _summary_sn = take_snapshot(SNAPSHOT_MANUAL, current_owner, _period_sn)
     except Exception:

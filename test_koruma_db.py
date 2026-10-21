@@ -297,7 +297,7 @@ def test_uygulama_kayitta_yuklemeyle_okunan_surumu_kullanir():
         seen["schedule"] = expected_version
         return True
 
-    def load_settings(owner="", raise_on_error=False, version_out=None):
+    def load_settings(owner="", raise_on_error=False, version_out=None, corrupt_out=None):
         version_out["version"] = "h:ayar"
         return None
 
@@ -580,7 +580,7 @@ def test_sema_hazirligi_sonra_basarili_olunca_ayarlar_yuklenir(monkeypatch):
     inits = [False, True]
     loads = []
 
-    def load_settings(owner="", raise_on_error=False, version_out=None):
+    def load_settings(owner="", raise_on_error=False, version_out=None, corrupt_out=None):
         loads.append(1)
         if version_out is not None:
             version_out["version"] = "h:ayar"
@@ -606,7 +606,7 @@ def test_sema_hazirligi_sonra_basarili_olunca_ayarlar_yuklenir(monkeypatch):
 def test_baglanti_yokken_degisen_ayarlarin_uzerine_yuklenmez(monkeypatch):
     inits = [False, True]
 
-    def load_settings(owner="", raise_on_error=False, version_out=None):
+    def load_settings(owner="", raise_on_error=False, version_out=None, corrupt_out=None):
         if version_out is not None:
             version_out["version"] = "h:ayar"
         return {"team": TEAM}
