@@ -17,10 +17,6 @@ from itertools import combinations as _combinations, permutations as _permutatio
 from html import escape as _escape_html
 from numbers import Integral
 
-# Yüklendiği andaki dosya zamanı: nobet.py bu farklılaşınca modülü yeniden yükler
-# (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
-_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
-
 
 def normalize_owner_email(value):
     """Kullanıcıyı eşleştirmek için e-postayı tek biçime getirir."""
@@ -4596,3 +4592,9 @@ def kisi_ucret_dokumu(nobet_gunleri, yil, ay, settings, preferences=None, person
 def _unvan(value):
     value = ESKI_UNVAN_ADLARI.get(value, value)
     return value if value == ELLE_UNVAN or value in NOBET_UNVANLARI else None
+
+
+# Yüklendiği andaki dosya zamanı: nobet_tazele.py bu farklılaşınca modülü yeniden
+# yükler (Streamlit Cloud yeni kodu çekse de eski modül hafızada kalabiliyordu).
+# En sonda: yükleme yarıda hata verirse damga eski kalır, sonraki çalışma yeniden dener.
+_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns

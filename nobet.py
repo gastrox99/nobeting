@@ -7,12 +7,14 @@ import os
 # Streamlit Cloud yeni kodu çektiğinde db / nobet_core / nobet_iyilestir'in
 # eski hâli hafızada kalabiliyor: yeni fonksiyonlar "ImportError" veriyor ya da
 # eski kod sessizce çalışıyordu (İyileştir "ortools yüklü değil" diyordu).
-# Her çalışmada dosyası değişen modül (ve ona bağlı olanlar) yeniden yüklenir.
+# Her çalışmada dosyası değişen modül (ve ona bağlı olanlar) kilit altında
+# yeniden yüklenir (nobet_tazele.py; o dosyanın kendisi yeniden yüklenmez).
 import importlib
 import importlib.util
-import sys
+from html import escape as _escape
 import db as _db_module  # noqa: F401
 import nobet_core as _core_module  # noqa: F401
+from nobet_tazele import code_version, fresh_modules
 
 # Arayüz bölümleri ayrı dosyalarda. Küçük oldukları için her çalışmada
 # yeniden okunurlar; böylece sunucuda eski bir kopya kalıp yeni nobet.py ile
@@ -29,19 +31,21 @@ _FRESH_MODULES = ("db", "nobet_core", "nobet_iyilestir")
 
 
 def _fresh_modules(force=False):
-    """Dosyası diskte değişmiş (ya da bu sunucuda hiç denetlenmemiş) modülleri yeniden yükler."""
-    reloaded = False
-    for _name in _FRESH_MODULES:
-        _module = sys.modules.get(_name)
-        if _module is None:
-            continue
-        try:
-            _stamp = os.stat(_module.__file__).st_mtime_ns
-        except (OSError, TypeError):
-            continue
-        if force or reloaded or getattr(_module, "_nobet_loaded_stamp", None) != _stamp:
-            importlib.reload(_module)  # modül kendi _nobet_loaded_stamp'ini yeniden yazar
-            reloaded = True
+    """Dosyası diskte değişmiş modülleri kilit altında yeniden yükler (nobet_tazele.py).
+
+    Yükleme yarıda kalırsa damga yazılmaz, sonraki çalışma yeniden dener; aynı anda
+    gelen başka oturum yüklemenin bitmesini bekler.
+    """
+    fresh_modules(_FRESH_MODULES, force=force)
+
+
+def _render_version_footer():
+    """Sayfanın en altında küçük, soluk sürüm satırı: sunucudaki kodun sürümü görünür."""
+    st.markdown(
+        '<div class="surum-etiketi" style="text-align:center;font-size:0.7rem;'
+        f'color:#9ca3af;margin-top:2rem;">sürüm {_escape(code_version())}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 _fresh_modules()
@@ -162,6 +166,7 @@ for _attempt in range(2):
         break
     except ImportError:
         if _attempt:
+            print(f"[nobet] Yenilemeden sonra da içe aktarılamadı (sürüm {code_version()})", flush=True)
             raise
         _fresh_modules(force=True)
 from nobet_stil import GLOBAL_CSS, ui_colors
@@ -210,6 +215,7 @@ st.html(
 _share_token = st.query_params.get("paylas")
 if _share_token:
     render_shared_view(_share_token, _db_ready)
+    _render_version_footer()
     st.stop()
 
 # --- GOOGLE İLE GİRİŞ (isteğe bağlı) ---
@@ -812,6 +818,7 @@ if _settings_conflict:
 if not isimler:
     if _db_ready:
         render_backup_section(current_owner, yil, ay, isimler)
+    _render_version_footer()
     st.stop()
 
 # --- GÜN VERİLERİ ---
@@ -1862,3 +1869,5 @@ st.subheader("📊 Analiz")
 render_analysis_tab(isimler, role_names, _prev_ctx, history_special, history_total, history_holiday,
                     df_stats_load, df_stats_finance, pair_display, df_liste, liste_rows, liste_roles,
                     yil, ay, zorunlu_saat, arife_gunleri, edited_df)
+
+_render_version_footer()

@@ -2207,7 +2207,10 @@ class TestStaleModuleRecovery(unittest.TestCase):
     def test_eski_modul_kalirsa_yenilenip_tekrar_denenir(self):
         source = _app_source("nobet.py")
         recovery = source[source.index("for _attempt in range(2):"):source.index("from streamlit_local_storage")]
-        self.assertIn("except ImportError:\n        if _attempt:\n            raise\n        _fresh_modules(force=True)", recovery)
+        self.assertRegex(
+            recovery,
+            r"except ImportError:\n        if _attempt:\n(            print\(.*\n)?            raise\n        _fresh_modules\(force=True\)",
+        )
         # İçe aktarma listesi tek yerde (eskiden iki kopya elle eş tutuluyordu).
         self.assertEqual(recovery.count("from db import ("), 1)
         self.assertEqual(recovery.count("from nobet_core import ("), 1)
@@ -2220,8 +2223,24 @@ class TestStaleModuleRecovery(unittest.TestCase):
         # nobet_iyilestir eskiyken İyileştir "ortools yüklü değil" diyordu.
         self.assertEqual(re.findall(r'"(\w+)"', listed), ["db", "nobet_core", "nobet_iyilestir"])
         self.assertLess(source.index("\n_fresh_modules()\n"), source.index("for _attempt in range(2):"))
+        # Tazeleme kilit altında nobet_tazele.py'de; davranışı test_tazele.py dener.
+        self.assertIn("fresh_modules(_FRESH_MODULES, force=force)", source)
         for name in ("db.py", "nobet_core.py", "nobet_iyilestir.py"):
-            self.assertIn("_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns", _app_source(name))
+            self.assertTrue(_app_source(name).rstrip().endswith(
+                "_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns"), name)
+
+    def test_tazelenmeyen_yerel_modul_kalmaz(self):
+        # Klasör taraması yerine elle tutulan liste: yeni bir .py eklenip listelere
+        # yazılmazsa canlıda eski kopyası hafızada kalabilirdi; burada yakalanır.
+        source = _app_source("nobet.py")
+        listed = set()
+        for key in ("_FRESH_MODULES", "_UI_MODULES"):
+            listed |= set(re.findall(r'"(\w+)"', re.search(key + r" = \((.*?)\)", source, flags=re.S).group(1)))
+        local = {
+            path.stem for path in Path(__file__).parent.glob("*.py")
+            if not path.name.startswith("test_")
+        }
+        self.assertEqual(local - listed, {"nobet", "nobet_tazele"})
 
     def test_tum_arayuz_dosyalari_yeniden_okunur(self):
         source = _app_source("nobet.py")
