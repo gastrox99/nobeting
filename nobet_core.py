@@ -2296,7 +2296,7 @@ def _balance_holidays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
 def _balance_specials(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                       df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
                       initial_last_shift, history_special, max_moves=200, capped=None,
-                      together_pairs=None):
+                      together_pairs=None, prior_weeks=None):
     """Hafta sonu/tatil sayılarındaki farkı (önceki aylar dahil) takasla azaltır.
 
     Simülasyon seçimi hafta sonu dengesini aya yayma ve bayram takibiyle
@@ -2317,7 +2317,7 @@ def _balance_specials(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
         schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool, df_preferred,
         min_bosluk, forbidden_pairs, fixed_assignments, initial_last_shift,
         special_cols, weekday_cols, extra_counts=history_special, max_moves=max_moves,
-        swap_ok=_no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari),
+        swap_ok=_no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari, prior_weeks),
         together_pairs=together_pairs,
     )
     return _balance_by_swaps(
@@ -2328,15 +2328,44 @@ def _balance_specials(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bo
     )
 
 
-def _no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari):
+def prior_weekend_weeks(gun_detaylari, initial_last_shift):
+    """Önceki ayın son nöbeti hafta sonuna denk geliyorsa {kişi: hafta numarası}.
+
+    Hafta numarası bu ayın günleriyle aynı sayıdır. 0 = önceki ayın son günü.
+    """
+    if not gun_detaylari or not initial_last_shift:
+        return {}
+    info = next(item for item in gun_detaylari.values() if item["day_num"] == 1)
+    raw = info["full_date"].split()[0]
+    day_s, month_s, year_s = raw.split(".")
+    day1 = date(int(year_s), int(month_s), int(day_s))
+    found = {}
+    for person, offset in initial_last_shift.items():
+        if offset is None:
+            continue
+        try:
+            offset = int(offset)
+        except (TypeError, ValueError):
+            continue
+        shift = day1 + timedelta(days=offset - 1)
+        if shift.weekday() >= 5:
+            found[person] = (shift.toordinal() - shift.weekday()) // 7
+    return found
+
+
+def _no_new_back_to_back_weekends(schedule, sutunlar, gun_detaylari, prior_weeks=None):
     """Takas art arda hafta sonu nöbeti oluşturmasın (simülasyon bundan kaçınır)."""
     weekend_days = [c for c in sutunlar if gun_detaylari[c]["weekend"]]
+    prior_weeks = prior_weeks or {}
 
     def back_to_back(person):
-        weeks = sorted({
+        weeks = {
             gun_detaylari[c].get("week", (gun_detaylari[c]["day_num"] - 1) // 7)
             for c in weekend_days if bool(schedule.at[person, c])
-        })
+        }
+        if person in prior_weeks:
+            weeks.add(prior_weeks[person])
+        weeks = sorted(weeks)
         return sum(1 for a, b in zip(weeks, weeks[1:]) if b == a + 1)
 
     def swap_ok(giver, receiver, apply_swap, undo_swap):
@@ -2706,7 +2735,7 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                     df_preferred, min_bosluk, forbidden_pairs, person_limits,
                     fixed_assignments, initial_last_shift, history_special,
                     max_moves=500, history_total=None, history_holiday=None,
-                    together_pairs=None):
+                    together_pairs=None, prior_weeks=None):
     """Toplam nöbet farkını kurallara uyarak en fazla 1'e indirir.
 
     Gün gün ilerleyen seçim ay sonunda toplamlarda kayma bırakabiliyordu
@@ -2727,6 +2756,8 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
     limits = person_limits or {}
     history_total = history_total or {}
     history_holiday = history_holiday or {}
+    prior_weeks = prior_weeks or {}
+    weekend_cols = [c for c in sutunlar if gun_detaylari[c]["weekend"]]
     fixed = set(fixed_assignments or ())
     history = history_special or {}
     initial = initial_last_shift or {}
@@ -2808,9 +2839,21 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                                   - _together_count(others + [receiver], together_pairs))
                         if breaks > 0 and gap == 1:
                             continue
+                    # Önceki ayın hafta sonuna bitişik hafta sonu, başka gün varken seçilmesin.
+                    owned = {
+                        gun_detaylari[c]["week"] for c in weekend_cols if bool(schedule.at[receiver, c])
+                    }
+                    if receiver in prior_weeks:
+                        owned.add(prior_weeks[receiver])
+                    week = gun_detaylari[col]["week"]
+                    links_weekend = (
+                        col in weekend_cols and week not in owned
+                        and ((week - 1) in owned or (week + 1) in owned)
+                    )
                     # Önce hafta içi; verenin tercih ettiği gün en son, alanın tercih ettiği gün önce.
                     score = (
-                        (50 * max(0, breaks))
+                        (80 if links_weekend else 0)
+                        + (50 * max(0, breaks))
                         + (10 if col in special_cols else 0)
                         + (4 if col in friday_cols else 0)
                         + (5 if pref(giver, col) == 1 else 0)
@@ -2917,6 +2960,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         together_pairs = set()
     partners = together_partners(together_pairs)
     initial_last_shift = initial_last_shift or {}
+    prior_weeks = prior_weekend_weeks(gun_detaylari, initial_last_shift)
     history_special = history_special or {}
     history_total = history_total or {}
     history_holiday = history_holiday or {}
@@ -2989,7 +3033,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         worst_gap = {i: 0 for i in isimler}
         stat_consecutive_weekend = {i: 0 for i in isimler}
         pair_count = {}
-        last_weekend_shift = {i: -10 for i in isimler}
+        last_weekend_shift = {i: prior_weeks.get(i, -10) for i in isimler}
         last_shift_day = {i: initial_last_shift.get(i, -10) for i in isimler}
         prev_shift_day = {i: -10 for i in isimler}
         alt_chains = 0
@@ -3007,6 +3051,14 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             total = done + history_total.get(p, 0) + (random.random() * 0.5)
             sp_count = stat_special[p] + history_special.get(p, 0)
             consecutive_penalty = stat_consecutive_weekend[p] * 200
+            # Önceki ayın son hafta sonunun hemen ertesi hafta: seçilirken de ceza.
+            # Sayaç ancak atamadan sonra artar; ceza yalnız ona bakarsa ilk çift kaçardı.
+            if (
+                gun_detaylari[col].get("weekend")
+                and prior_weeks.get(p) is not None
+                and gun_detaylari[col]["week"] == prior_weeks[p] + 1
+            ):
+                consecutive_penalty += 200
             pref_bonus = pref_bonus_of.get((p, col), 0)
             limit_penalty = 0
             min_bonus = 0
@@ -3183,14 +3235,15 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             df_preferred, min_bosluk, forbidden_pairs, person_limits,
             {(p, c) for c, people in fixed_by_col.items() for p in people},
             initial_last_shift, history_special,
-            history_total=history_total, history_holiday=history_holiday,
-            together_pairs=together_pairs,
+                    history_total=history_total, history_holiday=history_holiday,
+            together_pairs=together_pairs, prior_weeks=prior_weeks,
         )
         best_schedule = _balance_specials(
             best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
             df_preferred, min_bosluk, forbidden_pairs,
             {(p, c) for c, people in fixed_by_col.items() for p in people},
             initial_last_shift, history_special, capped=capped, together_pairs=together_pairs,
+            prior_weeks=prior_weeks,
         )
         best_schedule = _balance_fridays(
             best_schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
