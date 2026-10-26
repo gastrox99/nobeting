@@ -327,6 +327,43 @@ GLOBAL_CSS = """
     .cal-gun-adi { display: inline; }
 }
 
+/* Yazdırma (A4 yatay): yalnız nöbet tablosu ve takvim kalır; diğer öğeler yer tutmadan gizlenir. */
+@media print {
+    @page { size: A4 landscape; margin: 6mm; }
+    [data-testid="stHeader"],
+    [data-testid="stSidebar"],
+    [data-testid="stTabs"] [role="tablist"],
+    [data-testid="stPopover"],
+    .st-key-bottom-actions {
+        display: none !important;
+    }
+    [data-testid="stElementContainer"]:not(:has(.st-key-schedule-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
+    [data-testid="stExpander"]:not(:has(.st-key-schedule-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
+    [data-testid="stDivider"]:not(:has(.st-key-schedule-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-cal-head *, .st-key-cal-grid *)) {
+        display: none !important;
+    }
+    [role="tabpanel"] {
+        display: block !important;
+    }
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"],
+    [data-testid="stBottom"],
+    [data-testid="stBottomBlockContainer"] {
+        min-height: 0 !important;
+        height: auto !important;
+        padding-bottom: 0 !important;
+        margin-bottom: 0 !important;
+        overflow: visible !important;
+    }
+    .st-key-cal-grid [data-testid="stElementContainer"] button,
+    .st-key-schedule-grid button {
+        display: none !important;
+    }
+    .st-key-cal-head { break-before: page; }
+    .st-key-cal-grid { break-inside: avoid; }
+}
+
 </style>
 """
 

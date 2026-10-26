@@ -3959,3 +3959,14 @@ class TestSabitGorevYeri(unittest.TestCase):
         state = {}
         apply_app_settings(state, {"fixed_roles": {"Ali": "AYB", "": "GYB", "Can": 3}})
         self.assertEqual(state["fixed_roles"], {"Ali": "AYB"})
+
+
+class TestYazdirmaDuzeni(unittest.TestCase):
+    def test_yazdirma_css_yalniz_tablo_ve_takvimi_birakir(self):
+        from nobet_stil import GLOBAL_CSS
+
+        print_css = GLOBAL_CSS[GLOBAL_CSS.index("@media print"):]
+        self.assertIn("size: A4 landscape", print_css)
+        self.assertIn(".st-key-schedule-grid", print_css)
+        self.assertIn(".st-key-cal-grid", print_css)
+        self.assertIn(".st-key-bottom-actions", print_css)
