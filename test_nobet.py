@@ -2499,13 +2499,18 @@ class TestSecmeliAyarlar(unittest.TestCase):
             ["Ali", "Ayşe", "Can"],
             {"Ali": {"min": 2, "max": 8}, "Can": {"min": 0, "max": 999, "max_special": 1}},
         )
-        # Arayüzde olmayan eski "en az" değeri taşınmaz.
-        self.assertEqual(rows[0], {"name": "Ali", "min": 0, "max": 8, "max_special": None})
+        # Tabloda ayrı kutu olmasa da kayıtlı "en az" durur.
+        self.assertEqual(rows[0], {"name": "Ali", "min": 2, "max": 8, "max_special": None})
         self.assertEqual(rows[1], {"name": "Ayşe", "min": 0, "max": None, "max_special": None})
         self.assertEqual(rows[2]["max_special"], 1)
         names, limits = team_settings_texts(rows)
         self.assertEqual(names, "Ali, Ayşe, Can")
-        self.assertEqual(limits, "Ali:0-8\nCan:0-999:1")
+        self.assertEqual(limits, "Ali:2-8\nCan:0-999:1")
+        # Ayşe:3-8 tabloya girip çıkınca aynı metin kalır.
+        parsed = parse_person_limits("Ayşe:3-8")
+        round_rows = compact_team_rows(team_settings_rows(["Ayşe"], parsed))
+        _, again = team_settings_texts(round_rows)
+        self.assertEqual(again, "Ayşe:3-8")
 
     def test_ekip_tablosu_bos_satir_ve_silme(self):
         rows = [

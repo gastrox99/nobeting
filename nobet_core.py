@@ -2161,15 +2161,15 @@ def special_capped_people(person_limits):
 def team_settings_rows(names, limits):
     """Ayarlardaki ekip tablosunun satırları: [{"name", "max", "max_special", "min"}].
 
-    Sınırsız değerler None olur. "En az nöbet" arayüzde yok ve kullanılmıyor;
-    eski kayıtlardaki görünmez değer burada sıfırlanır (kaydedilince silinir).
+    Sınırsız en fazla değerler None olur. "En az nöbet" tabloda ayrı kutu değildir;
+    kayıttaki değer satırda durur, tablo kapanınca metne geri yazılır.
     """
     rows = []
     for name in names:
         value = (limits or {}).get(name, {})
         rows.append({
             "name": name,
-            "min": 0,
+            "min": int(value.get("min") or 0),
             "max": None if value.get("max", 999) >= 999 else value["max"],
             "max_special": None if value.get("max_special", 999) >= 999 else value["max_special"],
         })
