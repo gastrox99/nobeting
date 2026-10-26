@@ -75,7 +75,8 @@ def finish_approved_requests(owner, yil, ay, saved):
 
 def render_pending_badge(owner):
     """Ay çubuğunun altında onay bekleyen talep sayısı; Ayarlar açıkken de görünür."""
-    _n = len(_requests(owner))
+    _approved_ids = {_id for _id, _, _ in st.session_state.get(_APPROVED_KEY) or []}
+    _n = len([_r for _r in _requests(owner) if _r["id"] not in _approved_ids])
     if _n:
         st.caption(f"🔔 {_n} ekip talebi onay bekliyor")
 
