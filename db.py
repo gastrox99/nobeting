@@ -1044,15 +1044,14 @@ def resolve_share_token(token, raise_on_error=False):
 
 # Girişsiz sayfadan doldurulabildiği için bir sahibin bekleyen talepleri sınırlıdır.
 TEAM_REQUEST_LIMIT = 200
-# Aynı satır bu kadar saniyede bir, linkin tamamı ise 10 dakikada bu kadar talep yazılabilir.
-TEAM_REQUEST_COOLDOWN_SECONDS = 15
+# Bir linkte 10 dakikada en fazla bu kadar farklı talep satırı yazılabilir (güncelleme sayılmaz).
 TEAM_REQUEST_BURST_LIMIT = 40
 
 
 def submit_team_request(owner, year, month, person, days_by_kind):
     """Talebi kaydeder (aynı kişinin o ayki bekleyen talebinin yerine geçer).
 
-    "ok", "limit" (bekleyen talep sınırı dolu), "wait" (çok sık gönderildi) ya da "error" döner.
+    "ok", "limit" (bekleyen talep sınırı dolu), "wait" (10 dakikada çok talep yazıldı) ya da "error" döner.
     """
     def _run():
         conn = _connect()
@@ -1067,16 +1066,11 @@ def submit_team_request(owner, year, month, person, days_by_kind):
                     if cur.fetchone()[0] >= TEAM_REQUEST_LIMIT:
                         return "limit"
                     cur.execute('''
-                        SELECT
-                            COUNT(*) FILTER (WHERE created_at > CURRENT_TIMESTAMP - interval '10 minutes'
-                                AND NOT (year = %s AND month = %s AND person = %s)),
-                            COUNT(*) FILTER (WHERE year = %s AND month = %s AND person = %s
-                                AND created_at > CURRENT_TIMESTAMP - %s * interval '1 second')
-                        FROM team_requests WHERE owner = %s
-                    ''', (year, month, person, year, month, person,
-                           TEAM_REQUEST_COOLDOWN_SECONDS, owner))
-                    recent_others, recent_same = cur.fetchone()
-                    if recent_others >= TEAM_REQUEST_BURST_LIMIT or recent_same:
+                        SELECT COUNT(*) FROM team_requests
+                        WHERE owner = %s AND created_at > CURRENT_TIMESTAMP - interval '10 minutes'
+                          AND NOT (year = %s AND month = %s AND person = %s)
+                    ''', (owner, year, month, person))
+                    if cur.fetchone()[0] >= TEAM_REQUEST_BURST_LIMIT:
                         return "wait"
                     cur.execute('''
                         INSERT INTO team_requests (owner, year, month, person, days_json)

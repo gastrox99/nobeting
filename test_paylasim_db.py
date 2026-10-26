@@ -26,12 +26,6 @@ def test_database(monkeypatch):
     assert db.init_db(), db.get_last_error()
 
 
-@pytest.fixture(autouse=True)
-def bekleme_yok(monkeypatch):
-    """Diğer testler aynı kişiyi art arda günceller; bekleme yalnız kendi testlerinde açık."""
-    monkeypatch.setattr(db, "TEAM_REQUEST_COOLDOWN_SECONDS", 0)
-
-
 @pytest.fixture
 def owner():
     name = f"paylasim-test-{uuid.uuid4().hex[:10]}@example.com"
@@ -206,14 +200,11 @@ def _talebi_eskit(owner, saniye):
     conn.close()
 
 
-def test_ayni_talep_hemen_tekrar_gonderilemez(owner, monkeypatch):
-    monkeypatch.setattr(db, "TEAM_REQUEST_COOLDOWN_SECONDS", 15)
+def test_ayni_talep_hemen_guncellenebilir(owner, monkeypatch):
+    monkeypatch.setattr(db, "TEAM_REQUEST_BURST_LIMIT", 1)
     assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
-    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [4]}) == "wait"
-    assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"izin": [4]}) == "ok"
-    _talebi_eskit(owner, db.TEAM_REQUEST_COOLDOWN_SECONDS + 1)
     assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [4]}) == "ok"
-    assert [r["days"] for r in db.list_team_requests(owner) if r["person"] == "Ali"] == [{"izin": [4]}]
+    assert [r["days"] for r in db.list_team_requests(owner)] == [{"izin": [4]}]
 
 
 def test_kisa_surede_cok_talep_yazilamaz(owner, monkeypatch):
