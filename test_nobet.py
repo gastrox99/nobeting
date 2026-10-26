@@ -883,6 +883,50 @@ class TestRunSchedulingCore(unittest.TestCase):
         self.assertGreaterEqual(ali_total, avg * 0.8,
                                 f"Ali yeşil tercih koymasına rağmen beklenenden az nöbet aldı: {ali_total}")
 
+    def test_tum_hafta_icinden_kacinan_toplamda_birden_fazla_geride_kalmaz(self):
+        # K0 hafta içinin tamamından kaçınıyor. Yalnız hafta sonu yetmezse
+        # dengeleme kaçınılan güne de geçebilir; fark yine en fazla 1 kalır.
+        names = [f"K{i}" for i in range(8)]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        preferred = pd.DataFrame(0, index=names, columns=cols)
+        for col in cols:
+            if not days[col]["weekend"] and not days[col]["holiday"]:
+                preferred.at["K0", col] = 2
+        random.seed(4)
+        schedule, _ = run_scheduling_core(
+            names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2,
+            df_preferred=preferred, simulation_count=30,
+        )
+        totals = {p: int(schedule.loc[p].sum()) for p in names}
+        self.assertLessEqual(max(totals.values()) - min(totals.values()), 1)
+        avoid = [
+            days[c]["day_num"] for c in cols
+            if schedule.at["K0", c] and int(preferred.at["K0", c]) == 2
+        ]
+        self.assertGreater(len(avoid), 0)
+        for p in names:
+            got = sorted(days[c]["day_num"] for c in cols if schedule.at[p, c])
+            self.assertTrue(all(b - a > 1 for a, b in zip(got, got[1:])), p)
+        # Üç pazartesiden kaçınmak farkı zaten kapatıyorsa kaçınılan gün boş kalır.
+        light = preferred.copy()
+        light.loc[:, :] = 0
+        for day in (2, 9, 16):
+            col = next(c for c in cols if days[c]["day_num"] == day)
+            light.at["K0", col] = 2
+        random.seed(4)
+        modest, _ = run_scheduling_core(
+            names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2,
+            df_preferred=light, simulation_count=30,
+        )
+        modest_avoid = sum(
+            1 for c in cols if modest.at["K0", c] and int(light.at["K0", c]) == 2
+        )
+        modest_totals = [int(modest.loc[p].sum()) for p in names]
+        self.assertLessEqual(max(modest_totals) - min(modest_totals), 1)
+        self.assertEqual(modest_avoid, 0)
+
 
 class TestLargeSchedulePerformance(unittest.TestCase):
     def _large_schedule(self):
