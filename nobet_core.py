@@ -3892,7 +3892,8 @@ def simulation_summary(schedule, people, columns, gun_detaylari, person_limits=N
     """Simülasyon bildirimi için kısa denge özeti (bu ayın farkları)."""
     person_limits = person_limits or {}
     free = [p for p in people if not has_total_limit(person_limits.get(p, {}))]
-    sp_people = [p for p in people if special_cap(person_limits, p) >= 999]
+    # Bildirimdeki fark, analiz tablosundaki en çok ile en azdır.
+    sp_people = list(people)
 
     def _range(group, test):
         values = [sum(1 for c in columns if test(gun_detaylari[c]) and bool(schedule.at[p, c]))

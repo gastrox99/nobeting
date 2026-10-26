@@ -333,3 +333,119 @@ def test_iyilestir_gun_asiri_zinciri_kirar():
     assert after["alt_chain"] == 0
     assert all(after[m] <= before[m] for m in PRIMARY_METRICS)
     assert "üst üste gün aşırı nöbet" in " ".join(improvement_lines(before, after))
+
+
+# Kasım 2026, tohum 202611, arayüzden indirilen liste. Işık'ın tek hafta sonu
+# 7 Kasım. İyileştir bu nöbeti alıp "hafta sonu farkı 1 → 0" diyordu; tabloda
+# fark 1'den 2'ye çıkıyordu.
+_ISIK_ROSTER = """
+01 Zeynep Arslan,Burak Yıldız
+02 Ayşe Demir,Işık Polat
+03 Can Öztürk,Elif Şahin
+04 Zeynep Arslan,Deniz Aksoy
+05 Mehmet Kaya,Selin Acar
+06 Emre Koç,Ayşe Demir
+07 Işık Polat,Elif Şahin
+08 Selin Acar,Can Öztürk
+09 Emre Koç,Deniz Aksoy
+10 Burak Yıldız,Mehmet Kaya
+11 Elif Şahin,Ayşe Demir
+12 Işık Polat,Zeynep Arslan
+13 Can Öztürk,Selin Acar
+14 Deniz Aksoy,Emre Koç
+15 Ayşe Demir,Mehmet Kaya
+16 Elif Şahin,Burak Yıldız
+17 Can Öztürk,Zeynep Arslan
+18 Selin Acar,Işık Polat
+19 Emre Koç,Deniz Aksoy
+20 Mehmet Kaya,Zeynep Arslan
+21 Burak Yıldız,Can Öztürk
+22 Selin Acar,Elif Şahin
+23 Burak Yıldız,Ayşe Demir
+24 Deniz Aksoy,Emre Koç
+25 Mehmet Kaya,Elif Şahin
+26 Zeynep Arslan,Selin Acar
+27 Elif Şahin,Burak Yıldız
+28 Ayşe Demir,Mehmet Kaya
+29 Deniz Aksoy,Emre Koç
+30 Ayşe Demir,Can Öztürk
+"""
+
+
+def _isik_case():
+    names = [
+        "Ayşe Demir", "Mehmet Kaya", "Zeynep Arslan", "Can Öztürk", "Elif Şahin",
+        "Burak Yıldız", "Selin Acar", "Emre Koç", "Deniz Aksoy", "Işık Polat",
+    ]
+    gd, cols, _ = _month(team=1)
+    by_day = {gd[c]["day_num"]: c for c in cols}
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    preferred = pd.DataFrame(0, index=names, columns=cols)
+    for line in _ISIK_ROSTER.strip().splitlines():
+        day, who = line.split(" ", 1)
+        for person in who.split(","):
+            schedule.at[person, by_day[int(day)]] = True
+    for day in range(16, 23):
+        unwanted.at["Ayşe Demir", by_day[day]] = True
+        preferred.at["Ayşe Demir", by_day[day]] = 3
+    for day in (7, 8):
+        unwanted.at["Mehmet Kaya", by_day[day]] = True
+        preferred.at["Mehmet Kaya", by_day[day]] = 4
+    for day in (6, 13, 20, 27):
+        preferred.at["Zeynep Arslan", by_day[day]] = 1
+    for day in (28, 29):
+        preferred.at["Zeynep Arslan", by_day[day]] = 2
+    for day in (2, 9, 16):
+        preferred.at["Can Öztürk", by_day[day]] = 2
+    limits = {"Işık Polat": {"min": 0, "max": 4, "max_special": 1}}
+    return gd, cols, names, schedule, unwanted, preferred, limits
+
+
+def _specials(schedule, names, cols, gd):
+    return {
+        p: sum(1 for c in cols if schedule.at[p, c] and (gd[c]["weekend"] or gd[c]["holiday"]))
+        for p in names
+    }
+
+
+def test_hafta_sonu_siniri_olanin_sayisi_korunur_ve_fark_herkesi_sayar():
+    gd, cols, names, schedule, unwanted, preferred, limits = _isik_case()
+    before_counts = _specials(schedule, names, cols, gd)
+    assert before_counts["Işık Polat"] == 1
+    before = schedule_metrics(
+        schedule, names, cols, gd, 2, 1, person_limits=limits, df_preferred=preferred,
+        together_pairs={("Emre Koç", "Deniz Aksoy")},
+    )
+    inclusive = max(before_counts.values()) - min(before_counts.values())
+    assert before["special"] == inclusive
+    improved, _, after = improve_schedule(
+        schedule, names, cols, unwanted, gd, 1, 2,
+        forbidden_pairs={("Burak Yıldız", "Selin Acar")},
+        person_limits=limits, df_preferred=preferred,
+        together_pairs={("Emre Koç", "Deniz Aksoy")},
+        time_limit=8,
+    )
+    result = improved if improved is not None else schedule
+    after_counts = _specials(result, names, cols, gd)
+    assert after_counts["Işık Polat"] == 1
+    assert result.loc["Işık Polat"].sum() == 4
+    seen = max(after_counts.values()) - min(after_counts.values())
+    assert after["special"] == seen
+    assert seen <= inclusive
+    text = " ".join(improvement_lines(before, after))
+    assert "hafta sonu/tatil farkı 1 → 0" not in text
+
+
+def test_hafta_sonu_farki_sinirli_kisi_sifirken_de_tablodaki_farktir():
+    gd, cols, names = _month(team=4)
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    weekends = [c for c in cols if gd[c]["weekend"] or gd[c]["holiday"]]
+    for i, person in enumerate(names[1:]):
+        schedule.at[person, weekends[i]] = True
+        schedule.at[person, weekends[i + 3]] = True
+    limits = {"K0": {"min": 0, "max": 999, "max_special": 0}}
+    metrics = schedule_metrics(schedule, names, cols, gd, 2, 1, person_limits=limits)
+    assert metrics["special"] == 2
+    text = n.simulation_summary(schedule, names, cols, gd, limits)
+    assert "hafta sonu farkı 2" in text

@@ -6,7 +6,8 @@ Simülasyonun yerine geçmez; onun bulduğu listeden başlar. Kurallar
 hafta sonu, kilitli nöbetler) aynen uygulanır. Birlikte nöbet isteyen
 ikililer ikincil ölçüler arasında en ağır olanıdır. Öncelikli dengeler (boş nöbet, toplam, hafta
 sonu/tatil, tatil, Cuma) mevcut listeden kötü olamaz; kişisel limiti
-olanların nöbet sayısı değişmez. Çözücü bunların
+olanların nöbet sayısı değişmez. Hafta sonu sınırı olanın hafta sonu sayısı,
+sınırın içindeyse, değişmez. Çözücü bunların
 içinde tercihleri, art arda hafta sonlarını ve nöbet aralıklarını da
 iyileştirir. ortools yalnızca düğmeye basılınca yüklenir.
 """
@@ -127,8 +128,9 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
 
     totals = {p: sum(assigned(p, c) for c in columns) for p in people}
     free = [p for p in people if not has_total_limit(person_limits.get(p, {}))]
-    # Hafta sonu sınırı olanlar hafta sonu dengesine katılmaz (simülasyondaki gibi).
-    sp_people = [p for p in people if special_cap(person_limits, p) >= 999] or list(people)
+    # Fark, tablodaki en çok ile en azdır. Sınırı olan kişi dışarıda kalırsa
+    # ekran "fark 0" derken tabloda bir kişi 0, diğerleri 2 görünebiliyor.
+    sp_people = list(people)
     has_holiday = any(gun_detaylari[c]["holiday"] for c in columns)
     has_friday = any(is_friday_column(gun_detaylari[c]) for c in columns)
     weeks = sorted({gun_detaylari[c]["week"] for c in columns if gun_detaylari[c]["weekend"]})
@@ -273,7 +275,18 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
         sp_cap = special_cap(person_limits, p)
         if sp_cap < 999:
             locked_sp = sum(1 for c in columns if (p, c) in fixed and _is_special(gun_detaylari[c]))
-            model.Add(sum(x[p, c] for c in columns if _is_special(gun_detaylari[c])) <= max(sp_cap, locked_sp))
+            special_vars = [x[p, c] for c in columns if _is_special(gun_detaylari[c])]
+            model.Add(sum(special_vars) <= max(sp_cap, locked_sp))
+            # Toplam limiti olan kişinin nöbet sayısı dondurulur; hafta sonu
+            # sınırı olanın hafta sonu sayısı da, sınırın içindeyse, öyle kalır.
+            # Yoksa çözücü bu nöbeti hafta içine kaydırıp farkı küçültüyor.
+            current_sp = sum(
+                1 for c in columns
+                if p in current.index and c in current.columns and bool(current.at[p, c])
+                and _is_special(gun_detaylari[c])
+            )
+            if locked_sp <= current_sp <= sp_cap:
+                model.Add(sum(special_vars) == current_sp)
         if has_total_limit(person_limits.get(p, {})):
             locked = sum(1 for c in columns if (p, c) in fixed)
             cap = max(person_limits[p].get("max", 999), locked)
@@ -321,7 +334,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
             shorts.append(short)
     expr["min_short"] = sum(shorts)
     free = [p for p in people if not has_total_limit(person_limits.get(p, {}))]
-    sp_people = [p for p in people if special_cap(person_limits, p) >= 999] or list(people)
+    sp_people = list(people)
     expr["total"] = range_of([totals[p] for p in free], "total") if len(free) >= 2 else 0
 
     def count(p, test):
