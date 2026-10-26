@@ -1,0 +1,89 @@
+name: DeepSeek
+
+# Bir issue'ya sahibi "/deepseek" yazarsa, DeepSeek issue'daki işi yapar ve PR açar.
+# Gerekenler: Secrets > DEEPSEEK_API_KEY, Settings > Actions > "Allow GitHub Actions to create pull requests".
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  deepseek:
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.comment.user.login == github.repository_owner &&
+      startsWith(github.event.comment.body, '/deepseek')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: DeepSeek'e işi yaptır
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, urllib.request
+
+          dosyalar = subprocess.check_output(["git", "ls-files"], text=True)
+          kurallar = open("CLAUDE.md", encoding="utf-8").read()
+          istem = (
+              "Bir depoda issue'daki işi yap. Yanıtın YALNIZCA şu JSON olsun: "
+              '{"ozet": "kısa Türkçe özet", "dosyalar": {"yol": "dosyanın TAM yeni içeriği"}}. '
+              "Yalnızca yeni dosya ekle ya da issue'nun açıkça istediği dosyaları değiştir. "
+              ".github/ altına ve gizli bilgi içeren dosyalara yazma.\n\n"
+              f"Depo kuralları:\n{kurallar}\n\nDosya listesi:\n{dosyalar}\n\n"
+              f"Issue başlığı: {os.environ['ISSUE_TITLE']}\nIssue metni:\n{os.environ['ISSUE_BODY']}"
+          )
+          istek = urllib.request.Request(
+              "https://api.deepseek.com/chat/completions",
+              data=json.dumps({
+                  "model": "deepseek-chat",
+                  "messages": [{"role": "user", "content": istem}],
+                  "response_format": {"type": "json_object"},
+              }).encode(),
+              headers={
+                  "Authorization": "Bearer " + os.environ["DEEPSEEK_API_KEY"],
+                  "Content-Type": "application/json",
+              },
+          )
+          with urllib.request.urlopen(istek, timeout=300) as r:
+              yanit = json.load(r)["choices"][0]["message"]["content"]
+          sonuc = json.loads(yanit)
+          for yol, icerik in sonuc["dosyalar"].items():
+              yol = os.path.normpath(yol)
+              if yol.startswith(("..", "/", ".github", ".git", ".streamlit")):
+                  raise SystemExit(f"İzin verilmeyen yol: {yol}")
+              os.makedirs(os.path.dirname(yol) or ".", exist_ok=True)
+              open(yol, "w", encoding="utf-8").write(icerik)
+          open("/tmp/ozet.txt", "w", encoding="utf-8").write(sonuc.get("ozet", ""))
+          PY
+      - name: Dal aç, itele, PR aç
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NO: ${{ github.event.issue.number }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            gh issue comment "$ISSUE_NO" --body "DeepSeek hiçbir dosya değiştirmedi."
+            exit 0
+          fi
+          dal="deepseek/issue-$ISSUE_NO"
+          git config user.name "deepseek-bot"
+          git config user.email "deepseek-bot@users.noreply.github.com"
+          git checkout -b "$dal"
+          git add -A
+          git commit -m "DeepSeek: issue #$ISSUE_NO"
+          git push -u origin "$dal"
+          gh pr create --draft --base main --head "$dal" \
+            --title "DeepSeek: issue #$ISSUE_NO" \
+            --body "Closes #$ISSUE_NO
+
+          $(cat /tmp/ozet.txt)
+
+          _DeepSeek tarafından yazıldı. Birleştirmeden önce diff okunmalı._"
