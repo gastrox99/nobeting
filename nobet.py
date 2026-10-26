@@ -928,8 +928,9 @@ if st.session_state.get("settings_corrupt"):
         "settings",
         f"⚠️ Kayıtlı ayarlarda okunamayan bir bölüm var: {_corrupt_labels(st.session_state.settings_corrupt)}. "
         "Ekip ve ayarlar boş gösteriliyor; kayıtlı hâlin üzerine yazılmaması için ayarlar "
-        "kaydedilmiyor. Yedeğiniz varsa sayfanın altındaki «Yedek ve Excel yükleme» bölümünden "
-        "geri yükleyebilirsiniz; yoksa aşağıdan okunamayan bölümü boşaltıp ekibi yeniden girebilirsiniz.",
+        "kaydedilmiyor. Bilgisayara indirdiğiniz tam yedek dosyası varsa sayfanın altındaki "
+        "«Yedek ve Excel yükleme» › «Dosyadan geri yükle» ile geri yükleyebilirsiniz (uygulama "
+        "içindeki aylık yedekler ekip ve ayarları içermez); yoksa aşağıdan okunamayan bölümü boşaltıp ekibi yeniden girebilirsiniz.",
         _corrupt_labels(st.session_state.settings_corrupt),
         _accept_corrupt_settings,
     )
@@ -1165,9 +1166,9 @@ def _accept_corrupt_schedule():
     _state = st.session_state.pop("schedule_corrupt", None) or {}
     if st.session_state.get("autosave_blocked_period") == _state.get("period"):
         st.session_state.autosave_blocked_period = None
+    # İki parmak izi de sıfırlanır: Tercih modunda da kayıt ertelenmez.
     st.session_state.last_saved_fingerprint = None
     st.session_state.last_saved_core_fingerprint = None
-    st.session_state.save_preferences_now = True
     st.session_state.persistence_error = None
 
 

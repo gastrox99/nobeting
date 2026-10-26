@@ -158,7 +158,7 @@ def test_bozuk_ayar_kaydi_ayirt_edilir(owner, value):
 
 # --- Uygulama akışı (sahte veritabanı): mesaj ve onaylı düğme ---------------
 
-def _app(load_schedule, save_schedule, load_app_settings=None, save_app_settings=None, team=TEAM):
+def _app(load_schedule, save_schedule, load_app_settings=None, save_app_settings=None, team=TEAM, **extra):
     import streamlit
     from streamlit.testing.v1 import AppTest
 
@@ -172,6 +172,7 @@ def _app(load_schedule, save_schedule, load_app_settings=None, save_app_settings
         get_share_link=lambda *a: None, list_team_requests=lambda *a, **k: [],
         ping_db=lambda: True,
     )
+    fakes.update(extra)
     patches = [patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, create=True, **fakes)]
     for item in patches:
         item.start()
@@ -218,6 +219,23 @@ def _corrupt_month_loader(columns):
     return load
 
 
+def _flip_cell(at, row=1, col=1):
+    changed = at.session_state["schedule_bool"].copy()
+    changed.iloc[row, col] = not bool(changed.iloc[row, col])
+    at.session_state["schedule_bool"] = changed
+
+
+def _set_preference(at, value=1):
+    schedule = at.session_state["schedule_bool"]
+    pref = at.session_state["pref_df"] if "pref_df" in at.session_state else None
+    if pref is None:
+        pref = pd.DataFrame(0, index=schedule.index, columns=schedule.columns)
+    pref = pref.copy()
+    pref.iloc[0, 1] = value
+    at.session_state["pref_df"] = pref
+    return pref.columns[1]
+
+
 def _october_columns():
     import nobet_core
     days = nobet_core.build_gun_detaylari(2026, 10, 31, set())
@@ -237,9 +255,11 @@ def test_uygulama_bozuk_alani_ezmez_nobetleri_gosterir_ve_dogru_mesaji_verir():
         assert [e.value for e in at.exception] == []
         schedule = at.session_state["schedule_bool"]
         messages = _messages(at)
-        # Kullanıcı bir değişiklik yapar (ör. Simülasyon): kayıt yapılmamalı.
-        next(b for b in at.button if b.label == "⚡ Simülasyon").click()
+        # Kullanıcı nöbet ve tercih değiştirir: bozuk ayda kayıt yapılmamalı.
+        _flip_cell(at)
+        _set_preference(at)
         at.run()
+        assert [e.value for e in at.exception] == []
         saved_before_confirm = list(saves)
         assert RECOVER in [b.label for b in at.button]
     finally:
@@ -257,11 +277,19 @@ def test_uygulama_onaylaninca_bozuk_alan_bos_kabul_edilip_bilinen_surumle_yazili
 
     def save(*args, expected_version=None, pref_df=None, **kwargs):
         saves.append(expected_version)
+        prefs.append(pref_df)
         return True
 
+    prefs = []
     at, patches = _app(_corrupt_month_loader(_october_columns()), save, team="Ali, Ayşe")
     try:
         at.run()
+        # Tercih modu (varsayılan): kayıt normalde mod değişene kadar ertelenir;
+        # onaydan sonra ertelenmemeli, bu arada girilen tercih de yazılmalı.
+        assert at.session_state["edit_mode"] == "tercih"
+        column = _set_preference(at)
+        at.run()
+        assert saves == []
         button = _button(at, RECOVER)
         assert button.disabled                               # açık onay olmadan basılamaz
         next(c for c in at.checkbox if "Tercihler" in c.label).check()
@@ -276,6 +304,7 @@ def test_uygulama_onaylaninca_bozuk_alan_bos_kabul_edilip_bilinen_surumle_yazili
     finally:
         _stop(patches)
     assert saves == ["h:bozuk"]                              # hemen, yüklemedeki sürümle
+    assert prefs[0].at["Ali", column] == 1                   # bekleyen tercih de yazıldı
     assert blocked is None
     assert RECOVER not in labels
     assert not any("okunamayan bir bölüm var" in m for m in messages)
@@ -474,7 +503,94 @@ def test_gercek_db_bozuk_ayda_yedekle_saglam_yedegin_yerine_gecmez(app_db):
     at.run()
     _button(at, "💾 Yedekle").click()
     at.run()
-    assert any("yedek alınmadı" in m for m in _messages(at))
+    assert any("yedek alınmadı" in m and "önceki yedeği geri yükleme için saklı kalır" in m for m in _messages(at))
     [snap] = db.list_backup_snapshots()
     assert db.load_backup_snapshot(snap["id"]) == good
     assert BOZUK not in good
+
+
+def _switching_loader(corrupt_months):
+    """Ekim/Kasım: ``corrupt_months`` içindeki aylarda tercih alanı bozuk."""
+    import nobet_core
+
+    def load(name, year, month, raise_on_error=False, owner="", version_out=None, corrupt_out=None, **kwargs):
+        if version_out is not None:
+            version_out["version"] = f"h:{month}"
+        columns = list(nobet_core.build_gun_detaylari(year, month, pd.Period(f"{year}-{month}").days_in_month, set()))
+        if month in corrupt_months:
+            corrupt_out.append("pref_json")
+        frame = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=columns)
+        frame.iloc[0, 0] = True
+        return ["Ali", "Ayşe"], frame, None, {"locked": [], "hidden": {}}, None
+    return load
+
+
+def _notice(at):
+    return [m for m in _messages(at) if "okunamayan bir bölüm var" in m]
+
+
+def test_uygulama_bozuk_aydan_baska_aya_gecip_donunce_durum_dogru():
+    saves = []
+    corrupt = {10}
+
+    def save(name, year, month, *args, expected_version=None, **kwargs):
+        saves.append((month, expected_version))
+        return True
+
+    at, patches = _app(_switching_loader(corrupt), save, team="Ali, Ayşe")
+    try:
+        at.run()
+        assert _notice(at)
+        _button(at, "›").click()                             # Kasım: kaydı sağlam
+        at.run()
+        assert at.session_state["loaded_period"] == (2026, 11)
+        assert _notice(at) == []
+        assert at.session_state["autosave_blocked_period"] is None
+        _flip_cell(at)
+        at.run()
+        assert saves == [(11, "h:11")]                       # Kasım normal kaydediliyor
+        corrupt.clear()                                       # Ekim başka yerden düzeltildi
+        _button(at, "‹").click()
+        at.run()
+        assert at.session_state["loaded_period"] == (2026, 10)
+        notice = _notice(at)
+        stale = at.session_state["schedule_corrupt"] if "schedule_corrupt" in at.session_state else None
+        _flip_cell(at)
+        at.run()
+        assert [e.value for e in at.exception] == []
+    finally:
+        _stop(patches)
+    assert notice == [] and stale is None                    # eski bozuk durumu kalmadı
+    assert saves[-1] == (10, "h:10")
+
+
+def test_uygulama_baska_ayin_bozuk_durumu_bu_ayda_gosterilmez():
+    at, patches = _app(_switching_loader(set()), lambda *a, **k: True, team="Ali, Ayşe")
+    try:
+        at.run()
+        at.session_state["schedule_corrupt"] = {"period": (2026, 9), "fields": ["pref_json"]}
+        at.run()
+        notice = _notice(at)
+    finally:
+        _stop(patches)
+    assert notice == []
+
+
+def test_uygulama_bozuk_ayda_yedegi_yoksa_saklı_kalir_demez():
+    snapshots = []
+
+    def export(owner=""):
+        snapshots.append(owner)
+        return {}, []
+
+    at, patches = _app(_corrupt_month_loader(_october_columns()), lambda *a, **k: True, team="Ali, Ayşe",
+                       export_owner_data=export, save_backup_snapshot=lambda *a, **k: snapshots.append(a))
+    try:
+        at.run()
+        _button(at, "💾 Yedekle").click()
+        at.run()
+        messages = [m for m in _messages(at) if "yedek alınmadı" in m]
+    finally:
+        _stop(patches)
+    assert snapshots == []
+    assert messages and "saklı" not in messages[0]

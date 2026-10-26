@@ -68,9 +68,13 @@ def run_requested_snapshot(current_owner, yil, ay):
     _period_sn = (yil, ay)
     if (st.session_state.get("schedule_corrupt") or {}).get("period") == _period_sn:
         # Ayın tek yedeği var: bozuk kayıt sağlam yedeğin yerine geçmesin.
+        _has_snapshot = any(
+            _i.get("reason") == SNAPSHOT_MANUAL and (_i.get("year"), _i.get("month")) == _period_sn
+            for _i in (st.session_state.get("backup_snapshots") or [])
+        )
         st.error(
-            "❌ Bu ayın kaydında okunamayan bir bölüm olduğu için yedek alınmadı; "
-            "önceki yedek geri yükleme için saklı kalır."
+            "❌ Bu ayın kaydında okunamayan bir bölüm olduğu için yedek alınmadı"
+            + ("; bu ayın önceki yedeği geri yükleme için saklı kalır." if _has_snapshot else ".")
         )
         return
     try:
