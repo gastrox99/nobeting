@@ -190,3 +190,27 @@ def test_tablo_eksikse_liste_bos_doner_ve_kurulur(owner):
 
 def test_sema_surumu_init_db_ile_degisir():
     assert db.SCHEMA_VERSION != "bilinmiyor" and len(db.SCHEMA_VERSION) == 12
+
+
+def _talebi_eskit(owner, saniye):
+    conn = db._connect()
+    with conn, conn.cursor() as cur:
+        cur.execute("UPDATE team_requests SET created_at = created_at - %s * interval '1 second' WHERE owner = %s",
+                    (saniye, owner))
+    conn.close()
+
+
+def test_ayni_talep_hemen_guncellenebilir(owner, monkeypatch):
+    monkeypatch.setattr(db, "TEAM_REQUEST_BURST_LIMIT", 1)
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [4]}) == "ok"
+    assert [r["days"] for r in db.list_team_requests(owner)] == [{"izin": [4]}]
+
+
+def test_kisa_surede_cok_talep_yazilamaz(owner, monkeypatch):
+    monkeypatch.setattr(db, "TEAM_REQUEST_BURST_LIMIT", 2)
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"tercih": [3]}) == "ok"
+    assert db.submit_team_request(owner, 2026, 11, "Can", {"tercih": [3]}) == "wait"
+    _talebi_eskit(owner, 11 * 60)
+    assert db.submit_team_request(owner, 2026, 11, "Can", {"tercih": [3]}) == "ok"

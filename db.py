@@ -1044,12 +1044,14 @@ def resolve_share_token(token, raise_on_error=False):
 
 # Girişsiz sayfadan doldurulabildiği için bir sahibin bekleyen talepleri sınırlıdır.
 TEAM_REQUEST_LIMIT = 200
+# Bir linkte 10 dakikada en fazla bu kadar farklı talep satırı yazılabilir (güncelleme sayılmaz).
+TEAM_REQUEST_BURST_LIMIT = 40
 
 
 def submit_team_request(owner, year, month, person, days_by_kind):
     """Talebi kaydeder (aynı kişinin o ayki bekleyen talebinin yerine geçer).
 
-    "ok", "limit" (bekleyen talep sınırı dolu) ya da "error" döner.
+    "ok", "limit" (bekleyen talep sınırı dolu), "wait" (10 dakikada çok talep yazıldı) ya da "error" döner.
     """
     def _run():
         conn = _connect()
@@ -1063,6 +1065,13 @@ def submit_team_request(owner, year, month, person, days_by_kind):
                     ''', (owner, year, month, person))
                     if cur.fetchone()[0] >= TEAM_REQUEST_LIMIT:
                         return "limit"
+                    cur.execute('''
+                        SELECT COUNT(*) FROM team_requests
+                        WHERE owner = %s AND created_at > CURRENT_TIMESTAMP - interval '10 minutes'
+                          AND NOT (year = %s AND month = %s AND person = %s)
+                    ''', (owner, year, month, person))
+                    if cur.fetchone()[0] >= TEAM_REQUEST_BURST_LIMIT:
+                        return "wait"
                     cur.execute('''
                         INSERT INTO team_requests (owner, year, month, person, days_json)
                         VALUES (%s, %s, %s, %s, %s)
