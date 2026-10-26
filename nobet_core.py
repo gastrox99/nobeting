@@ -2939,6 +2939,10 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         fixed_by_col[column].sort(key=isimler.index)
     if isinstance(simulation_count, bool) or not isinstance(simulation_count, Integral) or simulation_count <= 0:
         raise ValueError("Simülasyon sayısı pozitif bir tamsayı olmalıdır.")
+    # Arayüzdeki Simülasyon da aynı tohumu kullansın (NOBET_SEED boşsa dokunulmaz).
+    _nobet_seed = os.environ.get("NOBET_SEED")
+    if _nobet_seed:
+        random.seed(int(_nobet_seed))
 
     best_schedule = None
     best_score = float('inf')

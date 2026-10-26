@@ -4,6 +4,12 @@ import pandas as pd
 import calendar
 import time
 import os
+import random
+# Doğrulama koşusu aynı listeyi tekrar üretebilsin diye. Değişken boşsa
+# davranış aynı kalır; her sayfa çiziminde tohum başa alınır.
+_nobet_seed = os.environ.get("NOBET_SEED")
+if _nobet_seed:
+    random.seed(int(_nobet_seed))
 # Streamlit Cloud yeni kodu çektiğinde db / nobet_core / nobet_iyilestir'in
 # eski hâli hafızada kalabiliyor: yeni fonksiyonlar "ImportError" veriyor ya da
 # eski kod sessizce çalışıyordu (İyileştir "ortools yüklü değil" diyordu).
