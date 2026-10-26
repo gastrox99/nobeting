@@ -42,6 +42,17 @@ def test_beklenmeyen_hata_surum_etiketiyle_yazilir():
     assert row["version"]
 
 
+def test_ayni_hata_tekrar_gelirse_yeniden_yazilmaz():
+    for _ in range(5):
+        db._log_error("Kayıt", RuntimeError("aynı"))
+    assert len(db.list_recent_errors()) == 1
+
+
+def test_password_esitligi_gizlenir():
+    db._log_error("Kayıt", RuntimeError("host=h password=GIZLI"))
+    assert "GIZLI" not in db.list_recent_errors()[0]["message"]
+
+
 def test_yalniz_son_yirmi_hata_tutulur_yeniden_eskiye():
     for i in range(25):
         db._log_error("Deneme", RuntimeError(f"hata {i}"))

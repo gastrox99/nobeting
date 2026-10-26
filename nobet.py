@@ -827,7 +827,10 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
         st.warning(f"⚠️ {len(_lim_invalid_lines)} satır geçersiz format (doğru format: `İsim:min-max`) — atlandı.")
     if settings_expanded and _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(_lim_unknown)}** — limit uygulanmayacak.")
-    if settings_expanded and _db_ready:
+    # Hata metinleri başka kullanıcıların adını içerebilir: yalnız yöneticiye.
+    if settings_expanded and _db_ready and (
+        not AUTH_ENABLED or current_owner == normalize_owner_email(os.getenv("ADMIN_EMAIL", ""))
+    ):
         render_recent_errors()
 
 st.session_state.pop("_ayarlar_kapaniyor", None)

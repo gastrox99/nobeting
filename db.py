@@ -85,6 +85,7 @@ def _describe_error(exc):
     """One-line, password-free reason for the UI."""
     message = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
     message = re.sub(r'(://[^:/@\s]+):[^@\s]+@', r'\1:***@', message)
+    message = re.sub(r'(?i)(password\s*=\s*)\S+', r'\1***', message)
     return message[:200]
 
 
@@ -118,10 +119,15 @@ def _record_error(action, exc):
     try:
         conn = psycopg2.connect(_database_url(), connect_timeout=3)
         with conn, conn.cursor() as cur:
+            # Aynı hata 10 dakika içinde tekrar gelirse yeniden yazılmaz (sayfa her
+            # yenilenince aynı satır 20 kaydı doldurmasın).
+            text = f"{type(exc).__name__}: {_describe_error(exc)}"
             cur.execute(
                 "INSERT INTO error_log (created_tr, version, action, message) "
-                "VALUES (to_char(now() AT TIME ZONE 'Europe/Istanbul', 'YYYY-MM-DD HH24:MI'), %s, %s, %s)",
-                (_code_version()[:80], str(action)[:120], f"{type(exc).__name__}: {_describe_error(exc)}"),
+                "SELECT to_char(now() AT TIME ZONE 'Europe/Istanbul', 'YYYY-MM-DD HH24:MI'), %s, %s, %s "
+                "WHERE NOT EXISTS (SELECT 1 FROM error_log WHERE action = %s AND message = %s "
+                "AND created_at > now() - interval '10 minutes')",
+                (_code_version()[:80], str(action)[:120], text, str(action)[:120], text),
             )
             cur.execute(
                 "DELETE FROM error_log WHERE id NOT IN (SELECT id FROM error_log ORDER BY id DESC LIMIT %s)",
@@ -315,7 +321,8 @@ def init_db():
                         created_tr VARCHAR(16) NOT NULL,
                         version VARCHAR(80) NOT NULL DEFAULT '',
                         action VARCHAR(120) NOT NULL,
-                        message TEXT NOT NULL
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
         _last_error = None
