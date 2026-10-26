@@ -98,6 +98,55 @@ def test_iyilestir_gerekmiyorsa_dokunmaz():
     assert not changed and same is schedule
 
 
+def _ay_listesi(weekend_of, friday_of):
+    """Her gün bir kişi. Hafta sonu ve Cuma verilen sırayla, kalan günler toplamı dengeler."""
+    people = ["Ali", "Ayşe", "Can", "Deniz"]
+    gd = build_gun_detaylari(2026, 11, 30, [])
+    cols = list(gd)
+    unwanted = pd.DataFrame(False, index=people, columns=cols)
+    weekends = [c for c in cols if gd[c]["weekend"]]
+    fridays = [c for c in cols if gd[c]["weekday"] == 4]
+    rest = [c for c in cols if c not in weekends and c not in fridays]
+    schedule = pd.DataFrame(False, index=people, columns=cols)
+    for col, person in zip(weekends, weekend_of):
+        schedule.at[person, col] = True
+    for col, person in zip(fridays, friday_of):
+        schedule.at[person, col] = True
+    counts = {p: int(schedule.loc[p].sum()) for p in people}
+    for col in rest:
+        person = min(people, key=lambda name: (counts[name], name))
+        schedule.at[person, col] = True
+        counts[person] += 1
+    return people, cols, gd, unwanted, schedule
+
+
+def test_toplam_denkken_hafta_sonu_veya_cuma_farki_iyilestirir(monkeypatch):
+    # Toplam farkı 1. Hafta sonu farkı 6 ya da Cuma farkı 4 iken çözücü çalışmalı.
+    from nobet_iyilestir import schedule_metrics
+
+    calls = []
+
+    def fake(*args, **kwargs):
+        calls.append(True)
+        return None, {}, {}
+
+    monkeypatch.setattr("nobet_iyilestir.improve_schedule", fake)
+    people = ["Ali", "Ayşe", "Can", "Deniz"]
+    for owners, key in (
+        (["Ali"] * 6 + ["Ayşe"] * 3, "special"),
+        (["Ali", "Ayşe", "Can", "Deniz"] * 3, "friday"),
+    ):
+        calls.clear()
+        fridays = people if key == "special" else ["Ali"] * 4
+        weekends = owners if key == "special" else ["Ali", "Ayşe", "Can", "Deniz", "Ali", "Ayşe", "Can", "Deniz", "Ali"]
+        who, cols, gd, unwanted, schedule = _ay_listesi(weekends, fridays)
+        metrics = schedule_metrics(schedule, who, cols, gd, 1, 1)
+        assert metrics["unfilled"] == 0 and metrics["total"] <= 1
+        assert metrics[key] > 1
+        improve_if_needed(schedule, who, cols, unwanted, gd, 1, 1)
+        assert calls, key
+
+
 def test_alt_siniri_altindaki_kisinin_nobeti_azalmaz_ama_artabilir():
     people, cols, gd, unwanted = _tight_case()
     schedule = pd.DataFrame(False, index=people, columns=cols)

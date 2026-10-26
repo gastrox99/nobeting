@@ -468,7 +468,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
 
 def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
                       **kwargs):
-    """Simülasyon sonucunda boş nöbet ya da 1'den büyük toplam farkı varsa bir kez
+    """Boş nöbet, ya da toplam, hafta sonu veya Cuma farkı 1'den büyükse bir kez
     ``improve_schedule`` dener. Dönen değer: (çizelge, düzeldi_mi); çözücü yoksa,
     hata verirse ya da daha iyisini bulamazsa çizelge aynen döner."""
     metric_keys = ("person_limits", "df_preferred", "history_special", "history_total", "history_holiday",
@@ -478,7 +478,12 @@ def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari
             schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
             **{key: kwargs[key] for key in metric_keys if key in kwargs},
         )
-        if before["unfilled"] == 0 and before["total"] <= 1:
+        if (
+            before["unfilled"] == 0
+            and before["total"] <= 1
+            and before["special"] <= 1
+            and before["friday"] <= 1
+        ):
             return schedule, False
         improved, _, _ = improve_schedule(
             schedule, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, **kwargs,
