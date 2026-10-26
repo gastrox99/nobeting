@@ -65,10 +65,12 @@ def test_talep_onaylanir_ve_reddedilir(app_url):  # noqa: F811
                 _wait_idle(page)
                 expect(page.get_by_text("📥 Ekip talepleri (2)")).to_be_visible()
                 expect(page.get_by_text("Tercih: 3 · İzin: 5-6")).to_be_visible()
+                expect(page.get_by_text("🔔 2 ekip talebi onay bekliyor")).to_be_visible()
                 page.get_by_role("button", name="✅ Onayla").first.click()
                 _wait_idle(page)
                 _no_exception(page)
                 expect(page.get_by_text("📥 Ekip talepleri (1)")).to_be_visible()
+                expect(page.get_by_text("🔔 1 ekip talebi onay bekliyor")).to_be_visible()
                 deadline = time.monotonic() + 10
                 pref = None
                 while time.monotonic() < deadline:
@@ -83,6 +85,7 @@ def test_talep_onaylanir_ve_reddedilir(app_url):  # noqa: F811
                 _wait_idle(page)
                 _no_exception(page)
                 expect(page.get_by_text("📥 Ekip talepleri")).to_have_count(0)
+                expect(page.get_by_text("🔔")).to_have_count(0)
                 assert _with_db(lambda db: db.list_team_requests("")) == []
                 # Reddedilen talep tercihlere işlenmez.
                 assert _with_db(lambda db: _saved_pref(db, year, month, AYSE)).get(9) == 0

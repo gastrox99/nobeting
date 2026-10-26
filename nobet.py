@@ -185,7 +185,7 @@ from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
-from nobet_talepler import finish_approved_requests, render_team_requests
+from nobet_talepler import finish_approved_requests, render_pending_badge, render_team_requests
 from streamlit_local_storage import LocalStorage
 
 # Veritabanını sunucu başına bir kez hazırla; başarısızsa sonucu kalıcı
@@ -540,6 +540,8 @@ _bar_cols[2].button(
     "›", key="month_next", help="Sonraki ay", width="stretch",
     on_click=_shift_period, args=(1,), disabled=(_bar_year, _bar_month) >= (YEAR_MAX, 12),
 )
+if _db_ready:
+    render_pending_badge(current_owner)
 # Ekip yoksa Ayarlar açık başlar. Değer oturum boyunca sabit kalır; yoksa
 # ilk isim yazılınca panel kapanıyordu (ekip tablosu satır satır doldurulur).
 if "settings_expanded" not in st.session_state:
