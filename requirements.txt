@@ -2,11 +2,11 @@
 # Yükseltmeden önce testleri çalıştırın: yeni sürümler arayüzü bozabiliyor.
 streamlit==1.52.2
 pandas==2.3.3
-numpy==2.3.5
-matplotlib==3.10.8
-psycopg2-binary==2.9.11
+numpy==2.5.4
+matplotlib==3.11.2
+psycopg2-binary==2.9.13
 openpyxl==3.1.5
-xlsxwriter==3.2.9
+xlsxwriter==3.3.0
 streamlit-local-storage==0.0.25
 # İyileştir düğmesi (CP-SAT çözücü)
 ortools==9.15.6755
