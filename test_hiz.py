@@ -358,7 +358,7 @@ def test_paylasim_ekibi_onbellekte_jeton_her_seferinde_sorulur():
         calls["token"] += 1
         return ("sahip@example.com", 0, 0) if token == "abc123" else None
 
-    def settings(owner="", raise_on_error=False, version_out=None):
+    def settings(owner="", raise_on_error=False, version_out=None, corrupt_out=None):
         calls["settings"] += 1
         return {"team": "Ali, Ayşe"} if owner == "sahip@example.com" else None
 
@@ -384,7 +384,7 @@ def test_paylasim_ekip_onbellegi_sahipleri_karistirmaz_hatayi_saklamaz():
     calls = []
     fail = {"on": True}
 
-    def settings(owner="", raise_on_error=False, version_out=None):
+    def settings(owner="", raise_on_error=False, version_out=None, corrupt_out=None):
         calls.append(owner)
         if fail["on"]:
             if raise_on_error:
