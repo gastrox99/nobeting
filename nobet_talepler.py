@@ -95,7 +95,7 @@ def render_team_requests(owner, yil, ay, isimler, save_undo_state):
     with st.expander(f"📥 Ekip talepleri ({len(_all)})", expanded=bool(_here)):
         # Ay kaydedilemiyorsa (başka yerde değişmiş ya da okunamamış) onaylanan
         # talep yalnızca bu sekmede kalıp silinirdi; onay o zaman kapalı.
-        _blocked = st.session_state.get("autosave_blocked_period") == (yil, ay)
+        _blocked = st.session_state.get("autosave_blocked_period") == (yil, ay) or bool(st.session_state.get("ay_kilitli"))
         if not _here:
             st.caption("Bu ay için bekleyen talep yok.")
         for _r in _here:
@@ -116,6 +116,8 @@ def render_team_requests(owner, yil, ay, isimler, save_undo_state):
                 )
                 if not _known:
                     st.caption("Bu isim ekipte yok; yalnızca reddedilebilir.")
+                elif st.session_state.get("ay_kilitli"):
+                    st.caption("Bu ay kilitli; onaylamak için önce ayın üstünden kilidi açın.")
                 elif _blocked:
                     st.caption("Bu ay şu an kaydedilemiyor; sayfayı yenileyip tekrar onaylayın.")
             with _cols[1]:

@@ -76,6 +76,7 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                    "ve en azıdır (mavi); fark 2'den azsa renk yoktur.")
         # Düğme görev adlarını kullanır (ör. "AYB / GYB sayılarını eşitle").
         if not _single_role and st.button(f"🤖 {' / '.join(role_names)} sayılarını eşitle", width="stretch",
+                     disabled=bool(st.session_state.get("ay_kilitli")),
                      help="Nöbetçileri değiştirmeden yalnızca kimin hangi görev yerinde olduğunu "
                           "herkese eşit dağıtır."):
             if 'cached_rows_liste' in st.session_state and st.session_state.cached_rows_liste:
