@@ -333,3 +333,14 @@ def test_iyilestir_gun_asiri_zinciri_kirar():
     assert after["alt_chain"] == 0
     assert all(after[m] <= before[m] for m in PRIMARY_METRICS)
     assert "üst üste gün aşırı nöbet" in " ".join(improvement_lines(before, after))
+
+
+def test_cozucu_cekirdek_bilgisini_loga_yazar(capsys):
+    gd, cols, names = _month(team=4)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    random.seed(1)
+    current, _ = n.run_scheduling_core(names, cols, unwanted, gd, 1, 2, set(), {}, None, simulation_count=5)
+    improve_schedule(current, names, cols, unwanted, gd, 1, 2, time_limit=1)
+    out = capsys.readouterr().out
+    assert "İyileştir çekirdek:" in out
+    assert "cpu_count=" in out and "affinity=" in out and "cgroup=" in out and "num_workers=" in out
