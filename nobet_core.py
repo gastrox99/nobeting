@@ -2983,6 +2983,26 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
         fixed_by_col[column].sort(key=isimler.index)
     if isinstance(simulation_count, bool) or not isinstance(simulation_count, Integral) or simulation_count <= 0:
         raise ValueError("Simülasyon sayısı pozitif bir tamsayı olmalıdır.")
+    # Arayüzdeki Simülasyon da aynı tohumu kullansın (NOBET_SEED boşsa dokunulmaz).
+    _nobet_seed = os.environ.get("NOBET_SEED")
+    if _nobet_seed:
+        random.seed(int(_nobet_seed))
+
+    # Tercih ve izin tabloları denemeler boyunca değişmez; iç döngüde pandas'tan
+    # hücre hücre okumak yerine bir kez sözlük/kümeye çevrilir (aynı karşılaştırmalar).
+    pref_bonus_of = {}
+    if df_preferred is not None:
+        pref_cols = [c for c in sutunlar if c in df_preferred.columns]
+        for kisi in isimler:
+            if kisi not in df_preferred.index:
+                continue
+            for c in pref_cols:
+                pref_val = df_preferred.at[kisi, c]
+                if pref_val == 1:
+                    pref_bonus_of[(kisi, c)] = -500
+                elif pref_val == 2:
+                    pref_bonus_of[(kisi, c)] = 300
+    unwanted_cells = {(k, c) for k in isimler for c in sutunlar if df_unwanted_bool.at[k, c]}
 
     best_schedule = None
     best_score = float('inf')
@@ -3039,13 +3059,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                 and gun_detaylari[col]["week"] == prior_weeks[p] + 1
             ):
                 consecutive_penalty += 200
-            pref_bonus = 0
-            if df_preferred is not None and p in df_preferred.index and col in df_preferred.columns:
-                pref_val = df_preferred.at[p, col]
-                if pref_val == 1:
-                    pref_bonus = -500
-                elif pref_val == 2:
-                    pref_bonus = 300
+            pref_bonus = pref_bonus_of.get((p, col), 0)
             limit_penalty = 0
             min_bonus = 0
             if person_limits and p in person_limits:
@@ -3103,7 +3117,7 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             for k in isimler:
                 if k in sabitler:
                     continue
-                if df_unwanted_bool.at[k, col]:
+                if (k, col) in unwanted_cells:
                     continue
                 if (gun_no - last_shift_day[k]) <= min_bosluk:
                     continue
@@ -3935,7 +3949,8 @@ def simulation_summary(schedule, people, columns, gun_detaylari, person_limits=N
     """Simülasyon bildirimi için kısa denge özeti (bu ayın farkları)."""
     person_limits = person_limits or {}
     free = [p for p in people if not has_total_limit(person_limits.get(p, {}))]
-    sp_people = [p for p in people if special_cap(person_limits, p) >= 999]
+    # Bildirimdeki fark, analiz tablosundaki en çok ile en azdır.
+    sp_people = list(people)
 
     def _range(group, test):
         values = [sum(1 for c in columns if test(gun_detaylari[c]) and bool(schedule.at[p, c]))

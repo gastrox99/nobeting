@@ -345,6 +345,34 @@ def settings_key(owner=""):
     return f"user:{owner}" if owner else "default"
 
 
+class CorruptRecord(Exception):
+    """Kaydın bir bölümü okunamıyor (bozuk JSON ya da beklenmeyen biçim).
+
+    ``fields``: okunamayan alanlar (ör. ["pref_json"], ayarlar için ["app_settings"]).
+    Sessizce boş sayılsaydı ilk kayıt boş hâlini yazar, veri kalıcı olarak giderdi.
+    """
+
+    def __init__(self, fields):
+        super().__init__(", ".join(fields) + " çözümlenemedi")
+        self.fields = list(fields)
+
+
+def _report_corrupt(fields, corrupt_out, raise_on_error, what):
+    """Bozuk alanları bildirir: ``corrupt_out`` listesine ekler ya da ``CorruptRecord``.
+
+    ``corrupt_out`` verilmişse sağlam kısımlar normal döner (çağıran bozuk alanı
+    gösterir ve o kaydın üzerine yazmaz). Yalnızca ``raise_on_error`` ise istisna
+    yükseltilir; ikisi de yoksa (paylaşım sayfası) alan eskisi gibi boş sayılır.
+    """
+    if not fields:
+        return
+    _log_error(what, CorruptRecord(fields))
+    if corrupt_out is not None:
+        corrupt_out.extend(fields)
+    elif raise_on_error:
+        raise CorruptRecord(fields)
+
+
 class VersionUnknown(Exception):
     """Kaydın bu oturumdaki sürümü bilinmiyor (okunamadı): denetimsiz yazılmaz."""
 
@@ -527,10 +555,11 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
                     for col in schedule_df.columns
                 ]
                 if rows:
+                    # Tek INSERT: varsayılan sayfa 100 satır, 434 satırda 5 gidiş-dönüş ediyordu.
                     execute_values(cur, '''
                         INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
                         VALUES %s
-                    ''', rows)
+                    ''', rows, page_size=len(rows))
                 saved_version = _schedule_content_version(cur, schedule_id)
                 if conflict_version is not None and conflict_version != saved_version:
                     # Başka yerde farklı içerik yazılmış: geri al (with conn), üzerine yazma.
@@ -546,7 +575,8 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
         if conn is not None:
             conn.close()
 
-def load_schedule(name, year, month, raise_on_error=False, owner="", include_preferences=True, version_out=None):
+def load_schedule(name, year, month, raise_on_error=False, owner="", include_preferences=True,
+                  version_out=None, corrupt_out=None):
     """Load a schedule from database.
     Returns (team_members, schedule_df, pref_df, settings_dict, rows_liste).
     pref_df, settings_dict, and rows_liste are None when not saved.
@@ -559,6 +589,11 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
 
     ``version_out`` bir sözlükse içerikle aynı anda (aynı anlık görüntüden)
     okunan sürüm ``version_out["version"]`` olur; kayıt yoksa "".
+
+    Okunamayan alan (``pref_json``, ``settings_json``, ``rows_liste_json``):
+    ``corrupt_out`` bir listeyse alan adı ona eklenir ve alan ``None`` döner,
+    geri kalanı normal okunur; liste yoksa ``raise_on_error`` ile ``CorruptRecord``
+    yükseltilir, ikisi de yoksa alan sessizce ``None`` sayılır (paylaşım sayfası).
     """
     conn = None
 
@@ -591,6 +626,8 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
             except (json.JSONDecodeError, TypeError):
                 team_members = [m.strip() for m in raw_team.split(',') if m.strip()]
 
+            corrupt = []
+
             # Decode pref_df if available
             pref_df = None
             raw_pref = schedule_row.get('pref_json') if include_preferences else None
@@ -604,6 +641,7 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
                     pref_df.columns = pref_df.columns.map(str)
                 except Exception:
                     pref_df = None
+                    corrupt.append("pref_json")
 
             # Decode settings_dict if available
             settings_dict = None
@@ -613,6 +651,9 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
                     settings_dict = json.loads(raw_settings)
                 except Exception:
                     settings_dict = None
+                if not isinstance(settings_dict, dict):
+                    settings_dict = None
+                    corrupt.append("settings_json")
 
             # Decode role assignment rows if available. Older records do not have
             # this value, so callers can fall back to automatic role generation.
@@ -621,10 +662,14 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
             if raw_rows_liste:
                 try:
                     decoded_rows = json.loads(raw_rows_liste)
-                    if isinstance(decoded_rows, list) and all(isinstance(row, dict) for row in decoded_rows):
-                        rows_liste = decoded_rows
                 except Exception:
-                    rows_liste = None
+                    decoded_rows = None
+                if isinstance(decoded_rows, list) and all(isinstance(row, dict) for row in decoded_rows):
+                    rows_liste = decoded_rows
+                else:
+                    corrupt.append("rows_liste_json")
+
+            _report_corrupt(corrupt, corrupt_out, raise_on_error, "Load schedule")
 
             # Get schedule data
             cur.execute('''
@@ -654,8 +699,9 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
         return team_members, df, pref_df, settings_dict, rows_liste
 
     except Exception as e:
-        if isinstance(e, _DB_ERRORS + (json.JSONDecodeError,)):
-            _log_error("Load schedule", e)
+        if isinstance(e, _DB_ERRORS + (json.JSONDecodeError, CorruptRecord)):
+            if not isinstance(e, CorruptRecord):
+                _log_error("Load schedule", e)
         else:
             log_unexpected("Load schedule", e)
         if raise_on_error:
@@ -774,10 +820,14 @@ def save_app_settings(settings, owner="", expected_version=_MISSING, version_out
             conn.close()
 
 
-def load_app_settings(owner="", raise_on_error=False, version_out=None):
+def load_app_settings(owner="", raise_on_error=False, version_out=None, corrupt_out=None):
     """Return saved settings as a dict, or None when nothing is saved yet.
 
     ``version_out`` bir sözlükse okunan değerin sürümü (aynı okumadan) oraya yazılır.
+    Kayıt okunamıyorsa (bozuk JSON ya da sözlük değil) ``load_schedule``'daki gibi:
+    ``corrupt_out`` listesine "app_settings" eklenip ``None`` döner, liste yoksa
+    ``raise_on_error`` ile ``CorruptRecord`` yükseltilir. Sürüm her durumda ham
+    değerden hesaplanır: onaylı boşaltmadan sonraki kayıt çakışma denetimiyle yazar.
     """
     conn = None
     try:
@@ -789,13 +839,20 @@ def load_app_settings(owner="", raise_on_error=False, version_out=None):
             if version_out is not None:
                 version_out["version"] = ""
             return None
-        settings = json.loads(row['value'])
         if version_out is not None:
             version_out["version"] = _settings_content_version(row['value'])
-        return settings if isinstance(settings, dict) else None
+        try:
+            settings = json.loads(row['value'])
+        except (json.JSONDecodeError, TypeError):
+            settings = None
+        if not isinstance(settings, dict):
+            _report_corrupt(["app_settings"], corrupt_out, raise_on_error, "Load settings")
+            return None
+        return settings
     except Exception as e:
-        if isinstance(e, _DB_ERRORS + (json.JSONDecodeError,)):
-            _log_error("Load settings", e)
+        if isinstance(e, _DB_ERRORS + (CorruptRecord,)):
+            if not isinstance(e, CorruptRecord):
+                _log_error("Load settings", e)
         else:
             log_unexpected("Load settings", e)
         if raise_on_error:
@@ -1190,7 +1247,7 @@ def restore_owner_data(backup, owner=""):
                         execute_values(cur, '''
                             INSERT INTO schedule_data (schedule_id, person, day_col, assigned)
                             VALUES %s
-                        ''', rows)
+                        ''', rows, page_size=len(rows))
                 if backup.get("settings") is not None:
                     cur.execute('''
                         INSERT INTO app_settings (key, value, updated_at)

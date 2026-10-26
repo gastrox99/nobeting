@@ -1817,7 +1817,7 @@ class TestBackup(unittest.TestCase):
         cursor = _FakeDbCursor()
         inserted = []
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)), \
-                patch.object(db, "execute_values", side_effect=lambda _c, _sql, rows: inserted.extend(rows)):
+                patch.object(db, "execute_values", side_effect=lambda _c, _sql, rows, **_k: inserted.extend(rows)):
             self.assertTrue(db.restore_owner_data(backup, owner="ali@gmail.com"))
         upsert_sql, upsert_params = cursor.executed[0]
         self.assertIn("ON CONFLICT (owner, name, year, month)", upsert_sql)
@@ -2491,7 +2491,7 @@ class TestSecmeliAyarlar(unittest.TestCase):
         self.assertNotIn('st.text_area(\n            "🚫 Birlikte', source)
         self.assertNotIn('st.text_area(\n            "👥 Ekip', source)
         self.assertNotIn('"📊 Kişisel Limitler:"', source)
-        self.assertIn("render_team_table()", source)
+        self.assertIn("render_team_table(draw=settings_expanded)", source)
         self.assertIn("render_pair_matrix(isimler)", source)
 
 
@@ -2969,7 +2969,7 @@ class TestAppSettingsPersistence(unittest.TestCase):
         # Ayarlar widget'lar çizilmeden önce yüklenmeli.
         self.assertLess(
             source.index("apply_app_settings(st.session_state"),
-            source.index("render_team_table()"),
+            source.index("render_team_table(draw=settings_expanded)"),
         )
 
 
