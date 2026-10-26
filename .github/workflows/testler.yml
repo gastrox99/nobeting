@@ -34,7 +34,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # PR'da birleştirme kaydı ve tabanı; değişen dosyaları bulmak için.
           fetch-depth: 2
@@ -56,7 +56,7 @@ jobs:
             echo "gerekli=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Tarayıcı testleri atlandı::Arayüz dosyası değişmedi; main'de çalışacak."
           fi
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
