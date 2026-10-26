@@ -570,7 +570,7 @@ def test_kapali_panelde_kutu_anahtari_saklanmaz(uygulama):
     prefixes = ("w_ekip_", "w_yasak", "w_birlikte", "w_sabit_gorev::", "w_holiday_text_", "w_unvan_val",
                 "w_riskli_birim_val", "w_nobet_ucreti_val", "w_role_names_text", "w_balance_history",
                 "yil_input_direct", "ay_input_direct", "kisi_slider_direct")
-    keys = list(at.session_state.filtered_state)
+    keys = list(at.session_state.keys())
     assert "forbidden_pairs_text" in keys
     left = [k for k in keys if str(k).startswith(prefixes)]
     assert left == []
