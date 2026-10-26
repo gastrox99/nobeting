@@ -1504,7 +1504,7 @@ def _simulation_context():
 
 
 def _auto_improve(schedule):
-    """Simülasyon sonucunda boş nöbet ya da 1'den büyük toplam farkı varsa İyileştir'in
+    """Boş nöbet, ya da toplam, hafta sonu veya Cuma farkı 1'den büyükse İyileştir'in
     çözücüsünü bir kez dener: (çizelge, düzeldi_mi)."""
     try:
         from nobet_iyilestir import improve_if_needed
