@@ -1,0 +1,22 @@
+# Bağımlılık güncellemeleri: ayda bir, her ekosistem için tek (gruplu) PR.
+# Python paketleri requirements.txt'te sabit sürümlü; Dependabot yükseltme önerir,
+# ama birleştirmeden önce testler çalıştırılmalı (requirements.txt'teki uyarıya bakın).
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      python-paketleri:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
