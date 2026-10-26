@@ -230,6 +230,23 @@ def rule_breaking_shifts(current, people, columns, df_unwanted_bool, gun_detayla
     return len(bad)
 
 
+def _cpu_bilgisi(num_workers):
+    """Sunucu günlüğü için: çözücünün kaç çekirdek gördüğü (yalnız ölçüm, davranışı değiştirmez)."""
+    try:
+        affinity = len(os.sched_getaffinity(0))
+    except Exception:
+        affinity = "?"
+    cgroup = "?"
+    for yol in ("/sys/fs/cgroup/cpu.max", "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"):
+        try:
+            with open(yol) as f:
+                cgroup = f.read().strip()
+            break
+        except Exception:
+            continue
+    return f"İyileştir çekirdek: cpu_count={os.cpu_count()} affinity={affinity} cgroup={cgroup} num_workers={num_workers}"
+
+
 def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
                      forbidden_pairs=None, person_limits=None, df_preferred=None,
                      fixed_assignments=None, initial_last_shift=None, history_special=None,
@@ -451,6 +468,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     solver.parameters.max_time_in_seconds = float(time_limit)
     solver.parameters.num_workers = max(1, min(4, os.cpu_count() or 1))
     solver.parameters.random_seed = 0
+    print(_cpu_bilgisi(solver.parameters.num_workers))
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return None, before, before
@@ -468,7 +486,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
 
 def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
                       **kwargs):
-    """Simülasyon sonucunda boş nöbet ya da 1'den büyük toplam farkı varsa bir kez
+    """Boş nöbet, ya da toplam, hafta sonu veya Cuma farkı 1'den büyükse bir kez
     ``improve_schedule`` dener. Dönen değer: (çizelge, düzeldi_mi); çözücü yoksa,
     hata verirse ya da daha iyisini bulamazsa çizelge aynen döner."""
     metric_keys = ("person_limits", "df_preferred", "history_special", "history_total", "history_holiday",
@@ -478,7 +496,12 @@ def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari
             schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
             **{key: kwargs[key] for key in metric_keys if key in kwargs},
         )
-        if before["unfilled"] == 0 and before["total"] <= 1:
+        if (
+            before["unfilled"] == 0
+            and before["total"] <= 1
+            and before["special"] <= 1
+            and before["friday"] <= 1
+        ):
             return schedule, False
         improved, _, _ = improve_schedule(
             schedule, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, **kwargs,

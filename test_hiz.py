@@ -459,6 +459,14 @@ def test_kapali_panelde_elle_girilen_ucret_varsayilana_donmez(kayitli_uygulama):
     assert at.number_input(key="w_nobet_ucreti_val").value == 250.0
 
 
+def test_en_az_nobet_panelden_gecince_uc_sekiz_kalir(uygulama):
+    at = uygulama("Ayşe")
+    at.session_state["limits_text"] = "Ayşe:3-8"
+    at.run()
+    assert at.session_state["limits_text"] == "Ayşe:3-8"
+    assert [e.value for e in at.exception] == []
+
+
 def test_ayarlar_kapanirken_yazilan_ekip_ve_kutular_kaybolmaz(kayitli_uygulama):
     """Enter/Tab'a basmadan doğrudan başlığa tıklanınca kutu değerleri aynı çalışmada gelir."""
     app, saved = kayitli_uygulama

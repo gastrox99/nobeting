@@ -179,7 +179,7 @@ for _attempt in range(2):
             raise
         _fresh_modules(force=True)
 from nobet_stil import GLOBAL_CSS, ui_colors
-from nobet_durum import apply_renames, save_undo_state
+from nobet_durum import apply_renames, render_recent_errors, save_undo_state
 from nobet_paylasim import render_shared_view
 from nobet_disa_aktar import render_excel_import, render_toolbar
 from nobet_yedek import render_backup_section, run_requested_snapshot
@@ -853,6 +853,11 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
         st.warning(f"⚠️ {len(_lim_invalid_lines)} satır geçersiz format (doğru format: `İsim:min-max`) — atlandı.")
     if settings_expanded and _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(_lim_unknown)}** — limit uygulanmayacak.")
+    # Hata metinleri başka kullanıcıların adını içerebilir: yalnız yöneticiye.
+    if settings_expanded and _db_ready and (
+        not AUTH_ENABLED or current_owner == normalize_owner_email(os.getenv("ADMIN_EMAIL", ""))
+    ):
+        render_recent_errors()
 
 st.session_state.pop("_ayarlar_kapaniyor", None)
 
@@ -1533,7 +1538,7 @@ def _simulation_context():
 
 
 def _auto_improve(schedule):
-    """Simülasyon sonucunda boş nöbet ya da 1'den büyük toplam farkı varsa İyileştir'in
+    """Boş nöbet, ya da toplam, hafta sonu veya Cuma farkı 1'den büyükse İyileştir'in
     çözücüsünü bir kez dener: (çizelge, düzeldi_mi)."""
     try:
         from nobet_iyilestir import improve_if_needed

@@ -72,6 +72,7 @@ from nobet_core import (
     get_preference_grid_state,
     normalize_preference_grid,
     run_scheduling_core,
+    weekend_pair_count,
     _balance_fridays,
     _balance_holidays,
     _balance_specials,
@@ -882,6 +883,80 @@ class TestRunSchedulingCore(unittest.TestCase):
         avg = schedule.values.sum() / len(isimler)
         self.assertGreaterEqual(ali_total, avg * 0.8,
                                 f"Ali yeşil tercih koymasına rağmen beklenenden az nöbet aldı: {ali_total}")
+
+    def test_aradan_sonra_hafta_sonu_cifti_sayilir(self):
+        # Kasım 2026 haftaları: 1, sonra 7-8, ara, 21-22 ve 28-29.
+        # İki çift var. Serinin sonu 1 sayardı; seçim 2 saymalı.
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=["Ali"], columns=cols)
+        by_week = {}
+        for col in cols:
+            if days[col]["weekend"]:
+                by_week.setdefault(days[col]["week"], []).append(col)
+        weeks = sorted(by_week)
+        for week in (weeks[0], weeks[1], weeks[3], weeks[4]):
+            for col in by_week[week]:
+                schedule.at["Ali", col] = True
+        self.assertEqual(weekend_pair_count(schedule, cols, days), 2)
+
+    def test_unutulan_ciftler_secim_puanina_girer(self):
+        # 6 kişi, tohum 0, 20 simülasyon. Seçilen liste aynı kalır.
+        # Sayaç serinin sonunda 4 görüyordu; gerçek çift 6. Puan 1000 yükselir.
+        names = [f"K{i}" for i in range(6)]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        random.seed(0)
+        schedule, score = run_scheduling_core(
+            names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=20,
+        )
+        self.assertEqual(weekend_pair_count(schedule, cols, days), 6)
+        self.assertAlmostEqual(score, 3320.7735026918963, places=4)
+
+    def test_tum_hafta_icinden_kacinan_toplamda_birden_fazla_geride_kalmaz(self):
+        # K0 hafta içinin tamamından kaçınıyor. Yalnız hafta sonu yetmezse
+        # dengeleme kaçınılan güne de geçebilir; fark yine en fazla 1 kalır.
+        names = [f"K{i}" for i in range(8)]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        preferred = pd.DataFrame(0, index=names, columns=cols)
+        for col in cols:
+            if not days[col]["weekend"] and not days[col]["holiday"]:
+                preferred.at["K0", col] = 2
+        random.seed(4)
+        schedule, _ = run_scheduling_core(
+            names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2,
+            df_preferred=preferred, simulation_count=30,
+        )
+        totals = {p: int(schedule.loc[p].sum()) for p in names}
+        self.assertLessEqual(max(totals.values()) - min(totals.values()), 1)
+        avoid = [
+            days[c]["day_num"] for c in cols
+            if schedule.at["K0", c] and int(preferred.at["K0", c]) == 2
+        ]
+        self.assertGreater(len(avoid), 0)
+        for p in names:
+            got = sorted(days[c]["day_num"] for c in cols if schedule.at[p, c])
+            self.assertTrue(all(b - a > 1 for a, b in zip(got, got[1:])), p)
+        # Üç pazartesiden kaçınmak farkı zaten kapatıyorsa kaçınılan gün boş kalır.
+        light = preferred.copy()
+        light.loc[:, :] = 0
+        for day in (2, 9, 16):
+            col = next(c for c in cols if days[c]["day_num"] == day)
+            light.at["K0", col] = 2
+        random.seed(4)
+        modest, _ = run_scheduling_core(
+            names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2,
+            df_preferred=light, simulation_count=30,
+        )
+        modest_avoid = sum(
+            1 for c in cols if modest.at["K0", c] and int(light.at["K0", c]) == 2
+        )
+        modest_totals = [int(modest.loc[p].sum()) for p in names]
+        self.assertLessEqual(max(modest_totals) - min(modest_totals), 1)
+        self.assertEqual(modest_avoid, 0)
 
 
 class TestLargeSchedulePerformance(unittest.TestCase):
@@ -2456,13 +2531,18 @@ class TestSecmeliAyarlar(unittest.TestCase):
             ["Ali", "Ayşe", "Can"],
             {"Ali": {"min": 2, "max": 8}, "Can": {"min": 0, "max": 999, "max_special": 1}},
         )
-        # Arayüzde olmayan eski "en az" değeri taşınmaz.
-        self.assertEqual(rows[0], {"name": "Ali", "min": 0, "max": 8, "max_special": None})
+        # Tabloda ayrı kutu olmasa da kayıtlı "en az" durur.
+        self.assertEqual(rows[0], {"name": "Ali", "min": 2, "max": 8, "max_special": None})
         self.assertEqual(rows[1], {"name": "Ayşe", "min": 0, "max": None, "max_special": None})
         self.assertEqual(rows[2]["max_special"], 1)
         names, limits = team_settings_texts(rows)
         self.assertEqual(names, "Ali, Ayşe, Can")
-        self.assertEqual(limits, "Ali:0-8\nCan:0-999:1")
+        self.assertEqual(limits, "Ali:2-8\nCan:0-999:1")
+        # Ayşe:3-8 tabloya girip çıkınca aynı metin kalır.
+        parsed = parse_person_limits("Ayşe:3-8")
+        round_rows = compact_team_rows(team_settings_rows(["Ayşe"], parsed))
+        _, again = team_settings_texts(round_rows)
+        self.assertEqual(again, "Ayşe:3-8")
 
     def test_ekip_tablosu_bos_satir_ve_silme(self):
         rows = [
@@ -3960,3 +4040,17 @@ class TestSabitGorevYeri(unittest.TestCase):
         state = {}
         apply_app_settings(state, {"fixed_roles": {"Ali": "AYB", "": "GYB", "Can": 3}})
         self.assertEqual(state["fixed_roles"], {"Ali": "AYB"})
+
+
+class TestYazdirmaDuzeni(unittest.TestCase):
+    def test_yazdirma_css_yalniz_tablo_ve_takvimi_birakir(self):
+        from nobet_stil import GLOBAL_CSS
+
+        print_css = GLOBAL_CSS[GLOBAL_CSS.index("@media print"):]
+        self.assertIn("size: A4 landscape", print_css)
+        self.assertIn(".st-key-schedule-grid", print_css)
+        self.assertIn(".st-key-cal-grid", print_css)
+        self.assertIn(".st-key-bottom-actions", print_css)
+        # Nöbet hücreleri düğme; yazdırmada gizlenmemeli.
+        self.assertNotIn(".st-key-schedule-grid button", print_css)
+        self.assertIn(".st-key-preference-grid", print_css)
