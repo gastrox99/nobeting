@@ -2161,15 +2161,15 @@ def special_capped_people(person_limits):
 def team_settings_rows(names, limits):
     """Ayarlardaki ekip tablosunun satırları: [{"name", "max", "max_special", "min"}].
 
-    Sınırsız değerler None olur. "En az nöbet" arayüzde yok ve kullanılmıyor;
-    eski kayıtlardaki görünmez değer burada sıfırlanır (kaydedilince silinir).
+    Sınırsız en fazla değerler None olur. "En az nöbet" tabloda ayrı kutu değildir;
+    kayıttaki değer satırda durur, tablo kapanınca metne geri yazılır.
     """
     rows = []
     for name in names:
         value = (limits or {}).get(name, {})
         rows.append({
             "name": name,
-            "min": 0,
+            "min": int(value.get("min") or 0),
             "max": None if value.get("max", 999) >= 999 else value["max"],
             "max_special": None if value.get("max_special", 999) >= 999 else value["max_special"],
         })
@@ -2735,16 +2735,17 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                     df_preferred, min_bosluk, forbidden_pairs, person_limits,
                     fixed_assignments, initial_last_shift, history_special,
                     max_moves=500, history_total=None, history_holiday=None,
-                    together_pairs=None, prior_weeks=None):
+                    together_pairs=None, prior_weeks=None, allow_avoid=False):
     """Toplam nöbet farkını kurallara uyarak en fazla 1'e indirir.
 
     Gün gün ilerleyen seçim ay sonunda toplamlarda kayma bırakabiliyordu
     (ör. 62 nöbet / 9 kişide biri 6, biri 8). En çok nöbeti olandan en az
     olana, aynı gün içinde, şu koşullarla bir nöbet aktarılır:
-    alan kişi o gün müsait, kaçınma günü değil, dinlenme kuralına ve yasak
+    alan kişi o gün müsait, dinlenme kuralına ve yasak
     çiftlere uyuyor, max limitini aşmıyor; veren kişinin nöbeti sabit değil
     ve min limitinin altına düşmüyor; hafta sonu/tatil dengesi bozulmuyor.
-    Tercih edilen günler mümkün olduğunca korunur.
+    Tercih edilen günler mümkün olduğunca korunur. Kaçınılan gün, toplam
+    farkı 1'in üstündeyken ve başka gün kalmadıysa kullanılabilir.
 
     Toplam farkı zaten 1 iken önceki aylar (``history_total``) hesaba katılır:
     geçmişiyle birlikte 2 ya da daha fazla önde olan kişinin fazla nöbeti,
@@ -2815,7 +2816,10 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                         continue
                     if (giver, col) in fixed or bool(df_unwanted_bool.at[receiver, col]):
                         continue
-                    if pref(receiver, col) == 2:
+                    on_avoid = pref(receiver, col) == 2
+                    # Fark 1 iken kaçınılan güne geçilmez. Fark daha büyükse
+                    # önce diğer günler; kaçınılan gün yalnız onlar yetmezse.
+                    if on_avoid and (not allow_avoid or gap <= 1):
                         continue
                     # Yalnızca geçmiş yüzünden yapılan aktarım verenin tercih ettiği günü almaz.
                     if gap == 1 and pref(giver, col) == 1:
@@ -2852,7 +2856,8 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
                     )
                     # Önce hafta içi; verenin tercih ettiği gün en son, alanın tercih ettiği gün önce.
                     score = (
-                        (80 if links_weekend else 0)
+                        (1000 if on_avoid else 0)
+                        + (80 if links_weekend else 0)
                         + (50 * max(0, breaks))
                         + (10 if col in special_cols else 0)
                         + (4 if col in friday_cols else 0)
@@ -2870,6 +2875,17 @@ def _balance_totals(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool
         _, giver, receiver, col = best_move
         schedule.at[giver, col] = False
         schedule.at[receiver, col] = True
+    if not allow_avoid:
+        totals_now = [int(schedule.loc[p].sum()) for p in isimler]
+        if totals_now and max(totals_now) - min(totals_now) > 1:
+            return _balance_totals(
+                schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
+                df_preferred, min_bosluk, forbidden_pairs, person_limits,
+                fixed_assignments, initial_last_shift, history_special,
+                max_moves=max_moves, history_total=history_total,
+                history_holiday=history_holiday, together_pairs=together_pairs,
+                prior_weeks=prior_weeks, allow_avoid=True,
+            )
     return schedule
 
 
