@@ -568,3 +568,20 @@ def test_kapali_panelde_kutu_anahtari_saklanmaz(uygulama):
     assert left == []
     assert at.session_state["forbidden_pairs_text"] == "Ali-Can"
     assert at.session_state["fixed_roles"] == {"Can": "GYB"}
+
+
+def test_kesilen_kapanma_tekrarlaninca_yasak_ikili_silinmez(uygulama):
+    """Kapanma çalışması kutuları unuttuktan sonra kesilirse sonraki çalışma kapanmayı
+    tekrarlar; tarayıcının yeniden gönderdiği eski kutu değeri tıklama sanılmamalı."""
+    at = uygulama()
+    at.run()
+    _ac_kapa(at)
+    at.checkbox(key="w_yasak::Ali::Can").check().run()
+    assert at.session_state["forbidden_pairs_text"] == "Ali-Can"
+    at.session_state["settings_expanded"] = False
+    at.session_state["_ayarlar_kapaniyor"] = True
+    for k in ("_yasak_shown", "_birlikte_shown", "_sabit_shown", "_ekip_source"):
+        if k in at.session_state:
+            del at.session_state[k]
+    at.run()
+    assert at.session_state["forbidden_pairs_text"] == "Ali-Can"

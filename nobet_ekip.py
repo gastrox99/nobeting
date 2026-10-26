@@ -264,7 +264,7 @@ def render_pair_matrix(isimler, kind="yasak", draw=True):
     # Son çizimden bu yana tıklanan kutuyu bul ve metne uygula.
     for a, b in _ikililer:
         key = _pair_key(a, b, kind)
-        if key in state and bool(state[key]) != (tuple(sorted((a, b))) in shown):
+        if shown_key in state and key in state and bool(state[key]) != (tuple(sorted((a, b))) in shown):
             text = toggle_pair_text(text, isimler, (a, b))
             break
     if text != state.get(text_key, ""):
