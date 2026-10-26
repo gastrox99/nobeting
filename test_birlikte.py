@@ -190,6 +190,7 @@ def test_ayarlarda_birlikte_tablosu_isaretlenir():
         at.session_state["isimler_text"] = "Ali, Ayşe, Can"
         at.session_state["storage_init"] = {}
         at.session_state["yil_val"], at.session_state["ay_val"] = 2026, 10
+        at.session_state["settings_expanded"] = True  # Ayarlar açık
         at.run()
         assert [e.value for e in at.exception] == []
         at.checkbox(key="w_birlikte::Ali::Can").check()
