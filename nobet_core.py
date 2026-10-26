@@ -2935,6 +2935,21 @@ def alternate_day_chains(schedule, people, columns, day_of=None):
     return excess
 
 
+def weekend_pair_count(schedule, columns, gun_detaylari):
+    """Bu aydaki art arda hafta sonu çiftleri. Aradaki boş hafta sayacı sıfırlamaz.
+
+    Önceki ayın hafta sonu bu sayıya girmez; o, seçim anındaki ayrı cezadadır.
+    """
+    total = 0
+    for person in schedule.index:
+        worked = {
+            gun_detaylari[c]["week"] for c in columns
+            if gun_detaylari[c]["weekend"] and c in schedule.columns and bool(schedule.at[person, c])
+        }
+        total += sum(1 for week in worked if week + 1 in worked)
+    return total
+
+
 def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
                         min_bosluk, kisi_sayisi, forbidden_pairs=None,
                         person_limits=None, df_preferred=None,
@@ -3200,7 +3215,9 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
 
         totals = list(stat_total.values())
         specials = [stat_special[i] + history_special.get(i, 0) for i in balanced]
-        consecutive_weekends = sum(stat_consecutive_weekend.values())
+        # Seçim bu aydaki her çifti sayar. Döngüdeki sayaç aradan sonra sıfırlanır;
+        # o yalnız uzayan seriyi, seçildiği anda cezalandırır.
+        consecutive_weekends = weekend_pair_count(temp_schedule, sutunlar, gun_detaylari)
         std_dev_total = np.std(totals)
         std_dev_special = np.std(specials)
         range_total = max(totals) - min(totals)
