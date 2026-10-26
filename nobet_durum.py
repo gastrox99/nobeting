@@ -3,6 +3,7 @@
 import pandas as pd
 import streamlit as st
 
+from db import list_recent_errors
 from nobet_core import align_rows_to_roles, record_renames, rename_people_in_rows
 
 
@@ -116,3 +117,20 @@ def apply_renames(renames):
             _ctx[_field] = [
                 {renames.get(_p, _p): _v for _p, _v in _month.items()} for _month in _ctx.get(_field, [])
             ]
+
+
+def render_recent_errors():
+    """Ayarlar'da «Son hatalar»: anahtar açılınca en yeni hataları (sürüm etiketiyle) listeler."""
+    if not st.toggle("🩺 Son hataları göster", key="son_hatalar_ac"):
+        return
+    errors = list_recent_errors()
+    if errors is None:
+        st.warning("Hata kaydı okunamadı (veritabanına ulaşılamadı).")
+    elif not errors:
+        st.caption("Kayıtlı hata yok.")
+    else:
+        st.caption("En yeni 20 hata. Kayıt tutarken ya da yüklerken sorun yaşarsanız bu tabloyu yazılımcıya gösterin.")
+        st.dataframe(
+            [{"Zaman": e["created_tr"], "İşlem": e["action"], "Hata": e["message"], "Sürüm": e["version"]} for e in errors],
+            hide_index=True, width="stretch",
+        )

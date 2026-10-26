@@ -85,12 +85,14 @@ def _describe_error(exc):
     """One-line, password-free reason for the UI."""
     message = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
     message = re.sub(r'(://[^:/@\s]+):[^@\s]+@', r'\1:***@', message)
+    message = re.sub(r'(?i)(password\s*=\s*)\S+', r'\1***', message)
     return message[:200]
 
 
 def _log_error(action, exc):
-    """Sunucu günlüğüne şifresiz hata satırı yazar."""
+    """Sunucu günlüğüne şifresiz hata satırı yazar; Ayarlar'daki «Son hatalar» için tabloya da koyar."""
     print(f"{action} error: {_describe_error(exc)}")
+    _record_error(action, exc)
 
 
 def log_unexpected(action, exc):
@@ -98,6 +100,63 @@ def log_unexpected(action, exc):
     text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     print(f"{action} beklenmeyen hata (sürüm {_code_version()}):\n"
           + re.sub(r'(://[^:/@\s]+):[^@\s]+@', r'\1:***@', text))
+    _record_error(action, exc)
+
+
+# Ayarlar > «Son hatalar» yalnızca bu kadar en yeni hatayı gösterir.
+ERROR_LOG_KEEP = 20
+
+
+def _record_error(action, exc):
+    """Hatayı error_log tablosuna yazar, en yeni ERROR_LOG_KEEP kaydı tutar.
+
+    Yalnızca günlüğe yardımcıdır: yazamazsa sessizce vazgeçer (asıl işlem bozulmaz,
+    hata kaydı hata üretmez). Bağlantı hataları yazılmaz; veritabanına zaten ulaşılamıyor.
+    """
+    if isinstance(exc, psycopg2.OperationalError) or not _database_url():
+        return
+    conn = None
+    try:
+        conn = psycopg2.connect(_database_url(), connect_timeout=3)
+        with conn, conn.cursor() as cur:
+            # Aynı hata 10 dakika içinde tekrar gelirse yeniden yazılmaz (sayfa her
+            # yenilenince aynı satır 20 kaydı doldurmasın).
+            text = f"{type(exc).__name__}: {_describe_error(exc)}"
+            cur.execute(
+                "INSERT INTO error_log (created_tr, version, action, message) "
+                "SELECT to_char(now() AT TIME ZONE 'Europe/Istanbul', 'YYYY-MM-DD HH24:MI'), %s, %s, %s "
+                "WHERE NOT EXISTS (SELECT 1 FROM error_log WHERE action = %s AND message = %s "
+                "AND created_at > now() - interval '10 minutes')",
+                (_code_version()[:80], str(action)[:120], text, str(action)[:120], text),
+            )
+            cur.execute(
+                "DELETE FROM error_log WHERE id NOT IN (SELECT id FROM error_log ORDER BY id DESC LIMIT %s)",
+                (ERROR_LOG_KEEP,),
+            )
+    except Exception:  # hata kaydı yazılamadıysa yapılacak bir şey yok
+        pass
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_recent_errors():
+    """Son hatalar, yeniden eskiye; veritabanından okunamazsa None."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT created_tr, version, action, message FROM error_log ORDER BY id DESC LIMIT %s",
+                (ERROR_LOG_KEEP,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+    except _DB_ERRORS as e:
+        print(f"Son hatalar okunamadı: {_describe_error(e)}")
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _code_version():
@@ -254,6 +313,18 @@ def init_db():
                     ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'pending'
                 ''')
                 cur.execute('ALTER TABLE team_requests ADD COLUMN IF NOT EXISTS decided_at TIMESTAMP')
+
+                # Ayarlar > «Son hatalar»: en yeni 20 hata (sunucu günlüğü kısa sürede siliniyor).
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS error_log (
+                        id SERIAL PRIMARY KEY,
+                        created_tr VARCHAR(16) NOT NULL,
+                        version VARCHAR(80) NOT NULL DEFAULT '',
+                        action VARCHAR(120) NOT NULL,
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
         _last_error = None
         return True
     except Exception as e:
