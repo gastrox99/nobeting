@@ -230,6 +230,23 @@ def rule_breaking_shifts(current, people, columns, df_unwanted_bool, gun_detayla
     return len(bad)
 
 
+def _cpu_bilgisi(num_workers):
+    """Sunucu günlüğü için: çözücünün kaç çekirdek gördüğü (yalnız ölçüm, davranışı değiştirmez)."""
+    try:
+        affinity = len(os.sched_getaffinity(0))
+    except Exception:
+        affinity = "?"
+    cgroup = "?"
+    for yol in ("/sys/fs/cgroup/cpu.max", "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"):
+        try:
+            with open(yol) as f:
+                cgroup = f.read().strip()
+            break
+        except Exception:
+            continue
+    return f"İyileştir çekirdek: cpu_count={os.cpu_count()} affinity={affinity} cgroup={cgroup} num_workers={num_workers}"
+
+
 def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
                      forbidden_pairs=None, person_limits=None, df_preferred=None,
                      fixed_assignments=None, initial_last_shift=None, history_special=None,
@@ -451,6 +468,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     solver.parameters.max_time_in_seconds = float(time_limit)
     solver.parameters.num_workers = max(1, min(4, os.cpu_count() or 1))
     solver.parameters.random_seed = 0
+    print(_cpu_bilgisi(solver.parameters.num_workers))
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return None, before, before

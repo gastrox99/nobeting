@@ -335,6 +335,17 @@ def test_iyilestir_gun_asiri_zinciri_kirar():
     assert "üst üste gün aşırı nöbet" in " ".join(improvement_lines(before, after))
 
 
+def test_cozucu_cekirdek_bilgisini_loga_yazar(capsys):
+    gd, cols, names = _month(team=4)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    random.seed(1)
+    current, _ = n.run_scheduling_core(names, cols, unwanted, gd, 1, 2, set(), {}, None, simulation_count=5)
+    improve_schedule(current, names, cols, unwanted, gd, 1, 2, time_limit=1)
+    out = capsys.readouterr().out
+    assert "İyileştir çekirdek:" in out
+    assert "cpu_count=" in out and "affinity=" in out and "cgroup=" in out and "num_workers=" in out
+
+
 # Kasım 2026, tohum 202611, arayüzden indirilen liste. Işık'ın tek hafta sonu
 # 7 Kasım. İyileştir bu nöbeti alıp "hafta sonu farkı 1 → 0" diyordu; tabloda
 # fark 1'den 2'ye çıkıyordu.
