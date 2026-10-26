@@ -408,6 +408,8 @@ def _render_request_form(_owner, _person):
         st.rerun()
     elif _result == "limit":
         st.error("Bekleyen talep sayısı doldu; liste sahibi eski talepleri onaylayınca tekrar deneyin.")
+    elif _result == "wait":
+        st.error("Çok sık talep gönderildi; birkaç saniye bekleyip tekrar deneyin.")
     else:
         st.error("Talep kaydedilemedi. Biraz sonra tekrar deneyin.")
 
