@@ -3970,3 +3970,6 @@ class TestYazdirmaDuzeni(unittest.TestCase):
         self.assertIn(".st-key-schedule-grid", print_css)
         self.assertIn(".st-key-cal-grid", print_css)
         self.assertIn(".st-key-bottom-actions", print_css)
+        # Nöbet hücreleri düğme; yazdırmada gizlenmemeli.
+        self.assertNotIn(".st-key-schedule-grid button", print_css)
+        self.assertIn(".st-key-preference-grid", print_css)

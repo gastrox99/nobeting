@@ -337,9 +337,9 @@ GLOBAL_CSS = """
     .st-key-bottom-actions {
         display: none !important;
     }
-    [data-testid="stElementContainer"]:not(:has(.st-key-schedule-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
-    [data-testid="stExpander"]:not(:has(.st-key-schedule-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
-    [data-testid="stDivider"]:not(:has(.st-key-schedule-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-cal-head *, .st-key-cal-grid *)) {
+    [data-testid="stElementContainer"]:not(:has(.st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
+    [data-testid="stExpander"]:not(:has(.st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
+    [data-testid="stDivider"]:not(:has(.st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)) {
         display: none !important;
     }
     [role="tabpanel"] {
@@ -356,8 +356,7 @@ GLOBAL_CSS = """
         margin-bottom: 0 !important;
         overflow: visible !important;
     }
-    .st-key-cal-grid [data-testid="stElementContainer"] button,
-    .st-key-schedule-grid button {
+    .st-key-cal-grid [data-testid="stElementContainer"] button {
         display: none !important;
     }
     .st-key-cal-head { break-before: page; }
