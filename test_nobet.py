@@ -1311,6 +1311,37 @@ class TestPreviousMonths(unittest.TestCase):
             )
             self.assertFalse(schedule.at["Ali", cols[0]])
 
+    def test_onceki_ayin_son_hafta_sonu_bu_ayin_ilk_hafta_sonuna_yazilmaz(self):
+        # 31 Ekim 2026 Cumartesi. Ayşe o gün nöbet tuttuysa 7-8 Kasım'a
+        # tercihen yazılmaz. 1 Kasım dinlenme kuralıyla zaten boştur.
+        names = ["Ayşe", "Mehmet", "Zeynep", "Can", "Elif", "Burak", "Selin", "Emre"]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        by_day = {days[c]["day_num"]: c for c in cols}
+        random.seed(0)
+        schedule, _ = run_scheduling_core(
+            names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2,
+            simulation_count=15, initial_last_shift={"Ayşe": 0},
+        )
+        self.assertFalse(bool(schedule.at["Ayşe", by_day[1]]))
+        self.assertFalse(
+            bool(schedule.at["Ayşe", by_day[7]]) or bool(schedule.at["Ayşe", by_day[8]])
+        )
+        from nobet_core import prior_weekend_weeks
+        self.assertEqual(prior_weekend_weeks(days, {"Ayşe": 0})["Ayşe"], days[by_day[1]]["week"])
+        # 30 Ekim Cuma hafta sonu değildir; ertesi hafta sonu bu yüzden işaretlenmez.
+        self.assertNotIn("Ayşe", prior_weekend_weeks(days, {"Ayşe": -1}))
+        from nobet_iyilestir import improve_schedule
+        improved, _, _ = improve_schedule(
+            schedule, names, cols, unwanted, days, 1, 2,
+            initial_last_shift={"Ayşe": 0}, time_limit=8,
+        )
+        result = improved if improved is not None else schedule
+        self.assertFalse(
+            bool(result.at["Ayşe", by_day[7]]) or bool(result.at["Ayşe", by_day[8]])
+        )
+
     def test_gecmiste_fazla_hafta_sonu_tutan_bu_ay_daha_az_alir(self):
         names, cols, unwanted, days = self._env()
         special_cols = [c for c in cols if days[c]["weekend"]]

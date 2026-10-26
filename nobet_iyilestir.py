@@ -15,7 +15,7 @@ import os
 import pandas as pd
 
 from nobet_core import (
-    alternate_day_chains, has_total_limit, is_friday_column, pair_repeat_allowed, pair_repeat_excess, special_cap, spread_targets,
+    alternate_day_chains, has_total_limit, is_friday_column, pair_repeat_allowed, pair_repeat_excess, prior_weekend_weeks, special_cap, spread_targets,
     together_split_count,
 )
 
@@ -112,7 +112,8 @@ def _long_gap_windows(people, columns, gun_detaylari, kisi_sayisi, person_limits
 
 def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
                      person_limits=None, df_preferred=None, history_special=None,
-                     history_total=None, history_holiday=None, together_pairs=None):
+                     history_total=None, history_holiday=None, together_pairs=None,
+                     initial_last_shift=None):
     """Çizelgenin adalet ölçüleri (hepsinde az = iyi). İyileştir öncesi/sonrası karşılaştırılır."""
     person_limits = person_limits or {}
     history_special = history_special or {}
@@ -132,11 +133,14 @@ def schedule_metrics(schedule, people, columns, gun_detaylari, kisi_sayisi, min_
     has_holiday = any(gun_detaylari[c]["holiday"] for c in columns)
     has_friday = any(is_friday_column(gun_detaylari[c]) for c in columns)
     weeks = sorted({gun_detaylari[c]["week"] for c in columns if gun_detaylari[c]["weekend"]})
+    prior = prior_weekend_weeks(gun_detaylari, initial_last_shift)
     consecutive = 0
     for p in people:
         worked = {w for w in weeks if any(
             assigned(p, c) for c in columns if gun_detaylari[c]["weekend"] and gun_detaylari[c]["week"] == w
         )}
+        if p in prior and prior[p] + 1 in worked:
+            consecutive += 1
         consecutive += sum(1 for w in worked if w + 1 in worked)
     pairs = _spread_pairs(people, columns, gun_detaylari, min_bosluk, kisi_sayisi)
     windows = _long_gap_windows(people, columns, gun_detaylari, kisi_sayisi, person_limits)
@@ -249,6 +253,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     metric_args = dict(
         person_limits=person_limits, df_preferred=df_preferred, history_special=history_special,
         history_total=history_total, history_holiday=history_holiday, together_pairs=together_pairs,
+        initial_last_shift=initial_last_shift,
     )
     before = schedule_metrics(current, people, columns, gun_detaylari, kisi_sayisi, min_bosluk, **metric_args)
     days = {c: gun_detaylari[c]["day_num"] for c in columns}
@@ -346,6 +351,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     ) if history_total and len(free) >= 2 else 0
 
     weeks = sorted({gun_detaylari[c]["week"] for c in columns if gun_detaylari[c]["weekend"]})
+    prior = prior_weekend_weeks(gun_detaylari, initial_last_shift)
     consecutive = []
     for p in people:
         worked = {}
@@ -359,6 +365,11 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
                 both = model.NewBoolVar("")
                 model.Add(both >= worked[w] + worked[w + 1] - 1)
                 consecutive.append(both)
+        nxt = prior.get(p)
+        if nxt is not None and nxt + 1 in worked:
+            link = model.NewBoolVar("")
+            model.Add(link == worked[nxt + 1])
+            consecutive.append(link)
     expr["consecutive_weekends"] = sum(consecutive)
     expr["avoid"] = sum(x[p, c] for p in people for c in columns if _pref(df_preferred, p, c) == 2)
     expr["missed_preference"] = sum(1 - x[p, c] for p in people for c in columns if _pref(df_preferred, p, c) == 1)
@@ -448,7 +459,7 @@ def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari
     ``improve_schedule`` dener. Dönen değer: (çizelge, düzeldi_mi); çözücü yoksa,
     hata verirse ya da daha iyisini bulamazsa çizelge aynen döner."""
     metric_keys = ("person_limits", "df_preferred", "history_special", "history_total", "history_holiday",
-                   "together_pairs")
+                   "together_pairs", "initial_last_shift")
     try:
         before = schedule_metrics(
             schedule, people, columns, gun_detaylari, kisi_sayisi, min_bosluk,
