@@ -436,11 +436,25 @@ def run_scheduling_algorithm_v98(isimler, sutunlar, df_unwanted_bool, gun_detayl
     return best_schedule
 
 # --- AYARLAR (Ana Sayfada Açılır Panel) ---
+def _set_period_state(year, month):
+    """Dönemi yazar; ay/yıl kutularının anahtarlarına yalnızca Ayarlar açıkken yazılır.
+
+    Kapalı panelde çizilmeyen kutunun anahtarına kodla yazılan değer Streamlit'te
+    saklı kalır ve kutu sonra başka değer alsa da geri gelirdi; kapalıyken kutu
+    anahtarı silinir, kalıcı değer yil_val/ay_val'dır.
+    """
+    st.session_state.yil_val, st.session_state.ay_val = year, month
+    if st.session_state.get("settings_expanded", True):
+        st.session_state.yil_input_direct, st.session_state.ay_input_direct = year, month
+    else:
+        st.session_state.pop("yil_input_direct", None)
+        st.session_state.pop("ay_input_direct", None)
+
+
 _period_revert = st.session_state.pop("period_revert", None)
 if _period_revert:
     # Ay/yıl kutuları çizilmeden önce eski değere döndürülür (kutular çizildikten sonra değiştirilemez).
-    st.session_state.yil_val, st.session_state.ay_val = _period_revert
-    st.session_state.yil_input_direct, st.session_state.ay_input_direct = _period_revert
+    _set_period_state(*_period_revert)
     st.session_state.period_revert_notice = st.session_state.pop("period_revert_reason", "db")
 prev_isimler = st.session_state.get('isimler_cache', [])
 
@@ -462,8 +476,7 @@ def _shift_period(delta):
     _y, _m = divmod(_index, 12)
     _m += 1
     if YEAR_MIN <= _y <= YEAR_MAX:
-        st.session_state.yil_val, st.session_state.ay_val = _y, _m
-        st.session_state.yil_input_direct, st.session_state.ay_input_direct = _y, _m
+        _set_period_state(_y, _m)
 
 
 # Ay ve yıl her zaman en üstte görünür (Ayarlar kapalıyken de).
@@ -521,7 +534,8 @@ _settings_panel.button(
     "⚙️ Ayarlar", key="ayarlar_ac_kapa", on_click=_toggle_settings, type="tertiary",
     width="stretch", icon=":material/expand_more:" if settings_expanded else ":material/chevron_right:",
 )
-_settings_closing = bool(st.session_state.pop("_ayarlar_kapaniyor", False)) and not settings_expanded
+# Bayrak panel işlendikten sonra silinir: yarıda kesilen çalışma sonraki çalışmada tekrarlanır.
+_settings_closing = bool(st.session_state.get("_ayarlar_kapaniyor", False)) and not settings_expanded
 
 with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else _settings_panel):
     # Sol: ekip tablosu. Sağ: dönem, tatil, ücret ve görev ayarları alt alta.
@@ -655,13 +669,16 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
             if st.session_state.get("nobet_ucreti_kaynak") != _rate_source:
                 st.session_state.nobet_ucreti_kaynak = _rate_source
                 st.session_state.nobet_ucreti_val = _rate_info["gunduz"]
-                st.session_state["w_nobet_ucreti_val"] = float(_rate_info["gunduz"])
+                if settings_expanded:
+                    st.session_state["w_nobet_ucreti_val"] = float(_rate_info["gunduz"])
+                else:
+                    st.session_state.pop("w_nobet_ucreti_val", None)
         else:
             st.session_state.nobet_ucreti_kaynak = None
-        if "w_nobet_ucreti_val" not in st.session_state:
+        if settings_expanded and "w_nobet_ucreti_val" not in st.session_state:
             st.session_state["w_nobet_ucreti_val"] = float(st.session_state.get("nobet_ucreti_val", 1.0))
         nobet_ucreti = _ayar_kutusu(
-            st.number_input, "w_nobet_ucreti_val", st.session_state["w_nobet_ucreti_val"],
+            st.number_input, "w_nobet_ucreti_val", float(st.session_state.get("nobet_ucreti_val", 1.0)),
             "💰 Saat Ücreti (TL):",
             # Uzun açıklama "?" içinde; altta yalnızca ücretler görünür. Metin sabit
             # kalır (değişen yardım metni kutunun değerini sıfırlayabilir).
@@ -765,6 +782,8 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
         st.warning(f"⚠️ {len(_lim_invalid_lines)} satır geçersiz format (doğru format: `İsim:min-max`) — atlandı.")
     if settings_expanded and _lim_unknown:
         st.warning(f"⚠️ Kişisel limitte ekip listesinde olmayan isim(ler): **{', '.join(_lim_unknown)}** — limit uygulanmayacak.")
+
+st.session_state.pop("_ayarlar_kapaniyor", None)
 
 _revert_notice = st.session_state.pop("period_revert_notice", None)
 if _revert_notice == "version_unknown":

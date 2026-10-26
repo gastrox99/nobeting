@@ -484,3 +484,87 @@ def test_ayarlar_kapanirken_yazilan_ekip_ve_kutular_kaybolmaz(kayitli_uygulama):
     _ac_kapa(at)
     assert [at.text_input(key=f"w_ekip_ad_{i}").value for i in range(5)] == ["Ali", "Ayşe", "Can", "Deniz", "Ece"]
     assert at.checkbox(key="w_birlikte::Ali::Can").value is True
+
+
+# --- Kapanma çalışmasında kutu anahtarlarına yazılmaz (yeni kişi/görev kutusu tıklama sanılmaz) ---
+
+def test_yeni_kisi_yazilip_kapatilinca_sonra_isaretlenen_ikili_kalir(uygulama):
+    at = uygulama()
+    at.run()
+    _ac_kapa(at)
+    rows = at.session_state["_ekip_rows"]
+    at.text_input(key=f"w_ekip_ad_{rows - 1}").input("Ece")
+    _ac_kapa(at)  # yaz + kapat aynı çalışmada
+    _ac_kapa(at)
+    at.checkbox(key="w_yasak::Ali::Ece").check().run()
+    assert at.session_state["forbidden_pairs_text"] == "Ali-Ece"
+    _ac_kapa(at)
+    at.run()
+    assert at.session_state["forbidden_pairs_text"] == "Ali-Ece"
+    _ac_kapa(at)
+    assert at.session_state["forbidden_pairs_text"] == "Ali-Ece"
+    assert at.checkbox(key="w_yasak::Ali::Ece").value is True
+    at.run()
+    assert at.session_state["forbidden_pairs_text"] == "Ali-Ece"
+
+
+@pytest.mark.parametrize("ayni_calismada", [True, False])
+def test_ad_degisikligiyle_tasinan_ikili_kaldirilinca_geri_gelmez(uygulama, ayni_calismada):
+    at = uygulama()
+    at.run()
+    _ac_kapa(at)
+    at.checkbox(key="w_yasak::Ali::Can").check().run()
+    at.text_input(key="w_ekip_ad_0").input("Alp")
+    if not ayni_calismada:
+        at.run()
+    _ac_kapa(at)
+    _ac_kapa(at)
+    assert at.session_state["forbidden_pairs_text"] == "Alp-Can"
+    assert at.checkbox(key="w_yasak::Alp::Can").value is True
+    at.checkbox(key="w_yasak::Alp::Can").uncheck().run()
+    assert at.session_state["forbidden_pairs_text"] == ""
+    _ac_kapa(at)
+    at.run()
+    _ac_kapa(at)
+    at.run()
+    assert at.session_state["forbidden_pairs_text"] == ""
+    assert at.checkbox(key="w_yasak::Alp::Can").value is False
+
+
+def test_gorev_adlari_yazilip_kapatilinca_sabit_gorev_silinmez(uygulama):
+    at = uygulama()
+    at.run()
+    _ac_kapa(at)
+    at.text_input(key="w_role_names_text").input("AYB, GYB")
+    _ac_kapa(at)  # yaz + kapat aynı çalışmada
+    _ac_kapa(at)
+    at.multiselect(key="w_sabit_gorev::AYB").select("Ali").run()
+    assert at.session_state["fixed_roles"] == {"Ali": "AYB"}
+    _ac_kapa(at)
+    at.run()
+    assert at.session_state["fixed_roles"] == {"Ali": "AYB"}
+    _ac_kapa(at)
+    assert at.session_state["fixed_roles"] == {"Ali": "AYB"}
+    assert at.multiselect(key="w_sabit_gorev::AYB").value == ["Ali"]
+
+
+def test_kapali_panelde_kutu_anahtari_saklanmaz(uygulama):
+    """Kapalıyken ayar kutularının anahtarları oturumda kalmaz (kod da yazmaz)."""
+    at = uygulama()
+    at.run()
+    _ac_kapa(at)
+    at.checkbox(key="w_yasak::Ali::Can").check().run()
+    at.text_input(key="w_role_names_text").input("AYB, GYB").run()
+    at.multiselect(key="w_sabit_gorev::GYB").select("Can").run()
+    _ac_kapa(at)
+    at.button(key="month_next").click().run()
+    at.run()
+    prefixes = ("w_ekip_", "w_yasak", "w_birlikte", "w_sabit_gorev::", "w_holiday_text_", "w_unvan_val",
+                "w_riskli_birim_val", "w_nobet_ucreti_val", "w_role_names_text", "w_balance_history",
+                "yil_input_direct", "ay_input_direct", "kisi_slider_direct")
+    keys = list(at.session_state.filtered_state)
+    assert "forbidden_pairs_text" in keys
+    left = [k for k in keys if str(k).startswith(prefixes)]
+    assert left == []
+    assert at.session_state["forbidden_pairs_text"] == "Ali-Can"
+    assert at.session_state["fixed_roles"] == {"Can": "GYB"}

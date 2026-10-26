@@ -437,6 +437,8 @@ def test_ayarlar_kapanirken_yazilan_isim_ve_ucret_kaybolmaz(app_url):
             page.get_by_text("⚙️ Ayarlar").click()
             _wait_idle(page)
             assert not _team_box(page, 1).is_visible()
+            _settings_box(page, "textbox", "1. kişi")
+            _wait_idle(page)  # tablo satır satır çizilir; hepsi gelsin
             assert _team_values(page) == ["Kapa Ali", "Kapa Ayşe", "Kapa Can"]
             _settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").fill("275")
             page.get_by_text("⚙️ Ayarlar").click()
@@ -444,6 +446,8 @@ def test_ayarlar_kapanirken_yazilan_isim_ve_ucret_kaybolmaz(app_url):
             page.get_by_role("button", name="›").click()
             _wait_idle(page)
             page.get_by_role("button", name="‹").click()
+            _wait_idle(page)
+            _settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):")
             _wait_idle(page)
             assert float(_settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").input_value()) == 275
             assert _team_values(page) == ["Kapa Ali", "Kapa Ayşe", "Kapa Can"]

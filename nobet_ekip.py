@@ -25,6 +25,20 @@ _MAX = "w_ekip_max_{}"
 _SPECIAL = "w_ekip_hs_{}"
 
 
+def _forget_boxes(prefix, *extra):
+    """Çizilmeyen kutuların anahtarlarını tamamen siler (Ayarlar kapanırken).
+
+    Kapalı panelde kutu anahtarına kodla yazılmaz: çizilmeyen kutuya yazılan değer
+    Streamlit'te saklı kalır, panel açılınca kullanıcı tıklaması sanılırdı. Silinen
+    kutular açılışta ayarlardaki metinden yeniden kurulur.
+    """
+    state = st.session_state
+    for key in [k for k in list(state.keys()) if str(k).startswith(prefix)]:
+        state.pop(key, None)
+    for key in extra:
+        state.pop(key, None)
+
+
 def _team_names(text):
     return [part.strip() for part in (text or "").split(",") if part.strip()]
 
@@ -69,7 +83,7 @@ def render_team_table(draw=True):
         for i in range(state.get("_ekip_rows", 0))
     ]
     compacted = compact_team_rows(rows)
-    if [r["name"] for r in compacted] != [r["name"] for r in rows]:
+    if draw and [r["name"] for r in compacted] != [r["name"] for r in rows]:
         _write_rows(compacted)
     names_text, limits_text = team_settings_texts(compacted)
     if names_text != source[0] or limits_text != source[1]:
@@ -79,6 +93,7 @@ def render_team_table(draw=True):
             state.limits_text = limits_text
     state["_ekip_source"] = (state.get("isimler_text", ""), state.get("limits_text", ""))
     if not draw:
+        _forget_boxes("w_ekip_", "_ekip_source")
         return
 
     with st.container(key="ekip-tablo"):
@@ -138,13 +153,14 @@ def render_fixed_roles(isimler, role_names, draw=True):
     if changed:
         state.fixed_roles = fixed
         state.fixed_roles_changed = True
+    if not draw:
+        _forget_boxes("w_sabit_gorev::", "_sabit_shown")
+        return
     shown = {}
     for role in role_names:
         shown[role] = [p for p in isimler if fixed.get(p) == role]
         state[_FIXED.format(role)] = list(shown[role])
     state["_sabit_shown"] = shown
-    if not draw:
-        return
 
     with st.container(key="sabit-gorev"):
         st.markdown("**📌 Sabit görev yeri**")
@@ -194,7 +210,7 @@ def _pair_label(pair):
     return f"{pair[0]} + {pair[1]}"
 
 
-def _render_pair_list(isimler, text, kind="yasak"):
+def _render_pair_list(isimler, text, kind="yasak", draw=True):
     """Büyük ekip için ikililer tek çoklu seçim kutusunda işaretlenir; yeni metni döner."""
     state = st.session_state
     list_key = _pair_list_key(kind)
@@ -208,6 +224,9 @@ def _render_pair_list(isimler, text, kind="yasak"):
         chosen = {options[label] for label in state[list_key] if label in options}
         outside = {p for p in parse_forbidden_pairs(text, isimler) if unknown_names(p, isimler)}
         text = forbidden_pairs_to_text(chosen | outside)
+    if not draw:
+        _forget_boxes(list_key, shown_key)
+        return text, options
     pairs = parse_forbidden_pairs(text, isimler)
     current = [_pair_label(p) for p in sorted(pairs) if p in options.values()]
     state[list_key] = current
@@ -225,7 +244,7 @@ def render_pair_matrix(isimler, kind="yasak", draw=True):
     text_key = table["text"]
     text = state.get(text_key, "")
     if len(isimler) > PAIR_MATRIX_MAX_PEOPLE:
-        text, options = _render_pair_list(isimler, text, kind)
+        text, options = _render_pair_list(isimler, text, kind, draw)
         if text != state.get(text_key, ""):
             state[text_key] = text
         if not draw:
@@ -250,12 +269,13 @@ def render_pair_matrix(isimler, kind="yasak", draw=True):
             break
     if text != state.get(text_key, ""):
         state[text_key] = text
+    if not draw:
+        _forget_boxes(f"w_{kind}::", shown_key)
+        return
     pairs = parse_forbidden_pairs(text, isimler)
     for a, b in _ikililer:
         state[_pair_key(a, b, kind)] = tuple(sorted((a, b))) in pairs
     state[shown_key] = {pair for pair in pairs}
-    if not draw:
-        return
 
     with st.container(key=f"{kind}-tablo"):
         st.markdown(table["title"])
