@@ -72,6 +72,7 @@ from nobet_core import (
     get_preference_grid_state,
     normalize_preference_grid,
     run_scheduling_core,
+    weekend_pair_count,
     _balance_fridays,
     _balance_holidays,
     _balance_specials,
@@ -882,6 +883,36 @@ class TestRunSchedulingCore(unittest.TestCase):
         avg = schedule.values.sum() / len(isimler)
         self.assertGreaterEqual(ali_total, avg * 0.8,
                                 f"Ali yeşil tercih koymasına rağmen beklenenden az nöbet aldı: {ali_total}")
+
+    def test_aradan_sonra_hafta_sonu_cifti_sayilir(self):
+        # Kasım 2026 haftaları: 1, sonra 7-8, ara, 21-22 ve 28-29.
+        # İki çift var. Serinin sonu 1 sayardı; seçim 2 saymalı.
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        schedule = pd.DataFrame(False, index=["Ali"], columns=cols)
+        by_week = {}
+        for col in cols:
+            if days[col]["weekend"]:
+                by_week.setdefault(days[col]["week"], []).append(col)
+        weeks = sorted(by_week)
+        for week in (weeks[0], weeks[1], weeks[3], weeks[4]):
+            for col in by_week[week]:
+                schedule.at["Ali", col] = True
+        self.assertEqual(weekend_pair_count(schedule, cols, days), 2)
+
+    def test_unutulan_ciftler_secim_puanina_girer(self):
+        # 6 kişi, tohum 0, 20 simülasyon. Seçilen liste aynı kalır.
+        # Sayaç serinin sonunda 4 görüyordu; gerçek çift 6. Puan 1000 yükselir.
+        names = [f"K{i}" for i in range(6)]
+        days = build_gun_detaylari(2026, 11, 30, [])
+        cols = list(days)
+        unwanted = pd.DataFrame(False, index=names, columns=cols)
+        random.seed(0)
+        schedule, score = run_scheduling_core(
+            names, cols, unwanted, days, min_bosluk=1, kisi_sayisi=2, simulation_count=20,
+        )
+        self.assertEqual(weekend_pair_count(schedule, cols, days), 6)
+        self.assertAlmostEqual(score, 3320.7735026918963, places=4)
 
 
 class TestLargeSchedulePerformance(unittest.TestCase):
