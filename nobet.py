@@ -76,6 +76,8 @@ for _attempt in range(2):
             is_database_configured,
             load_auto_saved_assignments,
             SaveConflict,
+            MonthLocked,
+            month_is_locked,
             VersionUnknown,
             log_unexpected,
             prepare_schema,
@@ -540,6 +542,27 @@ _bar_cols[2].button(
     "›", key="month_next", help="Sonraki ay", width="stretch",
     on_click=_shift_period, args=(1,), disabled=(_bar_year, _bar_month) >= (YEAR_MAX, 12),
 )
+# Biten ay 5 gün sonra kilitlenir; kilidi bu düğmeyle açıp kapatırsınız.
+_bar_key = period_key(_bar_year, _bar_month)
+_bar_locked = month_is_locked(_bar_year, _bar_month, st.session_state.get("open_months"))
+st.session_state.ay_kilitli = _bar_locked
+
+
+def _toggle_month_lock(key, unlock):
+    _others = [m for m in (st.session_state.get("open_months") or []) if m != key]
+    st.session_state.open_months = sorted(_others + [key]) if unlock else _others
+
+
+if month_is_locked(_bar_year, _bar_month, []):
+    _lock_cols = st.container(key="month-lock").columns([4, 1], vertical_alignment="center")
+    _lock_cols[0].caption(
+        "🔒 Bu ay kilitli (bittikten 5 gün sonra kilitlenir); değişiklik yapılamaz."
+        if _bar_locked else "🔓 Bu ay düzenlemeye açık."
+    )
+    _lock_cols[1].button(
+        "🔓 Kilidi aç" if _bar_locked else "🔒 Kilitle", key="month_lock_toggle", width="stretch",
+        on_click=_toggle_month_lock, args=(_bar_key, _bar_locked),
+    )
 # Ekip yoksa Ayarlar açık başlar. Değer oturum boyunca sabit kalır; yoksa
 # ilk isim yazılınca panel kapanıyordu (ekip tablosu satır satır doldurulur).
 if "settings_expanded" not in st.session_state:
@@ -993,6 +1016,9 @@ def _save_outgoing_period(period, schedule, preferences, rows):
             settings_dict={"locked": locks_to_json(_locks), "hidden": _hidden},
             expected_version=_box.get("version"), version_out=_box, writer=_writer,
         ))
+    except MonthLocked:
+        # Kilitli ayda değişiklik yapılamaz; kaydedilecek bir şey yok, ay değişebilir.
+        return True
     except SaveConflict:
         st.session_state.autosave_blocked_period = tuple(period)
         st.session_state.autosave_conflict_period = tuple(period)
@@ -1919,6 +1945,14 @@ elif (
             "Yeni değişikliklerin üzerine yazmamak için kayıt durduruldu. Sayfayı yenileyin; "
             "bu sekmedeki değişiklikleri kaybetmek istemiyorsanız önce Excel olarak indirin."
             + conflict_writer_text(_conflict.writer, _conflict.saved_at, _writer),
+        )
+    except MonthLocked:
+        _save_conflict = True
+        st.session_state.autosave_blocked_period = (yil, ay)
+        update_persistence_feedback(
+            st.session_state,
+            False,
+            "🔒 Bu ay kilitli; değişiklikler kaydedilmedi. Ayın üstündeki 🔓 düğmesiyle kilidi açın.",
         )
     except VersionUnknown:
         # Çakışmadaki gibi: kayıt durur, ay değiştirilirse bir kez uyarılıp

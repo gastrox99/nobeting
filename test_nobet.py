@@ -969,7 +969,8 @@ class TestPersonRoleDisplay(unittest.TestCase):
 def _writes(cursor):
     """Kayıt sorguları; sıraya sokan kilit (pg_advisory_xact_lock, lock_timeout) hariç."""
     return [item for item in cursor.executed
-            if "pg_advisory_xact_lock" not in item[0] and "lock_timeout" not in item[0]]
+            if "pg_advisory_xact_lock" not in item[0] and "lock_timeout" not in item[0]
+            and item[0] != "SELECT value FROM app_settings WHERE key = %s"]
 
 
 class _FakeDbCursor:
@@ -2269,7 +2270,7 @@ class TestStaleModuleRecovery(unittest.TestCase):
             listed |= set(re.findall(r'"(\w+)"', re.search(key + r" = \((.*?)\)", source, flags=re.S).group(1)))
         local = {
             path.stem for path in Path(__file__).parent.glob("*.py")
-            if not path.name.startswith("test_")
+            if not path.name.startswith(("test_", "conftest"))
         }
         self.assertEqual(local - listed, {"nobet", "nobet_tazele"})
 
@@ -2672,7 +2673,7 @@ class TestGoogleLoginSupport(unittest.TestCase):
         schedule = pd.DataFrame([[True]], index=["Ali"], columns=["1 Çar"])
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)), \
                 patch.object(db, "execute_values"):
-            self.assertTrue(db.save_schedule("Ocak", 2025, 1, ["Ali"], schedule, owner="ali@gmail.com", expected_version=db.FORCE))
+            self.assertTrue(db.save_schedule("Ocak", 2099, 1, ["Ali"], schedule, owner="ali@gmail.com", expected_version=db.FORCE))
         insert_sql, insert_params = _writes(cursor)[0]
         self.assertIn("ON CONFLICT (owner, name, year, month)", insert_sql)
         self.assertEqual(insert_params[7], "ali@gmail.com")

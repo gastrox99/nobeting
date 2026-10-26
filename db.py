@@ -10,6 +10,7 @@ import hashlib
 import inspect
 import time
 import traceback
+from datetime import date, datetime, timedelta, timezone
 
 _last_error = None
 
@@ -396,6 +397,43 @@ def _lock_key(cur, *parts):
     cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', ("/".join(str(p) for p in parts),))
 
 
+# Biten ay bu kadar gün sonra kendiliğinden kilitlenir; kilit "açık aylar" listesiyle kalkar.
+LOCK_GRACE_DAYS = 5
+
+
+class MonthLocked(Exception):
+    """Ay kilitli (bitmesinden ``LOCK_GRACE_DAYS`` gün geçti, kullanıcı açmadı); yazılmadı."""
+
+    def __init__(self, year, month):
+        super().__init__(f"{year}-{month:02d}")
+        self.year = year
+        self.month = month
+
+
+def _today():
+    return datetime.now(timezone(timedelta(hours=3))).date()
+
+
+def month_is_locked(year, month, open_months, today=None):
+    """Ay bitiminden ``LOCK_GRACE_DAYS`` gün geçtiyse ve ayın anahtarı ("2026-09") açık aylarda yoksa True."""
+    today = today or _today()
+    next_first = date(year + (month == 12), month % 12 + 1, 1)
+    if today < next_first + timedelta(days=LOCK_GRACE_DAYS):
+        return False
+    return f"{int(year):04d}-{int(month):02d}" not in (open_months or [])
+
+
+def _open_months(cur, owner):
+    """Kayıtlı ayarlardaki açık aylar (okunamazsa boş: kilitli kalır)."""
+    cur.execute("SELECT value FROM app_settings WHERE key = %s", (settings_key(owner),))
+    row = cur.fetchone()
+    try:
+        months = json.loads(row[0]).get("open_months") if row else None
+    except (TypeError, ValueError, AttributeError):
+        return []
+    return months if isinstance(months, list) else []
+
+
 class SaveConflict(Exception):
     """Kayıt başka bir oturumda (ör. telefon) bu oturum okuduktan sonra değişmiş.
 
@@ -499,6 +537,7 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
     yükseltir; denetimsiz yazmak için ``FORCE`` verilir. Bir alan JSON'a
     çevrilemezse hiçbir şey yazılmaz ve hata yukarı iletilir (eskiden alan
     sessizce NULL yazılıyor, tercihler/kilitler siliniyordu).
+    Ay kilitliyse (``month_is_locked``) hiçbir şey yazılmaz ve ``MonthLocked`` yükseltilir.
     Veritabanı hatasında False döner; kod hataları yukarı iletilir.
     """
     _check_expected(expected_version, name)
@@ -514,6 +553,8 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
                 _lock_key(cur, "schedules", owner, name, year, month)
+                if month_is_locked(year, month, _open_months(cur, owner)):
+                    raise MonthLocked(year, month)
                 # Beklenmeyen içerik sürümü; yazılan içerik de buna eşit değilse çakışmadır.
                 conflict_version = None
                 conflict_by = (None, None)

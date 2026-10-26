@@ -1479,6 +1479,13 @@ def _period_texts(value):
     return cleaned
 
 
+def _period_list(value):
+    """["2026-09", ...] biçimindeki ay listesini doğrular."""
+    if not isinstance(value, list):
+        return None
+    return sorted({key for key in value if isinstance(key, str) and re.fullmatch(r"\d{4}-\d{2}", key)})
+
+
 def period_key(yil, ay):
     """Aya özel ayarlar (ör. tatiller) için anahtar: "2026-10"."""
     return f"{int(yil):04d}-{int(ay):02d}"
@@ -1542,6 +1549,7 @@ APP_SETTINGS_FIELDS = {
     "balance_history": ("balance_history", _bool),
     "name_aliases": ("name_aliases", _aliases),
     "last_backup": ("last_backup_at", _text),
+    "open_months": ("open_months", _period_list),
 }
 
 
@@ -1577,6 +1585,7 @@ SETTINGS_FIELD_LABELS = {
     "fixed_roles": "sabit görev yeri", "together_pairs": "birlikte çalışmak isteyen",
     "limits": "nöbet sınırları", "balance_history": "önceki aylarla dengele",
     "name_aliases": "ad değişiklikleri", "last_backup": "son yedek",
+    "open_months": "açılan aylar",
 }
 
 

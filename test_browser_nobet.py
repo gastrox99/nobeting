@@ -456,6 +456,28 @@ def test_ayarlar_kapanirken_yazilan_isim_ve_ucret_kaybolmaz(app_url):
             browser.close()
 
 
+def test_gecmis_ay_kilitli_acilip_tekrar_kilitlenir(app_url):
+    # Açılış ayı gelecek aydır; üç ay geri gidince bitmesinin üzerinden 5 günden fazla geçmiş bir aya gelinir.
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, "Kilit Ali, Kilit Ayşe")
+        try:
+            assert page.get_by_role("button", name="🔓 Kilidi aç").count() == 0
+            for _ in range(3):
+                page.get_by_role("button", name="‹").click()
+                _wait_idle(page)
+            expect(page.get_by_role("button", name="🔓 Kilidi aç")).to_be_visible()
+            expect(page.get_by_text("Bu ay kilitli", exact=False).first).to_be_visible()
+            page.get_by_role("button", name="🔓 Kilidi aç").click()
+            _wait_idle(page)
+            expect(page.get_by_role("button", name="🔒 Kilitle")).to_be_visible()
+            page.get_by_role("button", name="🔒 Kilitle").click()
+            _wait_idle(page)
+            expect(page.get_by_role("button", name="🔓 Kilidi aç")).to_be_visible()
+            _no_exception(page)
+        finally:
+            browser.close()
+
+
 def test_unvan_secilince_saat_ucreti_gelir_ve_elle_degisir(app_url):
     with sync_playwright() as playwright:
         browser, page = _open_app(playwright, app_url, "Ücret Ali, Ücret Ayşe")

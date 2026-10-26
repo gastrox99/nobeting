@@ -25,6 +25,10 @@ from nobet_stil import grid_css
 
 def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                     person_colors, conflict_cells, queue_assignment_warnings):
+    if st.session_state.get("ay_kilitli"):
+        st.info("🔒 Bu ay kilitli; yalnızca görüntülenir. Değiştirmek için ayın üstündeki 🔓 düğmesiyle kilidi açın.")
+        st.dataframe(st.session_state.schedule_bool.replace({True: "●", False: ""}), width="stretch")
+        return
     # Mode selector and paint color
     mode_cols = st.columns([2, 3])
     with mode_cols[0]:
