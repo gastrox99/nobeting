@@ -241,7 +241,8 @@ def render_excel_import(yil, ay, gun_detaylari, isimler, sutunlar, role_names, s
     st.caption("Daha önce indirilen Excel dosyasını veya aynı formatta hazırladığınız listeyi yükleyin.")
     for _level, _msg in st.session_state.pop("excel_import_messages", []):
         getattr(st, _level)(_msg)
-    _uploaded = st.file_uploader("Excel dosyası seçin (.xlsx)", type=["xlsx"], key="excel_import_uploader", label_visibility="collapsed")
+    _uploaded = st.file_uploader("Excel dosyası seçin (.xlsx)", type=["xlsx"], key="excel_import_uploader", label_visibility="collapsed",
+                                  disabled=bool(st.session_state.get("ay_kilitli")))
     # Dosya kutuda kaldıkça sayfa her yenilendiğinde yeniden içe aktarılıp
     # sonsuz döngüye giriyordu (elle yapılan değişiklikler de eziliyordu).
     # Her yüklenen dosya yalnızca bir kez işlenir.

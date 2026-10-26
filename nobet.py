@@ -551,6 +551,9 @@ st.session_state.ay_kilitli = _bar_locked
 def _toggle_month_lock(key, unlock):
     _others = [m for m in (st.session_state.get("open_months") or []) if m != key]
     st.session_state.open_months = sorted(_others + [key]) if unlock else _others
+    # Kilitli ayda durdurulmuş otomatik kayıt, kilit açılınca yeniden başlasın.
+    if st.session_state.get("autosave_blocked_period") == (_bar_year, _bar_month):
+        st.session_state.pop("autosave_blocked_period")
 
 
 if month_is_locked(_bar_year, _bar_month, []):
