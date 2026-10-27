@@ -2,7 +2,7 @@
 """Yedek: tüm aylar ve ayarlar tek dosyada; aynı dosyadan geri yükleme.
 
 Uygulamadaki yedekler her ay için tektir; geri yüklemeden önce mevcut hâlin
-kopyası alınır.
+kopyası alınır. Ayrıca günün ilk açılışında tüm verinin kopyası alınır (son 7 gün).
 """
 import streamlit as st
 
@@ -10,18 +10,21 @@ from db import (
     export_owner_data,
     list_backup_snapshots,
     load_backup_snapshot,
+    log_unexpected,
     restore_owner_data,
     save_backup_snapshot,
 )
 from nobet_core import (
     BACKUP_MAX_BYTES,
     SNAPSHOT_BEFORE_RESTORE,
+    SNAPSHOT_DAILY,
     SNAPSHOT_MANUAL,
     TR_AY_ADLARI,
     backup_reminder,
     backup_summary,
     backup_to_bytes,
     build_backup,
+    daily_snapshot_due,
     month_backup,
     now_tr,
     parse_backup,
@@ -35,11 +38,12 @@ def mark_backup_downloaded():
     st.session_state.pop("backup_bytes", None)
 
 
-def take_snapshot(reason, current_owner, period=None):
+def take_snapshot(reason, current_owner, period=None, slot=(0, 0)):
     """Veritabanındaki veriyi uygulamada saklar; özet döner, veri yoksa None.
 
     ``period`` (yıl, ay) verilirse yalnızca o ayın çizelgesi o ayın tek
-    yedeği olarak saklanır; verilmezse tüm veri (geri yükleme öncesi kopya).
+    yedeği olarak saklanır; verilmezse tüm veri ``slot`` (yıl, ay) yerine
+    saklanır (geri yükleme öncesi kopya, günlük kopya).
     """
     _settings_sn, _schedules_sn = export_owner_data(owner=current_owner)
     _bk = build_backup(_settings_sn, _schedules_sn)
@@ -48,14 +52,44 @@ def take_snapshot(reason, current_owner, period=None):
     if not _bk["schedules"] and not _bk.get("settings"):
         return None
     _summary_sn = backup_summary(_bk)
-    _year_sn, _month_sn = period if period is not None else (0, 0)
+    _year_sn, _month_sn = period if period is not None else slot
     save_backup_snapshot(
         current_owner, _year_sn, _month_sn, now_tr().strftime("%Y-%m-%d %H:%M"), reason,
         _summary_sn, backup_to_bytes(_bk).decode("utf-8"),
     )
-    for _key in ("backup_snapshots", "snapshot_select", "backup_snapshot_data"):
+    # Günlük kopya bir tıklamayla aynı çalışmada alınabilir: seçili yedek
+    # sıfırlanıp "Bu yedeğe dön" başka bir yedeği yüklemesin.
+    _stale = ("backup_snapshots",) if reason == SNAPSHOT_DAILY else (
+        "backup_snapshots", "snapshot_select", "backup_snapshot_data",
+    )
+    for _key in _stale:
         st.session_state.pop(_key, None)
     return _summary_sn
+
+
+def take_daily_snapshot(current_owner):
+    """Günün ilk açılışında tüm verinin kopyasını alır; haftanın her günü için
+    tek kopya olduğundan son 7 gün saklanır.
+
+    Alınamazsa kullanıcıyı rahatsız etmez (hata kaydına yazılır), sonraki
+    açılışta yeniden dener. Okunamayan kayıt yalnızca ekrandaki ay ve ayarlar
+    için bilinir; başka bir aydaki bozuk alan kopyada boş görünür.
+    """
+    _today = now_tr().date()
+    if st.session_state.get("daily_snapshot_checked") == _today:
+        return
+    if st.session_state.get("schedule_corrupt") or st.session_state.get("settings_corrupt"):
+        # Okunamayan kayıt düzeltilmeden sağlam bir günün kopyasının yerine geçmesin.
+        return
+    st.session_state.daily_snapshot_checked = _today
+    try:
+        _snaps = st.session_state.get("backup_snapshots")
+        if _snaps is None:
+            _snaps = st.session_state.backup_snapshots = list_backup_snapshots(owner=current_owner)
+        if daily_snapshot_due(_snaps, _today):
+            take_snapshot(SNAPSHOT_DAILY, current_owner, slot=(0, _today.isoweekday()))
+    except Exception as _error:
+        log_unexpected("Günlük yedek", _error)
 
 
 def run_requested_snapshot(current_owner, yil, ay):
@@ -150,7 +184,8 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
         st.markdown("**Uygulamadaki yedekler**")
         st.caption(
             "Çizelge her değişiklikte zaten kaydediliyor. Ayı bitirince listenin üstündeki "
-            "💾 Yedekle düğmesine basın: o ayın hâli saklanır. Her ayın tek yedeği olur; tekrar basarsanız eskisinin yerine geçer."
+            "💾 Yedekle düğmesine basın: o ayın hâli saklanır. Her ayın tek yedeği olur; tekrar basarsanız eskisinin yerine geçer. "
+            "Ayrıca uygulama her gün ilk açılışta tüm verinin kopyasını kendisi alır; son 7 günün kopyası saklanır."
         )
         if "backup_snapshots" not in st.session_state:
             try:
@@ -159,6 +194,10 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
                 st.session_state.backup_snapshots = None
         _snaps = st.session_state.backup_snapshots
         _month_snaps = [_i for _i in (_snaps or []) if _i.get("reason") == SNAPSHOT_MANUAL]
+        _daily_snaps = sorted(
+            (_i for _i in (_snaps or []) if _i.get("reason") == SNAPSHOT_DAILY),
+            key=lambda _i: str(_i.get("created_tr", "")), reverse=True,
+        )
         _undo_snap = next((_i for _i in (_snaps or []) if _i.get("reason") == SNAPSHOT_BEFORE_RESTORE), None)
         _this_month_snap = next(
             (_i for _i in _month_snaps if (_i.get("year"), _i.get("month")) == (yil, ay)), None,
@@ -176,8 +215,8 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
             if st.button("Tekrar dene", key="snapshot_list_retry"):
                 st.session_state.pop("backup_snapshots", None)
                 st.rerun()
-        elif _month_snaps or _undo_snap:
-            _snap_by_id = {_item["id"]: _item for _item in _month_snaps}
+        elif _month_snaps or _daily_snaps or _undo_snap:
+            _snap_by_id = {_item["id"]: _item for _item in _month_snaps + _daily_snaps}
             if _undo_snap:
                 _snap_by_id[_undo_snap["id"]] = _undo_snap
             _snap_id = st.selectbox(
@@ -185,6 +224,8 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
                 format_func=lambda _i: (
                     f"Son geri yüklemeden önceki hâl · {snapshot_time_text(_snap_by_id[_i])}"
                     if _snap_by_id[_i].get("reason") == SNAPSHOT_BEFORE_RESTORE
+                    else f"Günlük otomatik kopya (tüm aylar) · {snapshot_time_text(_snap_by_id[_i])}"
+                    if _snap_by_id[_i].get("reason") == SNAPSHOT_DAILY
                     else snapshot_label(_snap_by_id[_i])
                 ),
             )
@@ -202,6 +243,8 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
                 _snap_item = _snap_by_id[_snap_id]
                 if _snap_item.get("reason") == SNAPSHOT_MANUAL:
                     _snap_file = f"nobet_yedek_{int(_snap_item['year'])}_{int(_snap_item['month']):02d}.json"
+                elif _snap_item.get("reason") == SNAPSHOT_DAILY:
+                    _snap_file = f"nobet_yedek_gunluk_{str(_snap_item.get('created_tr', ''))[:10]}.json"
                 else:
                     _snap_file = f"nobet_yedek_geri_yukleme_oncesi_{now_tr():%Y-%m-%d}.json"
                 _sn_col1, _sn_col2 = st.columns(2)

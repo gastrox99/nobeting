@@ -495,7 +495,7 @@ def test_gercek_db_bozuk_ayda_yedekle_saglam_yedegin_yerine_gecmez(app_db):
     at.run()
     _button(at, "💾 Yedekle").click()
     at.run()
-    [snap] = db.list_backup_snapshots()
+    [snap] = [s for s in db.list_backup_snapshots() if s["reason"] == "Yedekle"]  # günlük kopya ayrı
     good = db.load_backup_snapshot(snap["id"])
     _corrupt("pref_json")
 
@@ -504,7 +504,7 @@ def test_gercek_db_bozuk_ayda_yedekle_saglam_yedegin_yerine_gecmez(app_db):
     _button(at, "💾 Yedekle").click()
     at.run()
     assert any("yedek alınmadı" in m and "önceki yedeği geri yükleme için saklı kalır" in m for m in _messages(at))
-    [snap] = db.list_backup_snapshots()
+    [snap] = [s for s in db.list_backup_snapshots() if s["reason"] == "Yedekle"]  # günlük kopya ayrı
     assert db.load_backup_snapshot(snap["id"]) == good
     assert BOZUK not in good
 

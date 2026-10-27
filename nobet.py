@@ -182,7 +182,7 @@ from nobet_stil import GLOBAL_CSS, ui_colors
 from nobet_durum import apply_renames, render_recent_errors, save_undo_state
 from nobet_paylasim import render_shared_view
 from nobet_disa_aktar import render_excel_import, render_toolbar
-from nobet_yedek import render_backup_section, run_requested_snapshot
+from nobet_yedek import render_backup_section, run_requested_snapshot, take_daily_snapshot
 from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
@@ -2029,6 +2029,11 @@ if st.session_state.get("persistence_error"):
 
 # Yedekle tuşu: son değişiklik kaydedildikten sonra yedek alınır.
 run_requested_snapshot(current_owner, yil, ay)
+# Günlük otomatik kopya: veritabanının ücretsiz planında geri dönüş yalnızca
+# son birkaç saate yetiyor; günün ilk açılışında tüm veri saklanır
+# (testlerdeki sahte veritabanında atlanır).
+if _db_ready and is_database_configured():
+    take_daily_snapshot(current_owner)
 
 _rows_key = tuple(tuple(row.get(role, "-") for role in role_names) for row in rows_liste)
 _analysis_key = (
