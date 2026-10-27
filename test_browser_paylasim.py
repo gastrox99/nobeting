@@ -149,7 +149,8 @@ def _open(playwright, url):
 
 def _choose(page, name, all_rows=True, list_tab=True):
     """Açılışta sorulan adı seçer, liste sekmesine geçer; istenirse tüm listeyi açar."""
-    page.get_by_text("Adını seç", exact=True).click()
+    _wait_idle(page, 1.0)
+    page.get_by_placeholder("Adını seç", exact=True).press("ArrowDown")
     page.get_by_role("option", name=name, exact=True).click()
     _wait_idle(page)
     if list_tab:
@@ -199,7 +200,8 @@ def test_kalici_baglanti_bu_ayi_acar_ve_ay_degistirilir(shared):
             expect(grid).not_to_contain_text("Önceki Gül")
 
             prev_year, prev_month = data["previous"]
-            page.get_by_text(f"{TR_AY_ADLARI[today.month]} {today.year}", exact=True).click()
+            _wait_idle(page, 1.0)
+            page.get_by_role("combobox", name="Ay:").press("ArrowDown")
             page.get_by_role("option", name=f"{TR_AY_ADLARI[prev_month]} {prev_year}").click()
             _wait_idle(page)
             _no_exception(page)
@@ -236,7 +238,7 @@ def test_talep_gonderilir_ve_onay_bekler(shared):
             _choose(page, "Talep Ali", all_rows=False, list_tab=False)
             # Ad seçilince önce talep sekmesi açılır; varsayılan ay sonraki ay.
             expect(page.get_by_role("tab", name="📝 Talep Gönder")).to_have_attribute("aria-selected", "true")
-            expect(page.get_by_text(f"{TR_AY_ADLARI[next_month]} {next_year}", exact=True)).to_be_visible()
+            expect(page.get_by_role("combobox", name="Hangi ay:")).to_have_value(f"{TR_AY_ADLARI[next_month]} {next_year}")
             page.get_by_label("👍 Nöbet istediğim günler (Tercih)").fill("3,5")
             page.get_by_label("🏖️ İzinli olduğum günler (İzin)").fill("5-7,abc")
             page.get_by_role("button", name="📨 Talebi gönder").click()
@@ -312,7 +314,8 @@ def test_kisi_yalniz_kendi_ucret_dokumunu_gorur(shared):
         browser, page = _open(p, f"{url}/?paylas={data['permanent']}")
         try:
             _choose(page, "Ücret Ali", all_rows=False)
-            page.get_by_text(f"{TR_AY_ADLARI[today.month]} {today.year}", exact=True).click()
+            _wait_idle(page, 1.0)
+            page.get_by_role("combobox", name="Ay:").press("ArrowDown")
             page.get_by_role("option", name=f"{TR_AY_ADLARI[prev_month]} {prev_year}").click()
             _wait_idle(page)
             _no_exception(page)

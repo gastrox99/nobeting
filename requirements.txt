@@ -1,6 +1,6 @@
 # Sürümler sabittir (Ekim 2026).
 # Yükseltmeden önce testleri çalıştırın: yeni sürümler arayüzü bozabiliyor.
-streamlit==1.52.2
+streamlit==1.66.1
 pandas==2.3.3
 numpy==2.5.4
 matplotlib==3.11.2

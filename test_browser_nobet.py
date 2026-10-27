@@ -316,12 +316,13 @@ def test_simulasyon_takvim_ve_analiz_karanlik_modda_hatasiz(app_url):
             _wait_idle(page)
             _no_exception(page)
             page.get_by_role("tab", name="📅 Takvim Görünümü").click()
-            page.get_by_text("Tüm ekip gösteriliyor").click()
+            _wait_idle(page, 1.0)
+            page.get_by_role("combobox", name="Kişiye göre filtrele:").click()
             page.get_by_role("option", name="Sim Ali").click()
             page.get_by_text("Tercih Başarısı").wait_for()
             _wait_idle(page)
             _no_exception(page)
-            page.get_by_role("heading", name="📊 Analiz").scroll_into_view_if_needed()
+            page.get_by_text("📊 Analiz", exact=True).scroll_into_view_if_needed()
             _no_exception(page)
             # Günlük Liste sekmesi kaldırıldı; görev yeri takvimde değişir.
             assert page.get_by_role("tab", name="📋 Günlük Liste").count() == 0
@@ -482,7 +483,9 @@ def test_unvan_secilince_saat_ucreti_gelir_ve_elle_degisir(app_url):
     with sync_playwright() as playwright:
         browser, page = _open_app(playwright, app_url, "Ücret Ali, Ücret Ayşe")
         try:
-            _settings_box(page, "combobox", "🩺 Ünvan:").click()
+            unvan = _settings_box(page, "combobox", "🩺 Ünvan:")
+            _wait_idle(page, 1.0)
+            unvan.press("ArrowDown")
             page.get_by_role("option", name="Tabip", exact=True).click()
             _wait_idle(page)
             rate = lambda: float(_settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").input_value())
@@ -634,9 +637,9 @@ def test_hizli_giris_telefonda_tek_satir(app_url):
             page.get_by_text("⚡ Hızlı giriş: kişi + günler").click()
             _wait_idle(page, 1.0)
             boxes = [
-                page.locator(".st-key-quick_entry_person [data-baseweb='select']").bounding_box(),
+                page.locator(".st-key-quick_entry_person").get_by_role("combobox").bounding_box(),
                 page.get_by_role("textbox", name="Günler").bounding_box(),
-                page.locator(".st-key-quick_entry_kind [data-baseweb='select']").bounding_box(),
+                page.locator(".st-key-quick_entry_kind").get_by_role("combobox").bounding_box(),
                 page.get_by_role("button", name="Uygula").bounding_box(),
             ]
             # Kişi · Günler · Tür · Uygula aynı satırda, soldan sağa ve ekrana sığıyor.
@@ -659,6 +662,7 @@ def test_hizli_giriste_kisi_degisince_gunler_temizlenir(app_url):
             days = page.get_by_role("textbox", name="Günler")
             days.fill("3-8")
             # Uygula'ya basmadan kişi değişirse önceki kişinin günleri kutuda kalmamalı.
+            _wait_idle(page, 1.0)
             page.locator(".st-key-quick_entry_person").get_by_role("combobox").click()
             page.get_by_role("option", name="Hızlı Giriş Ayşe").click()
             _wait_idle(page, 1.0)
@@ -671,7 +675,7 @@ def test_hizli_giriste_kisi_degisince_gunler_temizlenir(app_url):
             _wait_idle(page, 1.0)
             expect(page.get_by_text("Hızlı Giriş Ayşe: 3 gün Müsait Değil")).to_be_visible()
             expect(page.get_by_role("textbox", name="Günler")).to_have_value("")
-            expect(page.locator(".st-key-quick_entry_kind")).to_contain_text("Müsait Değil")
+            expect(page.locator(".st-key-quick_entry_kind").get_by_role("combobox")).to_have_value("Müsait Değil")
             _no_exception(page)
         finally:
             browser.close()
@@ -686,7 +690,7 @@ def test_sabit_gorev_yeri_secilen_kisiyi_o_goreve_koyar(app_url):
             roles.fill("AYB, GYB")
             roles.press("Enter")
             _wait_idle(page)
-            page.locator(".st-key-sabit-gorev [data-testid='stMultiSelect']").nth(1).click()
+            page.locator(".st-key-sabit-gorev").get_by_role("combobox", name="GYB").press("ArrowDown")
             page.get_by_role("option", name="Sabit Ali").click()
             page.keyboard.press("Escape")
             _wait_idle(page)
@@ -698,8 +702,10 @@ def test_sabit_gorev_yeri_secilen_kisiyi_o_goreve_koyar(app_url):
             _no_exception(page)
             assert "GYB: Sabit Ali" in _whatsapp_first_day(page)
             # Başka göreve seçilince oraya taşınır ve bu ayın listesi hemen düzelir.
-            page.locator(".st-key-sabit-gorev [data-testid='stMultiSelect']").nth(0).click()
+            _wait_idle(page, 1.0)
+            page.locator(".st-key-sabit-gorev").get_by_role("combobox", name="AYB").press("ArrowDown")
             page.get_by_role("option", name="Sabit Ali").click()
+            _wait_idle(page, 1.0)
             page.keyboard.press("Escape")
             _wait_idle(page)
             _no_exception(page)

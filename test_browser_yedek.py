@@ -142,7 +142,8 @@ def _open_backup_section(page):
 
 def _restore_selected(page, section, option_text):
     select = section.get_by_role("combobox", name="Yedek seçin")
-    select.click()
+    _wait_idle(page, 1.0)
+    select.press("ArrowDown")
     page.get_by_role("option").filter(has_text=option_text).first.click()
     _wait_idle(page, 1.0)
     # Yedekle ya da geri yüklemeden sonraki ilk seçim bölümü kapatmamalı
@@ -152,7 +153,7 @@ def _restore_selected(page, section, option_text):
     restore = section.get_by_role("button", name="♻️ Bu yedeğe dön")
     expect(restore).to_be_enabled()
     restore.click()
-    expect(page.get_by_text("✅ Yedek geri yüklendi")).to_be_visible(timeout=20000)
+    expect(page.get_by_text("Yedek geri yüklendi")).to_be_visible(timeout=20000)
     _wait_idle(page)
     page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
     _wait_idle(page, 1.0)
@@ -234,7 +235,7 @@ def test_yedekle_ve_geri_yukle(app_url, tmp_path):
             restore = section.get_by_role("button", name="♻️ Geri yükle")
             expect(restore).to_be_enabled()
             restore.click()
-            expect(page.get_by_text("✅ Yedek geri yüklendi")).to_be_visible(timeout=20000)
+            expect(page.get_by_text("Yedek geri yüklendi")).to_be_visible(timeout=20000)
             _wait_idle(page)
             page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
             _wait_idle(page, 1.0)
