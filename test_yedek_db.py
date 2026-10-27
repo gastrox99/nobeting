@@ -19,6 +19,7 @@ if not TEST_DB:
 import db  # noqa: E402
 from nobet_core import (  # noqa: E402
     SNAPSHOT_BEFORE_RESTORE,
+    SNAPSHOT_DAILY,
     SNAPSHOT_MANUAL,
     backup_summary,
     backup_to_bytes,
@@ -178,6 +179,35 @@ def test_geri_yukleme_oncesi_kopya_tek_ve_ay_yedeklerinden_ayri(owner):
     assert sorted((s["reason"], s["created_tr"]) for s in snaps) == [
         (SNAPSHOT_BEFORE_RESTORE, "2026-10-03 09:00"), (SNAPSHOT_MANUAL, "2026-10-01 09:00"),
     ]
+
+
+def test_gunluk_kopya_son_7_gunu_tutar_ve_geri_yuklenir(owner):
+    from datetime import date, timedelta
+
+    _save_month(owner, 2026, 9, [("Ali", "1 Per")])
+    payload = backup_to_bytes(_full_backup_raw(owner)).decode("utf-8")
+    db.save_backup_snapshot(owner, 2026, 9, "2026-10-01 09:00", SNAPSHOT_MANUAL, "1 ay", payload)
+    db.save_backup_snapshot(owner, 0, 0, "2026-10-01 09:00", SNAPSHOT_BEFORE_RESTORE, "1 ay", payload)
+    # Nobet_yedek.take_daily_snapshot gibi: haftanın günü yer (year=0, month=1..7).
+    for offset in range(9):
+        day = date(2026, 10, 1) + timedelta(days=offset)
+        db.save_backup_snapshot(owner, 0, day.isoweekday(), f"{day.isoformat()} 08:00",
+                                SNAPSHOT_DAILY, "1 ay", payload)
+
+    snaps = db.list_backup_snapshots(owner=owner)
+    daily = sorted(s["created_tr"][:10] for s in snaps if s["reason"] == SNAPSHOT_DAILY)
+    assert daily == [f"2026-10-{d:02d}" for d in range(3, 10)]
+    # Ay yedeği ve geri yükleme öncesi kopya günlük kopyalardan etkilenmez.
+    assert sorted(s["reason"] for s in snaps if s["reason"] != SNAPSHOT_DAILY) == [
+        SNAPSHOT_BEFORE_RESTORE, SNAPSHOT_MANUAL,
+    ]
+
+    _save_month(owner, 2026, 9, [("Can", "3 Cmt")])
+    newest = next(s for s in snaps if s["reason"] == SNAPSHOT_DAILY and s["created_tr"].startswith("2026-10-09"))
+    parsed, errors = parse_backup(db.load_backup_snapshot(newest["id"], owner=owner).encode("utf-8"))
+    assert errors == []
+    db.restore_owner_data(parsed, owner=owner)
+    assert _assigned(owner, 2026, 9) == {("Ali", "1 Per")}
 
 
 def test_baska_kullanicinin_yedegi_gorunmez_ve_okunmaz(owner):

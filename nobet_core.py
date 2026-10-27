@@ -4401,6 +4401,17 @@ def backup_summary(backup):
 # ve son geri yüklemeden önceki hâlin tek kopyası (year=0, tüm veri).
 SNAPSHOT_MANUAL = "Yedekle"
 SNAPSHOT_BEFORE_RESTORE = "Geri yükleme öncesi"
+# Günün ilk açılışında alınan tüm veri kopyası; haftanın her günü için tek
+# yer (year=0, month=1..7) olduğundan son 7 günün kopyası kalır.
+SNAPSHOT_DAILY = "Günlük otomatik"
+
+
+def daily_snapshot_due(snapshots, today):
+    """Bugünün (``today``: date) günlük kopyası henüz alınmadıysa True."""
+    return not any(
+        item.get("reason") == SNAPSHOT_DAILY and str(item.get("created_tr", ""))[:10] == today.isoformat()
+        for item in snapshots
+    )
 
 
 def snapshot_time_text(item):
