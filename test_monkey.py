@@ -467,8 +467,14 @@ def run_round(page, rnd, seed, plan=None):
         month = rnd.randint(1, 12)
         history.append(f"ay={month}")
         state["month"] = None
-        box.click()
+        box.press("ArrowDown")  # Odaktaki kutuya tıklamak listeyi açmak yerine kapatabiliyor.
         page.get_by_role("option", name=TR_AY_ADLARI[month], exact=True).click()
+        wait_idle(page)
+        # Geçmiş ay kilitlidir; açılmazsa sonraki her tıklama 30 sn bekleyip boşa düşer.
+        unlock = page.get_by_role("button", name="🔓 Kilidi aç")
+        if unlock.count():
+            history.append("kilidi aç")
+            unlock.click()
 
     def act_people_per_shift():
         nonlocal per_shift
