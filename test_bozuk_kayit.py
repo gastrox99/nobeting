@@ -594,3 +594,34 @@ def test_uygulama_bozuk_ayda_yedegi_yoksa_saklı_kalir_demez():
         _stop(patches)
     assert snapshots == []
     assert messages and "saklı" not in messages[0]
+
+
+def test_uygulama_kilitli_bozuk_ayda_kilit_acilinca_bozuk_alan_ezilmez(monkeypatch):
+    # Kilitli geçmiş ayda okunamayan bölüm varken 🔓 kaydı yeniden başlatmamalı:
+    # yoksa ilk değişiklikte tercihler boş hâliyle kalıcı yazılıyordu.
+    from datetime import date
+    import sys
+    monkeypatch.setattr(sys.modules["db"], "_today", lambda: date(2026, 10, 27))
+    saves = []
+
+    def save(*args, expected_version=None, **kwargs):
+        saves.append(expected_version)
+        return True
+
+    import nobet_core
+    columns = list(nobet_core.build_gun_detaylari(2026, 8, 31, set()))
+    at, patches = _app(_corrupt_month_loader(columns), save, team="Ali, Ayşe")
+    at.session_state["yil_val"], at.session_state["ay_val"] = 2026, 8
+    try:
+        at.run()
+        assert [e.value for e in at.exception] == []
+        assert at.session_state["schedule_corrupt"]["period"] == (2026, 8)
+        next(b for b in at.button if b.key == "month_lock_toggle").click().run()
+        assert "2026-08" in at.session_state["open_months"]   # kilit açıldı
+        _flip_cell(at)
+        at.run()
+        assert [e.value for e in at.exception] == []
+        assert RECOVER in [b.label for b in at.button]        # onay düğmesi yerinde
+    finally:
+        _stop(patches)
+    assert saves == []
