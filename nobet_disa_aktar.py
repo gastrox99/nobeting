@@ -11,7 +11,6 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 from db import create_share_link, delete_all_share_links, get_share_link
 from nobet_core import (
@@ -147,7 +146,7 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                on_click="ignore", width="stretch", disabled=not EXCEL_AVAILABLE)
             # Sayfanın kendi yazdırma penceresi (A4 yatay, yalnız tablo ve takvim; nobet_stil.py).
-            components.html(
+            st.iframe(
                 "<button onclick=\"window.parent.print()\" style=\"width:100%;padding:8px;border-radius:8px;"
                 "border:1px solid rgba(128,128,128,.4);background:transparent;color:inherit;font-size:14px;"
                 "cursor:pointer;\">🖨️ Yazdır (A4)</button>",

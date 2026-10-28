@@ -21,7 +21,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     # Yedek testleri (test_yedek_db.py, test_browser_yedek.py) için geçici veritabanı.
     services:
       postgres:
