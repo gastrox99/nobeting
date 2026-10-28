@@ -16,7 +16,7 @@ Tarayıcıda `http://localhost:8501` adresini açın. Kalıcı kayıt için Post
 ## Testler
 
 ```sh
-python -m pip install pytest playwright pyflakes
+python -m pip install -r requirements-test.txt
 python -m playwright install chromium
 python -m pytest -p no:cacheprovider
 ```

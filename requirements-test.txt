@@ -1,0 +1,4 @@
+# Yalnız testler ve CI için (uygulama çalışması için gerekmez); sürümler sabit.
+pytest==9.2.0
+playwright==1.64.1
+pyflakes==4.1.0
