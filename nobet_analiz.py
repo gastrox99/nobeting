@@ -4,8 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from nobet_core import (
-    TR_AY_ADLARI, active_fixed_roles, build_person_ics, distribute_roles, escape_html,
-    most_paired, preference_summary, tr_sayi,
+    ELLE_UNVAN, TR_AY_ADLARI, active_fixed_roles, build_person_ics, distribute_roles, escape_html,
+    katsayi_uyarisi, most_paired, preference_summary, tr_sayi,
 )
 from nobet_durum import save_undo_state
 
@@ -137,6 +137,9 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
 
     with an3:
         st.markdown("**Ücret Özeti**")
+        _katsayi_uyarisi = katsayi_uyarisi(yil, ay) if st.session_state.get("unvan_val", ELLE_UNVAN) != ELLE_UNVAN else None
+        if _katsayi_uyarisi:
+            st.warning(_katsayi_uyarisi, icon="⚠️")
         _mesai_text = f"Zorunlu mesai {zorunlu_saat} saat: hafta içi iş günü 8 saat"
         if arife_gunleri:
             _mesai_text += ", " + ", ".join(

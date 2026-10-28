@@ -16,7 +16,7 @@ import db
 from nobet_core import (
     NOBET_UNVANLARI,
     alternate_day_chains,
-    katsayi_donemi,
+    katsayi_donemi, katsayi_uyarisi,
     nobet_ucreti_hesapla,
     saat_ucretleri,
     unvan_saat_ucreti,
@@ -2870,6 +2870,13 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         self.assertIsNone(unvan_saat_ucreti("Profesör", 2026, 10))
         # Tablo yalnız kendi döneminde; 2027'de formül (son katsayı) kullanılır.
         self.assertFalse(unvan_saat_ucreti("Tabip", 2027, 3)["tam"])
+
+    def test_katsayi_uyarisi_yalniz_eksik_donemde(self):
+        self.assertIsNone(katsayi_uyarisi(2026, 10))
+        self.assertIsNone(katsayi_uyarisi(2026, 3))
+        uyari = katsayi_uyarisi(2027, 1)
+        self.assertIn("henüz eklenmedi", uyari)
+        self.assertIn("Temmuz-Aralık 2026", uyari)
 
     UCRET = {"gunduz": 100.0, "gece": 110.0, "tatil": 125.0, "tatil_gece": 137.5}
 

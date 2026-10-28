@@ -98,6 +98,15 @@ def donem_adi(key):
     return f"{_DONEM_ADI[key[1]]} {key[0]}"
 
 
+def katsayi_uyarisi(yil, ay):
+    """Seçilen ayın katsayısı tabloda yoksa görünür uyarı metni, varsa None."""
+    key, tam = katsayi_donemi(yil, ay)
+    if tam:
+        return None
+    return (f"Bu ayın memur katsayısı henüz eklenmedi; ücretler {donem_adi(key)} katsayısıyla hesaplandı "
+            "ve gerçek tutardan farklı olabilir.")
+
+
 def unvan_saat_ucreti(unvan, yil, ay, riskli=False):
     """Ünvanın o ayki nöbet saat ücretleri (net, TL).
 

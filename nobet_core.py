@@ -29,7 +29,7 @@ from nobet_ucret import (  # noqa: F401
     NOBET_UNVANLARI, ESKI_UNVAN_ADLARI, ELLE_UNVAN, MEMUR_AYLIK_KATSAYI, DAMGA_VERGISI,
     GECE_ARTIRIMI, GECE_FARKI, RISKLI_BIRIM_ARTIRIMI, TATIL_ARTIRIMI, NOBET_GUNDUZ_SAAT,
     NOBET_GECE_SAAT, UCRET_TURLERI, NOBET_UCRET_TABLOSU, UCRET_TURU_ADI, katsayi_donemi,
-    donem_adi, unvan_saat_ucreti, saat_ucretleri, nobet_ucreti_hesapla, ucret_saatleri,
+    donem_adi, katsayi_uyarisi, unvan_saat_ucreti, saat_ucretleri, nobet_ucreti_hesapla, ucret_saatleri,
     ayarlardaki_saat_ucretleri, kisi_ucret_dokumu, _unvan, _DONEM_ADI,
 )
 from nobet_algoritma import (  # noqa: F401
