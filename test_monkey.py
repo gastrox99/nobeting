@@ -588,6 +588,7 @@ def run_round(page, rnd, seed, plan=None):
         else:
             action = by_name[planned[0]]
             rnd.target = ReplayRandom(planned[1])
+        started = time.monotonic()
         try:
             action()
         except _Skip:
@@ -601,6 +602,9 @@ def run_round(page, rnd, seed, plan=None):
         if not wait_idle(page, limit=60):
             note("SONSUZ ÇİZİM", "sayfa 60 sn boyunca durmadı", history)
         check_invariants(page, history, per_shift)
+        if not _sink["quiet"]:
+            # Zaman aşımında nerede yavaşladığı GitHub günlüğünde görünsün.
+            print(f"adım {step_no + 1}/{len(steps)} {action.__name__} {time.monotonic() - started:.1f} sn", flush=True)
     rnd.target = recorder
     return history, trace
 

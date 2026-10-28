@@ -47,11 +47,17 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt pytest playwright
       - run: python -m playwright install --with-deps chromium
+      # Test, işin 90 dakikalık sınırından önce durdurulur; böylece aşağıdaki
+      # özet adımı yine çalışır ve o ana kadarki bulgular kaybolmaz.
       - name: Maymun testi
+        timeout-minutes: 80
+        shell: bash
+        run: python -m pytest test_monkey.py -s -p no:cacheprovider --tb=short 2>&1 | tee monkey.log || true
+      - name: Bulgular
+        if: always()
         shell: bash
         run: |
-          python -m pytest test_monkey.py -s -p no:cacheprovider --tb=short > monkey.log 2>&1 || true
-          tail -5 monkey.log
+          tail -5 monkey.log || true
           python - <<'PY'
           import os
           path = "monkey_findings.txt"
