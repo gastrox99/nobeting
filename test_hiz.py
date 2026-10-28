@@ -22,7 +22,7 @@ import psycopg2.extensions
 import pytest
 
 import db
-import nobet_core
+import nobet_algoritma
 from nobet_core import build_gun_detaylari, parse_person_limits, run_scheduling_core
 
 TEST_DB = os.environ.get("TEST_DATABASE_URL")
@@ -52,7 +52,7 @@ def _eski_run_scheduling_core():
     assert source.count(_YENI_TERCIH) == 1 and source.count(_YENI_IZIN) == 1, \
         "İç döngü değişti; testteki eski hâli de güncelleyin."
     source = source.replace(_YENI_TERCIH, _ESKI_TERCIH).replace(_YENI_IZIN, _ESKI_IZIN)
-    namespace = dict(vars(nobet_core))
+    namespace = dict(vars(nobet_algoritma))
     exec(compile(source, "eski_run_scheduling_core", "exec"), namespace)
     return namespace["run_scheduling_core"]
 

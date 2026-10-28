@@ -1656,7 +1656,7 @@ class TestCrossMonthBalance(unittest.TestCase):
     def test_nobetler_aya_yayilir(self):
         # 8 kişi, günde 2: beklenen aralık 4 gün. Dinlenme 1 gün; yayma
         # kapalıyken günaşırı (aralık ≤2) nöbetler çok daha sık çıkar.
-        import nobet_core
+        import nobet_algoritma
         names = [f"K{i}" for i in range(8)]
         days = build_gun_detaylari(2026, 11, 30, [])
         cols = list(days)
@@ -1677,8 +1677,8 @@ class TestCrossMonthBalance(unittest.TestCase):
             return short
 
         spread = short_gaps()
-        with patch.object(nobet_core, "SPREAD_WEIGHT", 0), patch.object(nobet_core, "SPREAD_SCORE_WEIGHT", 0), \
-                patch.object(nobet_core, "LONG_GAP_WEIGHT", 0), patch.object(nobet_core, "LONG_GAP_SCORE_WEIGHT", 0):
+        with patch.object(nobet_algoritma, "SPREAD_WEIGHT", 0), patch.object(nobet_algoritma, "SPREAD_SCORE_WEIGHT", 0), \
+                patch.object(nobet_algoritma, "LONG_GAP_WEIGHT", 0), patch.object(nobet_algoritma, "LONG_GAP_SCORE_WEIGHT", 0):
             unspread = short_gaps()
         self.assertLess(spread * 2, unspread)
 
@@ -1686,7 +1686,7 @@ class TestCrossMonthBalance(unittest.TestCase):
         # Ayın ilk haftası çok kişi müsait değil (Kasım 2026 ekran görüntüsü):
         # kalanlar nöbet-boş-nöbet-boş-nöbet zincirine giriyordu. 2 normal,
         # 3. ve sonrası cezalı.
-        import nobet_core
+        import nobet_algoritma
         names = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
         days = build_gun_detaylari(2026, 11, 30, [])
         cols = list(days)
@@ -1711,7 +1711,7 @@ class TestCrossMonthBalance(unittest.TestCase):
             return total
 
         penalized = chains()
-        with patch.object(nobet_core, "ALT_CHAIN_WEIGHT", 0), patch.object(nobet_core, "ALT_CHAIN_SCORE_WEIGHT", 0):
+        with patch.object(nobet_algoritma, "ALT_CHAIN_WEIGHT", 0), patch.object(nobet_algoritma, "ALT_CHAIN_SCORE_WEIGHT", 0):
             plain = chains()
         self.assertLess(penalized * 2, plain)
 
@@ -2328,16 +2328,17 @@ class TestStaleModuleRecovery(unittest.TestCase):
         source = _app_source("nobet.py")
         listed = re.search(r"_FRESH_MODULES = \((.*?)\)", source, flags=re.S).group(1)
         # nobet_iyilestir eskiyken İyileştir "ortools yüklü değil" diyordu.
-        self.assertEqual(re.findall(r'"(\w+)"', listed), ["db", "nobet_kalicilik", "nobet_gunler", "nobet_ucret", "nobet_core", "nobet_iyilestir"])
+        self.assertEqual(re.findall(r'"(\w+)"', listed), ["db", "nobet_kalicilik", "nobet_gunler", "nobet_ucret", "nobet_algoritma", "nobet_core", "nobet_iyilestir"])
         self.assertLess(source.index("\n_fresh_modules()\n"), source.index("for _attempt in range(2):"))
         # Tazeleme kilit altında nobet_tazele.py'de; davranışı test_tazele.py dener.
         self.assertIn("fresh_modules(_FRESH_MODULES, force=force)", source)
-        for name in ("db.py", "nobet_kalicilik.py", "nobet_gunler.py", "nobet_ucret.py", "nobet_core.py", "nobet_iyilestir.py"):
+        for name in ("db.py", "nobet_kalicilik.py", "nobet_gunler.py", "nobet_ucret.py", "nobet_algoritma.py", "nobet_core.py",
+                     "nobet_iyilestir.py"):
             self.assertTrue(_app_source(name).rstrip().endswith(
                 "_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns"), name)
 
     def test_gunler_ve_ucret_cekirdege_bagimli_degil(self):
-        # Döngüsel içe aktarma olmasın: nobet_core bu iki dosyadan okur, tersi olmaz.
+        # Döngüsel içe aktarma olmasın: nobet_core bu dosyalardan okur, tersi olmaz.
         import ast
         def imported(name):
             tree = ast.parse(_app_source(name))
@@ -2349,6 +2350,10 @@ class TestStaleModuleRecovery(unittest.TestCase):
         self.assertNotIn("nobet_core", imported("nobet_gunler.py"))
         self.assertNotIn("nobet_core", imported("nobet_ucret.py"))
         self.assertFalse({n for n in imported("nobet_gunler.py") if n.startswith(("nobet", "db"))})
+        # Algoritma yalnız nobet_gunler'den okur; arayüz durumuna (session_state) dokunmaz.
+        self.assertEqual({n for n in imported("nobet_algoritma.py") if n.startswith(("nobet", "db", "streamlit"))},
+                         {"nobet_gunler"})
+        self.assertNotIn("session_state", _app_source("nobet_algoritma.py"))
 
     def test_tazelenmeyen_yerel_modul_kalmaz(self):
         # Klasör taraması yerine elle tutulan liste: yeni bir .py eklenip listelere

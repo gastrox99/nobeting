@@ -258,5 +258,12 @@ def previous_period(yil, ay, back=1):
     return index // 12, index % 12 + 1
 
 
+def _column_day(column):
+    try:
+        return int(str(column).split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
 # Damga en sonda: yükleme yarıda kalırsa sonraki çalışma yeniden dener (nobet_tazele.py).
 _nobet_loaded_stamp = os.stat(__file__).st_mtime_ns
