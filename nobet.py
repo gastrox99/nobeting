@@ -34,7 +34,7 @@ _UI_MODULES = (
 
 
 # Sıra önemli: nobet_iyilestir nobet_core'dan isim alır, core tazelenirse o da tazelenir.
-_FRESH_MODULES = ("db", "nobet_core", "nobet_iyilestir")
+_FRESH_MODULES = ("db", "nobet_kalicilik", "nobet_core", "nobet_iyilestir")
 
 
 def _fresh_modules(force=False):
@@ -84,6 +84,7 @@ for _attempt in range(2):
             ping_db,
             SCHEMA_VERSION,
         )
+        from nobet_kalicilik import kaydi_durdur, kayit_durdu_mu, engeli_kaldir, engelleri_sifirla
         from nobet_core import (
             history_adjustment,
             history_special_adjustment,
@@ -552,11 +553,8 @@ def _toggle_month_lock(key, unlock):
     _others = [m for m in (st.session_state.get("open_months") or []) if m != key]
     st.session_state.open_months = sorted(_others + [key]) if unlock else _others
     # Kilitli ayda durdurulmuş otomatik kayıt, kilit açılınca yeniden başlasın;
-    # okunamayan bölüm varsa durdurma "boşaltıp devam et" onayına kadar sürer.
-    _corrupt = st.session_state.get("schedule_corrupt") or {}
-    if (st.session_state.get("autosave_blocked_period") == (_bar_year, _bar_month)
-            and _corrupt.get("period") != (_bar_year, _bar_month)):
-        st.session_state.pop("autosave_blocked_period")
+    # başka nedenle (ör. okunamayan bölüm) durdurulduysa durdurma sürer.
+    engeli_kaldir(st.session_state, (_bar_year, _bar_month), "kilitli")
 
 
 if month_is_locked(_bar_year, _bar_month, []):
@@ -1005,7 +1003,7 @@ zorunlu_saat, arife_gunleri = required_work_hours(gun_detaylari, official_half_d
 def _save_outgoing_period(period, schedule, preferences, rows):
     _old_yil, _old_ay = period
     # Okunamayan bir dönemin kaydının üzerine yazma; değişmediyse tekrar yazma.
-    if st.session_state.get("autosave_blocked_period") == tuple(period):
+    if kayit_durdu_mu(st.session_state, period):
         # Başka yerde değişmiş ay: bu sekmedeki değişiklikler atılacaksa önce bir kez uyar.
         if (
             st.session_state.get("autosave_conflict_period") == tuple(period)
@@ -1033,18 +1031,14 @@ def _save_outgoing_period(period, schedule, preferences, rows):
         # Kilitli ayda değişiklik yapılamaz; kaydedilecek bir şey yok, ay değişebilir.
         return True
     except SaveConflict:
-        st.session_state.autosave_blocked_period = tuple(period)
-        st.session_state.autosave_conflict_period = tuple(period)
-        st.session_state.autosave_conflict_kind = "conflict"
+        kaydi_durdur(st.session_state, period, "cakisma")
         st.session_state.conflict_leave_ack = tuple(period)
         st.session_state.period_revert_reason = "conflict"
         return False
     except VersionUnknown:
         # Sürüm bilinmiyor: çakışmadaki gibi bir kez uyarılır, ikinci denemede
         # bu sekmedeki değişiklikler atılarak ay değişir.
-        st.session_state.autosave_blocked_period = tuple(period)
-        st.session_state.autosave_conflict_period = tuple(period)
-        st.session_state.autosave_conflict_kind = "version_unknown"
+        kaydi_durdur(st.session_state, period, "surum_bilinmiyor")
         st.session_state.conflict_leave_ack = tuple(period)
         st.session_state.period_revert_reason = "version_unknown"
         return False
@@ -1084,7 +1078,7 @@ if 'schedule_bool' not in st.session_state:
 
     def _on_auto_load_error(_error):
         # Kayıt okunamadıysa boş çizelgeyi kaydedip gerçek verinin üzerine yazma.
-        st.session_state.autosave_blocked_period = (yil, ay)
+        kaydi_durdur(st.session_state, (yil, ay), "okuma")
         update_persistence_feedback(
             st.session_state,
             False,
@@ -1092,16 +1086,13 @@ if 'schedule_bool' not in st.session_state:
             "durduruldu; veritabanı bağlantısını kontrol edip sayfayı yenileyin.",
         )
 
-    st.session_state.autosave_blocked_period = None
-    st.session_state.autosave_conflict_period = None
-    st.session_state.autosave_conflict_kind = None
-    st.session_state.conflict_leave_ack = None
+    engelleri_sifirla(st.session_state)
     # Önceki ayın kayıt uyarısı ("bu ayın ...") yeni ayda gösterilmesin.
     st.session_state.persistence_error = None
     if not _db_ready:
         # Veritabanına ulaşılamıyor: okuma denenmez (yeniden zaman aşımı beklenmesin)
         # ve boş çizelge kayıtlı olanın üzerine yazılmasın. Veritabanı gelince yüklenir.
-        st.session_state.autosave_blocked_period = (yil, ay)
+        kaydi_durdur(st.session_state, (yil, ay), "cevrimdisi")
         st.session_state.loaded_without_db = {
             **(st.session_state.get("loaded_without_db") or {}), "period": (yil, ay), "schedule_clean": True,
         }
@@ -1122,7 +1113,7 @@ if 'schedule_bool' not in st.session_state:
         st.session_state.schedule_bool = pd.DataFrame(False, index=isimler, columns=sutunlar)
     if _corrupt_fields:
         # Okunamayan bölüm boş sayılıp ilk değişiklikte kalıcı olarak silinmesin.
-        st.session_state.autosave_blocked_period = (yil, ay)
+        kaydi_durdur(st.session_state, (yil, ay), "bozuk")
         st.session_state.schedule_corrupt = {"period": (yil, ay), "fields": list(_corrupt_fields)}
     # Yüklenen durum zaten veritabanındakiyle aynı; ilk kayıt ilk değişiklikte yapılır.
     st.session_state.autosave_baseline_pending = True
@@ -1130,7 +1121,7 @@ if 'schedule_bool' not in st.session_state:
     # kapandı) tarayıcıda durur; ay o zamandan beri başka yerde kaydedilmediyse
     # geri getirilip hemen kaydedilir.
     _pending_raw = local_storage.getItem(PENDING_PREFS_KEY)
-    if _pending_raw and st.session_state.get("autosave_blocked_period") != (yil, ay):
+    if _pending_raw and not kayit_durdu_mu(st.session_state, (yil, ay)):
         _base_pref = st.session_state.get("pref_df")
         if _base_pref is None:
             _base_pref = pd.DataFrame(0, index=isimler, columns=sutunlar)
@@ -1209,8 +1200,8 @@ def _accept_corrupt_schedule():
     # Okunamayan bölüm boş kabul edilir; kayıt yeniden açılır ve bu çalışmada
     # yüklemedeki sürümle (başka yerde değiştiyse çakışma uyarısı) temiz yazılır.
     _state = st.session_state.pop("schedule_corrupt", None) or {}
-    if st.session_state.get("autosave_blocked_period") == _state.get("period"):
-        st.session_state.autosave_blocked_period = None
+    if _state.get("period"):
+        engeli_kaldir(st.session_state, _state["period"], "bozuk")
     # İki parmak izi de sıfırlanır: Tercih modunda da kayıt ertelenmez.
     st.session_state.last_saved_fingerprint = None
     st.session_state.last_saved_core_fingerprint = None
@@ -1916,7 +1907,7 @@ if st.session_state.pop("autosave_baseline_pending", False):
     st.session_state.last_saved_fingerprint = _persist_fp
     st.session_state.last_saved_core_fingerprint = _core_fp
 elif (
-    st.session_state.get("autosave_blocked_period") != (yil, ay)
+    not kayit_durdu_mu(st.session_state, (yil, ay))
     and _persist_fp != st.session_state.get("last_saved_fingerprint")
     and _defer_save
 ):
@@ -1930,7 +1921,7 @@ elif (
     if local_storage.getItem(PENDING_PREFS_KEY) != _pending_payload:
         local_storage.setItem(PENDING_PREFS_KEY, _pending_payload, key="pending_prefs_set")
 elif (
-    st.session_state.get("autosave_blocked_period") != (yil, ay)
+    not kayit_durdu_mu(st.session_state, (yil, ay))
     and _persist_fp != st.session_state.get("last_saved_fingerprint")
 ):
     auto_name = f"Otomatik_{yil}_{ay:02d}"
@@ -1948,9 +1939,7 @@ elif (
     except SaveConflict as _conflict:
         # Bu ay başka bir yerde (ör. telefonda) değişmiş; onların üzerine yazma.
         _save_conflict = True
-        st.session_state.autosave_blocked_period = (yil, ay)
-        st.session_state.autosave_conflict_period = (yil, ay)
-        st.session_state.autosave_conflict_kind = "conflict"
+        kaydi_durdur(st.session_state, (yil, ay), "cakisma")
         update_persistence_feedback(
             st.session_state,
             False,
@@ -1961,7 +1950,7 @@ elif (
         )
     except MonthLocked:
         _save_conflict = True
-        st.session_state.autosave_blocked_period = (yil, ay)
+        kaydi_durdur(st.session_state, (yil, ay), "kilitli")
         update_persistence_feedback(
             st.session_state,
             False,
@@ -1971,9 +1960,7 @@ elif (
         # Çakışmadaki gibi: kayıt durur, ay değiştirilirse bir kez uyarılıp
         # ikinci denemede bu sekmedeki değişiklikler atılarak geçilir.
         _save_conflict = True
-        st.session_state.autosave_blocked_period = (yil, ay)
-        st.session_state.autosave_conflict_period = (yil, ay)
-        st.session_state.autosave_conflict_kind = "version_unknown"
+        kaydi_durdur(st.session_state, (yil, ay), "surum_bilinmiyor")
         update_persistence_feedback(
             st.session_state,
             False,
