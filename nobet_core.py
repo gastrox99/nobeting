@@ -17,6 +17,21 @@ from itertools import combinations as _combinations, permutations as _permutatio
 from html import escape as _escape_html
 from numbers import Integral
 
+from nobet_gunler import (  # noqa: F401  (eski içe aktarmalar çalışsın diye yeniden dışa aktarılır)
+    PREF_LEAVE, PREF_UNAVAILABLE, BLOCKED_PREFS, MAX_PREF_CODE, TR_GUN_KISA, TR_AY_ADLARI, TR_FIXED_HOLIDAYS, TR_RELIGIOUS_HOLIDAYS,
+    TR_FIXED_HALF_DAYS, period_key, parse_holiday_days, build_gun_detaylari,
+    religious_holidays_known, official_holidays, official_half_days, required_work_hours,
+    personal_work_hours, official_holidays_summary, default_holiday_text,
+    holiday_text_for_period, prune_default_holidays, holidays_to_text, previous_period,
+)
+from nobet_ucret import (  # noqa: F401
+    NOBET_UNVANLARI, ESKI_UNVAN_ADLARI, ELLE_UNVAN, MEMUR_AYLIK_KATSAYI, DAMGA_VERGISI,
+    GECE_ARTIRIMI, GECE_FARKI, RISKLI_BIRIM_ARTIRIMI, TATIL_ARTIRIMI, NOBET_GUNDUZ_SAAT,
+    NOBET_GECE_SAAT, UCRET_TURLERI, NOBET_UCRET_TABLOSU, UCRET_TURU_ADI, katsayi_donemi,
+    donem_adi, unvan_saat_ucreti, saat_ucretleri, nobet_ucreti_hesapla, ucret_saatleri,
+    ayarlardaki_saat_ucretleri, kisi_ucret_dokumu, _unvan, _DONEM_ADI,
+)
+
 
 def normalize_owner_email(value):
     """Kullanıcıyı eşleştirmek için e-postayı tek biçime getirir."""
@@ -284,14 +299,6 @@ def import_schedule_table(table, isimler, sutunlar, gun_detaylari, role_names, y
     return result
 
 
-# Tercih kodları. İzin (3) ve Müsait Değil (4) günlerine nöbet yazılmaz;
-# yalnızca İzin zorunlu mesaiden düşer.
-PREF_LEAVE = 3
-PREF_UNAVAILABLE = 4
-BLOCKED_PREFS = frozenset({PREF_LEAVE, PREF_UNAVAILABLE})
-MAX_PREF_CODE = 4
-
-
 def is_blocked_preference(value):
     """İzin ya da Müsait Değil: o güne nöbet yazılmaz."""
     try:
@@ -430,49 +437,6 @@ def name_column_width(names, char_px=9, minimum=96, maximum=220, badge_px=30):
 def get_preference_grid_legend():
     """Return the legend entries in the same order as the cell states."""
     return [dict(state) for state in PREFERENCE_GRID_STATES]
-
-
-def parse_holiday_days(text_input, max_day):
-    """Tatil metnini (geçerli günler, geçersiz parçalar) olarak ayrıştırır.
-
-    Bir aralıkta uçlardan biri ay sınırını aşıyorsa aralığın tamamı geçersiz
-    sayılır; böylece hatalı giriş sessizce ay içine kırpılmaz.
-    """
-    if not text_input or (isinstance(text_input, float) and pd.isna(text_input)):
-        return [], []
-
-    valid_days = set()
-    invalid_parts = []
-    for raw_part in str(text_input).split(','):
-        part = raw_part.strip()
-        if not part:
-            continue
-
-        if '-' in part:
-            range_parts = [item.strip() for item in part.split('-')]
-            if (
-                len(range_parts) != 2
-                or not all(item.isascii() and item.isdecimal() for item in range_parts)
-            ):
-                invalid_parts.append(part)
-                continue
-            start, end = map(int, range_parts)
-            if start < 1 or end > max_day or start > end:
-                invalid_parts.append(part)
-                continue
-            valid_days.update(range(start, end + 1))
-            continue
-
-        if not part.isascii() or not part.isdecimal():
-            invalid_parts.append(part)
-            continue
-        day = int(part)
-        if 1 <= day <= max_day:
-            valid_days.add(day)
-        else:
-            invalid_parts.append(part)
-
-    return sorted(valid_days), invalid_parts
 
 
 def schedule_fingerprint(schedule):
@@ -1486,11 +1450,6 @@ def _period_list(value):
     return sorted({key for key in value if isinstance(key, str) and re.fullmatch(r"\d{4}-\d{2}", key)})
 
 
-def period_key(yil, ay):
-    """Aya özel ayarlar (ör. tatiller) için anahtar: "2026-10"."""
-    return f"{int(yil):04d}-{int(ay):02d}"
-
-
 def _bool(value):
     return value if isinstance(value, bool) else None
 
@@ -2257,9 +2216,6 @@ def unknown_names(names, team):
     return sorted({name for name in names if name not in team_set})
 
 
-TR_GUN_KISA = {0: "Pzt", 1: "Sal", 2: "Çar", 3: "Per", 4: "Cum", 5: "Cmt", 6: "Paz"}
-
-
 def _balance_fridays(schedule, isimler, sutunlar, gun_detaylari, df_unwanted_bool,
                      df_preferred, min_bosluk, forbidden_pairs, fixed_assignments,
                      initial_last_shift, max_moves=200, together_pairs=None):
@@ -2592,29 +2548,6 @@ def _is_special_day(info):
 def is_friday_column(info):
     """Tatil olmayan Cuma mı? (Tatile denk gelen Cuma zaten özel gün sayılır.)"""
     return info.get("weekday") == 4 and not info.get("weekend") and not info.get("holiday")
-
-
-def build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri):
-    """Ayın her günü için uygulamanın kullandığı sütun ve meta veriyi üretir.
-
-    Anahtarlar "1 Pzt" biçimindedir. Tatiller de nöbet tutulan günlerdir;
-    çıkarılmaz, ``holiday`` ile işaretlenir ve hafta sonu gibi özel gün sayılır.
-    """
-    tatiller = set(tatil_gunleri)
-    gun_detaylari = {}
-    for gun in range(1, gun_sayisi + 1):
-        gun_tarihi = date(yil, ay, gun)
-        weekday = gun_tarihi.weekday()
-        gun_adi = TR_GUN_KISA[weekday]
-        gun_detaylari[f"{gun} {gun_adi}"] = {
-            "day_num": gun,
-            "weekend": weekday >= 5,
-            "holiday": gun in tatiller,
-            "full_date": gun_tarihi.strftime("%d.%m.%Y") + " " + gun_adi,
-            "weekday": weekday,
-            "week": (gun_tarihi.toordinal() - weekday) // 7,
-        }
-    return gun_detaylari
 
 
 def _find_valid_group(adaylar, kisi_sayisi, forbidden_pairs):
@@ -3306,177 +3239,6 @@ def run_scheduling_core(isimler, sutunlar, df_unwanted_bool, gun_detaylari,
             initial_last_shift, kisi_sayisi, together_pairs=together_pairs,
         )
     return best_schedule, best_score
-
-
-TR_AY_ADLARI = {1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
-                7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"}
-
-
-# Türkiye resmi tatilleri (arife yarım günleri dahil edilmez).
-TR_FIXED_HOLIDAYS = {
-    (1, 1): "Yılbaşı",
-    (4, 23): "Ulusal Egemenlik ve Çocuk Bayramı",
-    (5, 1): "Emek ve Dayanışma Günü",
-    (5, 19): "Atatürk'ü Anma, Gençlik ve Spor Bayramı",
-    (7, 15): "Demokrasi ve Milli Birlik Günü",
-    (8, 30): "Zafer Bayramı",
-    (10, 29): "Cumhuriyet Bayramı",
-}
-# Dini bayramlar her yıl değişir: (ilk gün, gün sayısı, ad). Diyanet takvimi.
-TR_RELIGIOUS_HOLIDAYS = {
-    2024: [(date(2024, 4, 10), 3, "Ramazan Bayramı"), (date(2024, 6, 16), 4, "Kurban Bayramı")],
-    2025: [(date(2025, 3, 30), 3, "Ramazan Bayramı"), (date(2025, 6, 6), 4, "Kurban Bayramı")],
-    2026: [(date(2026, 3, 20), 3, "Ramazan Bayramı"), (date(2026, 5, 27), 4, "Kurban Bayramı")],
-    2027: [(date(2027, 3, 9), 3, "Ramazan Bayramı"), (date(2027, 5, 16), 4, "Kurban Bayramı")],
-    2028: [(date(2028, 2, 26), 3, "Ramazan Bayramı"), (date(2028, 5, 5), 4, "Kurban Bayramı")],
-    # 2029: Diyanet'in kesin takvimi çıkınca kontrol edin.
-    2029: [(date(2029, 2, 14), 3, "Ramazan Bayramı"), (date(2029, 4, 24), 4, "Kurban Bayramı")],
-}
-
-
-def religious_holidays_known(yil):
-    """Bu yılın dini bayram tarihleri listede var mı?"""
-    return yil in TR_RELIGIOUS_HOLIDAYS
-
-
-def official_holidays(yil, ay):
-    """Ayın resmi tatilleri: [(gün, ad), ...] gün sırasıyla."""
-    found = {}
-    for (month, day), name in TR_FIXED_HOLIDAYS.items():
-        if month == ay:
-            found[day] = name
-    for start, length, name in TR_RELIGIOUS_HOLIDAYS.get(yil, []) + TR_RELIGIOUS_HOLIDAYS.get(yil - 1, []):
-        for offset in range(length):
-            current = date.fromordinal(start.toordinal() + offset)
-            if current.year == yil and current.month == ay:
-                found[current.day] = name
-    return sorted(found.items())
-
-
-# Arifeler yarım gün (öğleden sonra tatil): zorunlu mesaide 4 saat sayılır.
-TR_FIXED_HALF_DAYS = {(10, 28): "Cumhuriyet Bayramı arifesi"}
-
-
-def official_half_days(yil, ay):
-    """Ayın arife yarım günleri: [(gün, ad), ...] gün sırasıyla."""
-    found = {day: name for (month, day), name in TR_FIXED_HALF_DAYS.items() if month == ay}
-    for start, _, name in TR_RELIGIOUS_HOLIDAYS.get(yil, []) + TR_RELIGIOUS_HOLIDAYS.get(yil + 1, []):
-        eve = date.fromordinal(start.toordinal() - 1)
-        if eve.year == yil and eve.month == ay:
-            found[eve.day] = f"{name} arifesi"
-    return sorted(found.items())
-
-
-def required_work_hours(gun_detaylari, half_days=()):
-    """Zorunlu mesai: hafta içi iş günü 8 saat, iş gününe düşen arife 4 saat.
-
-    ``half_days``: [(gün, ad), ...]. Hafta sonuna ya da tatil olarak
-    işaretlenmiş güne düşen arife zaten sayılmaz. Dönen değer
-    (saat, hesaba katılan arifeler).
-    """
-    half = dict(half_days)
-    hours, counted = 0, []
-    for detail in gun_detaylari.values():
-        if detail["weekend"] or detail["holiday"]:
-            continue
-        if detail["day_num"] in half:
-            hours += 4
-            counted.append((detail["day_num"], half[detail["day_num"]]))
-        else:
-            hours += 8
-    return hours, counted
-
-
-def personal_work_hours(gun_detaylari, half_days, preferences, people):
-    """Kişi başına zorunlu mesai: İzin (3) işaretli iş günü mesaiden düşer.
-
-    İzinli iş günü 8 saat, izinli arife 4 saat düşer; hafta sonu ve tatil
-    zaten mesaide sayılmadığı için düşmez. Müsait Değil (4) mesaiyi
-    değiştirmez. Dönen değer {kişi: saat}.
-    """
-    half = dict(half_days)
-    work_hours = {}
-    for column, detail in gun_detaylari.items():
-        if detail["weekend"] or detail["holiday"]:
-            continue
-        work_hours[column] = 4 if detail["day_num"] in half else 8
-    total = sum(work_hours.values())
-    result = {}
-    for person in people:
-        leave = 0
-        if preferences is not None and person in preferences.index:
-            for column, hours in work_hours.items():
-                if column not in preferences.columns:
-                    continue
-                try:
-                    code = int(preferences.at[person, column])
-                except (TypeError, ValueError):
-                    continue
-                if code == PREF_LEAVE:
-                    leave += hours
-        result[person] = total - leave
-    return result
-
-
-def official_holidays_summary(yil, ay):
-    """["20-22 Mart Ramazan Bayramı", "29 Ekim Cumhuriyet Bayramı"] gibi kısa açıklama."""
-    groups = []
-    for day, name in official_holidays(yil, ay):
-        if groups and groups[-1][2] == name and groups[-1][1] == day - 1:
-            groups[-1][1] = day
-        else:
-            groups.append([day, day, name])
-    month = TR_AY_ADLARI[ay]
-    return [
-        f"{start} {month} {name}" if start == end else f"{start}-{end} {month} {name}"
-        for start, end, name in groups
-    ]
-
-
-def default_holiday_text(yil, ay):
-    """Tatil kutusunun bu ay için varsayılan metni (resmi tatiller)."""
-    return holidays_to_text([day for day, _ in official_holidays(yil, ay)])
-
-
-def holiday_text_for_period(holidays_by_period, yil, ay):
-    """Ayın tatil metni: elle değiştirildiyse kaydı, değilse güncel resmi tatiller.
-
-    Varsayılan metin ayarlara yazılmaz; böylece koddaki bayram tarihleri
-    düzeltilince (ör. 2029) daha önce açılmış aylara da yansır.
-    """
-    return (holidays_by_period or {}).get(period_key(yil, ay), default_holiday_text(yil, ay))
-
-
-def prune_default_holidays(holidays_by_period):
-    """Resmi tatillerle aynı olan (elle değiştirilmemiş) ay kayıtlarını siler."""
-    for key in list(holidays_by_period or {}):
-        try:
-            yil, ay = (int(part) for part in key.split("-"))
-            default = default_holiday_text(yil, ay)
-        except (ValueError, KeyError):
-            continue
-        if holidays_by_period[key] == default:
-            del holidays_by_period[key]
-    return holidays_by_period
-
-
-def holidays_to_text(days):
-    """[20, 21, 22, 29] -> "20-22, 29" (tatil kutusuna yazılan biçim)."""
-    days = sorted(set(days))
-    parts, start = [], None
-    for index, day in enumerate(days):
-        if start is None:
-            start = day
-        if index == len(days) - 1 or days[index + 1] != day + 1:
-            parts.append(str(start) if start == day else f"{start}-{day}")
-            start = None
-    return ", ".join(parts)
-
-
-def previous_period(yil, ay, back=1):
-    """(yıl, ay)'dan ``back`` ay öncesini döner."""
-    index = yil * 12 + (ay - 1) - back
-    return index // 12, index % 12 + 1
 
 
 def _column_day(column):
@@ -4453,266 +4215,6 @@ def backup_reminder(last_backup_text, today=None, days=30):
     if age >= days:
         return f"Son yedek {age} gün önce indirildi."
     return None
-
-
-# ── Ünvana göre nöbet saat ücreti ─────────────────────────────────────────
-# 657 sayılı DMK Ek Madde 33: nöbet ücreti = gösterge × memur aylık katsayısı.
-# 8. Dönem Toplu Sözleşme göstergelere 10 puan ekler (aşağıdakiler eklenmiş
-# hâlidir). 20.00-08.00 arası gece nöbeti %10, acil/yoğun bakım/ameliyathane
-# gibi riskli birimler %50 artırımlıdır. Nöbet ücretinden yalnızca damga
-# vergisi (binde 7,59) kesilir; aşağıdaki tutarlar kesinti sonrası nettir.
-NOBET_UNVANLARI = {
-    "Eğitim Görevlisi": 160,
-    "Uzman Tabip": 160,
-    "Tabip": 145,
-    "Tıpta uzmanlık tüzüğüne göre": 145,
-    "Diş Tabibi ve Eczacılar": 130,
-    "Sağlık Personeli (Lisans-Önlisans)": 100,
-    "Sağlık Personeli (Lise)": 85,
-    "Diğer Personel": 65,
-    # 4/B sözleşmeli personel, memur tutarının yaklaşık %85,89'unu alır
-    # (2026 tablosundan çıkarılan karşılık gösterge).
-    "4/B Sağlık Personeli (Lisans-Önlisans)": 85.89,
-    "4/B Sağlık Personeli (Lise)": 73.01,
-    "4/B Diğer Personel": 55.83,
-}
-# Önceki sürümlerde kaydedilmiş ünvan adları.
-ESKI_UNVAN_ADLARI = {
-    "Pratisyen Tabip": "Tabip",
-    "Diş Tabibi / Eczacı": "Diş Tabibi ve Eczacılar",
-    "Hemşire / Ebe (yüksek öğrenim)": "Sağlık Personeli (Lisans-Önlisans)",
-    "Sağlık Personeli (lise)": "Sağlık Personeli (Lise)",
-}
-ELLE_UNVAN = "Elle gir"
-
-# Memur aylık katsayısı her Ocak ve Temmuz'da Hazine ve Maliye Bakanlığı
-# genelgesiyle değişir; yeni dönem çıkınca buraya bir satır eklenir.
-# Anahtar: (yıl, 1 = Ocak-Haziran, 2 = Temmuz-Aralık).
-MEMUR_AYLIK_KATSAYI = {
-    (2026, 1): 1.387871,
-    (2026, 2): 1.575512,
-}
-DAMGA_VERGISI = 0.00759
-GECE_ARTIRIMI = 1.10
-GECE_FARKI = 0.10
-RISKLI_BIRIM_ARTIRIMI = 1.50
-# Resmi ve dini bayram (tatil) günlerinde tutulan nöbet %25 fazla ödenir.
-TATIL_ARTIRIMI = 0.25
-# 08.00-08.00 tutulan 24 saatlik nöbetin 12 saati gündüz, 12 saati gece.
-NOBET_GUNDUZ_SAAT = 12
-NOBET_GECE_SAAT = 12
-_DONEM_ADI = {1: "Ocak-Haziran", 2: "Temmuz-Aralık"}
-# Ücret türleri: gündüz, gece (20-08), resmi/dini bayram gündüz ve gece.
-UCRET_TURLERI = ("gunduz", "gece", "tatil", "tatil_gece")
-
-# Yayımlanan net saat ücreti tabloları; olan dönemde formül yerine bunlar
-# kullanılır (tablolar kuruş yuvarlamasıyla formülden 1-2 kuruş sapabilir).
-# Sıra: normal, gece, riskli, riskli gece, bayram, bayram gece, bayram
-# riskli, bayram riskli gece.
-NOBET_UCRET_TABLOSU = {
-    (2026, 2): {
-        "Eğitim Görevlisi": (250.17, 275.19, 375.25, 412.78, 312.71, 343.98, 469.07, 515.97),
-        "Uzman Tabip": (250.17, 275.19, 375.25, 412.78, 312.71, 343.98, 469.07, 515.97),
-        "Tabip": (226.72, 249.39, 340.07, 374.08, 283.39, 311.73, 425.09, 467.60),
-        "Tıpta uzmanlık tüzüğüne göre": (226.72, 249.39, 340.07, 374.08, 283.39, 311.73, 425.09, 467.60),
-        "Diş Tabibi ve Eczacılar": (203.28, 223.59, 304.89, 335.38, 254.08, 279.49, 381.12, 419.23),
-        "Sağlık Personeli (Lisans-Önlisans)": (156.36, 171.99, 234.55, 257.99, 195.44, 214.99, 293.17, 322.48),
-        "Sağlık Personeli (Lise)": (132.90, 146.19, 199.35, 219.29, 166.13, 182.74, 249.19, 274.11),
-        "Diğer Personel": (101.63, 111.78, 152.46, 167.68, 127.04, 139.74, 190.65, 209.61),
-        "4/B Sağlık Personeli (Lisans-Önlisans)": (134.30, 147.73, 201.45, 221.59, 167.87, 184.66, 251.81, 276.99),
-        "4/B Sağlık Personeli (Lise)": (114.15, 125.57, 171.25, 188.35, 142.69, 156.96, 214.04, 235.44),
-        "4/B Diğer Personel": (87.28, 96.02, 130.84, 144.03, 109.12, 120.03, 163.58, 180.04),
-    },
-}
-
-
-def katsayi_donemi(yil, ay):
-    """Seçilen ay için kullanılacak katsayı dönemi: (anahtar, tam_eşleşme_mi).
-
-    O dönemin katsayısı tabloda yoksa en yakın önceki (yoksa ilk) dönem
-    kullanılır ve tam_eşleşme False döner.
-    """
-    key = (int(yil), 1 if int(ay) <= 6 else 2)
-    if key in MEMUR_AYLIK_KATSAYI:
-        return key, True
-    known = sorted(MEMUR_AYLIK_KATSAYI)
-    earlier = [k for k in known if k < key]
-    return (earlier[-1] if earlier else known[0]), False
-
-
-def donem_adi(key):
-    return f"{_DONEM_ADI[key[1]]} {key[0]}"
-
-
-def unvan_saat_ucreti(unvan, yil, ay, riskli=False):
-    """Ünvanın o ayki nöbet saat ücretleri (net, TL).
-
-    Döner: {"gunduz", "gece", "tatil", "tatil_gece", "donem", "tam"}.
-    Dönemin yayımlanan tablosu varsa tutarlar oradan, yoksa gösterge ×
-    katsayı × artırımlar formülünden gelir. Bilinmeyen ünvanda None.
-    """
-    gosterge = NOBET_UNVANLARI.get(unvan)
-    if gosterge is None:
-        return None
-    donem, tam = katsayi_donemi(yil, ay)
-    tablo = NOBET_UCRET_TABLOSU.get(donem, {}).get(unvan) if tam else None
-    if tablo:
-        secili = tablo[2:4] + tablo[6:8] if riskli else tablo[0:2] + tablo[4:6]
-        ucretler = dict(zip(UCRET_TURLERI, secili))
-    else:
-        brut = gosterge * MEMUR_AYLIK_KATSAYI[donem]
-        if riskli:
-            brut *= RISKLI_BIRIM_ARTIRIMI
-        carpanlar = (1, GECE_ARTIRIMI, 1 + TATIL_ARTIRIMI, (1 + TATIL_ARTIRIMI) * GECE_ARTIRIMI)
-        ucretler = {
-            tur: round(brut * carpan * (1 - DAMGA_VERGISI), 2)
-            for tur, carpan in zip(UCRET_TURLERI, carpanlar)
-        }
-    return {**ucretler, "donem": donem, "tam": tam}
-
-
-def saat_ucretleri(gunduz, tatil_artirimi=0.0, gece_artirimi=0.0):
-    """Elle girilen gündüz ücretinden gece ve bayram ücretleri."""
-    gece = 1 + gece_artirimi
-    tatil = 1 + tatil_artirimi
-    return {
-        "gunduz": gunduz,
-        "gece": round(gunduz * gece, 2),
-        "tatil": round(gunduz * tatil, 2),
-        "tatil_gece": round(gunduz * tatil * gece, 2),
-    }
-
-
-def nobet_ucreti_hesapla(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler):
-    """(nöbet saati, fazla mesai saati, ücret) döner.
-
-    Yalnızca zorunlu mesaiyi aşan saatler (fazla mesai) ödenir. ``ucretler``
-    tek sayı (her saat aynı) ya da ``UCRET_TURLERI`` anahtarlı sözlüktür.
-    Bayram (tatil) nöbetleri zorunlu mesaiye girmediğinden önce onların
-    saatleri fazla mesai sayılır; kalan fazla mesai öteki nöbetlerden gelir.
-    Her nöbetin 12 saati gecedir ve gece ücreti, fazla mesaiyi aşmadan önce
-    gece saatlerine verilir: 120 saat gece, 72 saat fazla mesai varsa 72
-    saat gece ücreti, kalan fazla mesaiye gündüz ücreti.
-    """
-    saat, fm_saat, satirlar = ucret_saatleri(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler)
-    ucret = (
-        satirlar["gunduz"][2]
-        + satirlar["gece"][2]
-        + satirlar["tatil"][2]
-        + satirlar["tatil_gece"][2]
-    )
-    return saat, fm_saat, ucret
-
-
-def ucret_saatleri(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler):
-    """``nobet_ucreti_hesapla``nın dökümü: (nöbet saati, fazla mesai, satırlar).
-
-    ``satirlar``: {tür: (saat, saat ücreti, tutar)}; türler ``UCRET_TURLERI``.
-    """
-    if not isinstance(ucretler, dict):
-        ucretler = dict.fromkeys(UCRET_TURLERI, ucretler)
-    saat = toplam_nobet * 24
-    fm_saat = max(0, saat - zorunlu_saat)
-    tatil_saat = min(tatil_nobet * 24, fm_saat)
-    tatil_gece = min(tatil_nobet * NOBET_GECE_SAAT, tatil_saat)
-    kalan = fm_saat - tatil_saat
-    normal_gece = min((toplam_nobet - tatil_nobet) * NOBET_GECE_SAAT, kalan)
-    saatler = {
-        "gunduz": kalan - normal_gece,
-        "gece": normal_gece,
-        "tatil": tatil_saat - tatil_gece,
-        "tatil_gece": tatil_gece,
-    }
-    satirlar = {
-        tur: (saatler[tur], ucretler[tur], saatler[tur] * ucretler[tur]) for tur in UCRET_TURLERI
-    }
-    return saat, fm_saat, satirlar
-
-
-def ayarlardaki_saat_ucretleri(settings, yil, ay):
-    """Liste sahibinin kayıtlı ayarlarından o ayın saat ücretleri.
-
-    Ana sayfadaki seçimle aynıdır: ünvan seçiliyse resmi tablo (gündüz ücreti
-    o dönem için elle değiştirildiyse ondan türetilen gece/bayram ücretleri),
-    "Elle gir"de her saat aynı ücret. Ücret girilmemişse None.
-    Döner: {"ucretler", "unvan", "riskli", "donem", "tam", "elle"}.
-    """
-    settings = settings or {}
-    unvan = _unvan(settings.get("title")) or ELLE_UNVAN
-    riskli = settings.get("risky_unit") is True
-    try:
-        elle_ucret = float(settings.get("hourly_rate"))
-    except (TypeError, ValueError):
-        elle_ucret = None
-    if elle_ucret is not None and (elle_ucret != elle_ucret or elle_ucret < 0):
-        elle_ucret = None
-    if unvan == ELLE_UNVAN:
-        # Hiç ücret girilmemiş ayarlarda kutu 1 TL'de durur; o zaman gösterilmez.
-        if not elle_ucret or elle_ucret <= 1:
-            return None
-        return {"ucretler": elle_ucret, "unvan": None, "riskli": False,
-                "donem": None, "tam": True, "elle": True}
-    info = unvan_saat_ucreti(unvan, yil, ay, riskli)
-    kaynak = f"{unvan}|{info['donem'][0]}-{info['donem'][1]}|{int(riskli)}|g"
-    elle = (
-        settings.get("hourly_rate_source") == kaynak
-        and elle_ucret is not None
-        and abs(elle_ucret - info["gunduz"]) > 0.005
-    )
-    ucretler = (
-        saat_ucretleri(elle_ucret, TATIL_ARTIRIMI, GECE_FARKI) if elle
-        else {tur: info[tur] for tur in UCRET_TURLERI}
-    )
-    return {"ucretler": ucretler, "unvan": unvan, "riskli": riskli,
-            "donem": info["donem"], "tam": info["tam"], "elle": elle}
-
-
-UCRET_TURU_ADI = {
-    "gunduz": "Gündüz",
-    "gece": "Gece (20-08)",
-    "tatil": "Bayram gündüz (%25)",
-    "tatil_gece": "Bayram gece (%25)",
-}
-
-
-def kisi_ucret_dokumu(nobet_gunleri, yil, ay, settings, preferences=None, person=None):
-    """Bir kişinin o ayki tahmini nöbet ücreti dökümü (paylaşım sayfası için).
-
-    ``nobet_gunleri``: kişinin nöbet tuttuğu gün numaraları. Tatiller, arifeler
-    ve izinli günlerin mesaiden düşmesi Analiz'deki Ücret Özeti ile aynıdır.
-    Ücret ayarı yoksa None döner.
-    """
-    oran = ayarlardaki_saat_ucretleri(settings, yil, ay)
-    if oran is None:
-        return None
-    gun_sayisi = calendar.monthrange(yil, ay)[1]
-    tatil_metni = holiday_text_for_period((settings or {}).get("holidays_by_period"), yil, ay)
-    tatil_gunleri, _ = parse_holiday_days(tatil_metni, gun_sayisi)
-    gun_detaylari = build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)
-    yarim_gunler = official_half_days(yil, ay)
-    zorunlu, _ = required_work_hours(gun_detaylari, yarim_gunler)
-    mesai = personal_work_hours(gun_detaylari, yarim_gunler, preferences, [person]).get(person, zorunlu)
-    resmi = {gun for gun, _ in official_holidays(yil, ay)}
-    tatiller = set(tatil_gunleri)
-    gunler = sorted({int(gun) for gun in nobet_gunleri if 1 <= int(gun) <= gun_sayisi})
-    bayram = [gun for gun in gunler if gun in tatiller and gun in resmi]
-    saat, fm_saat, satirlar = ucret_saatleri(len(gunler), len(bayram), mesai, oran["ucretler"])
-    return {
-        **oran,
-        "nobet": len(gunler),
-        "bayram_nobet": len(bayram),
-        "saat": saat,
-        "zorunlu": zorunlu,
-        "mesai": mesai,
-        "fazla_mesai": fm_saat,
-        "satirlar": satirlar,
-        "toplam": sum(tutar for _, _, tutar in satirlar.values()),
-    }
-
-
-def _unvan(value):
-    value = ESKI_UNVAN_ADLARI.get(value, value)
-    return value if value == ELLE_UNVAN or value in NOBET_UNVANLARI else None
 
 
 # Yüklendiği andaki dosya zamanı: nobet_tazele.py bu farklılaşınca modülü yeniden
