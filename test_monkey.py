@@ -467,8 +467,14 @@ def run_round(page, rnd, seed, plan=None):
         month = rnd.randint(1, 12)
         history.append(f"ay={month}")
         state["month"] = None
-        box.click()
+        box.press("ArrowDown")  # Odaktaki kutuya tıklamak listeyi açmak yerine kapatabiliyor.
         page.get_by_role("option", name=TR_AY_ADLARI[month], exact=True).click()
+        wait_idle(page)
+        # Geçmiş ay kilitlidir; açılmazsa sonraki her tıklama 30 sn bekleyip boşa düşer.
+        unlock = page.get_by_role("button", name="🔓 Kilidi aç")
+        if unlock.count():
+            history.append("kilidi aç")
+            unlock.click()
 
     def act_people_per_shift():
         nonlocal per_shift
@@ -588,6 +594,7 @@ def run_round(page, rnd, seed, plan=None):
         else:
             action = by_name[planned[0]]
             rnd.target = ReplayRandom(planned[1])
+        started = time.monotonic()
         try:
             action()
         except _Skip:
@@ -601,6 +608,9 @@ def run_round(page, rnd, seed, plan=None):
         if not wait_idle(page, limit=60):
             note("SONSUZ ÇİZİM", "sayfa 60 sn boyunca durmadı", history)
         check_invariants(page, history, per_shift)
+        if not _sink["quiet"]:
+            # Zaman aşımında nerede yavaşladığı GitHub günlüğünde görünsün.
+            print(f"adım {step_no + 1}/{len(steps)} {action.__name__} {time.monotonic() - started:.1f} sn", flush=True)
     rnd.target = recorder
     return history, trace
 
