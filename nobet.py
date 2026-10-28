@@ -33,8 +33,8 @@ _UI_MODULES = (
 )
 
 
-# Sıra önemli: nobet_iyilestir nobet_core'dan isim alır, core tazelenirse o da tazelenir.
-_FRESH_MODULES = ("db", "nobet_kalicilik", "nobet_core", "nobet_iyilestir")
+# Sıra önemli: nobet_core, nobet_gunler/nobet_ucret'ten; nobet_iyilestir nobet_core'dan isim alır.
+_FRESH_MODULES = ("db", "nobet_kalicilik", "nobet_gunler", "nobet_ucret", "nobet_core", "nobet_iyilestir")
 
 
 def _fresh_modules(force=False):

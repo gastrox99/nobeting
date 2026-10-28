@@ -2328,13 +2328,27 @@ class TestStaleModuleRecovery(unittest.TestCase):
         source = _app_source("nobet.py")
         listed = re.search(r"_FRESH_MODULES = \((.*?)\)", source, flags=re.S).group(1)
         # nobet_iyilestir eskiyken İyileştir "ortools yüklü değil" diyordu.
-        self.assertEqual(re.findall(r'"(\w+)"', listed), ["db", "nobet_kalicilik", "nobet_core", "nobet_iyilestir"])
+        self.assertEqual(re.findall(r'"(\w+)"', listed), ["db", "nobet_kalicilik", "nobet_gunler", "nobet_ucret", "nobet_core", "nobet_iyilestir"])
         self.assertLess(source.index("\n_fresh_modules()\n"), source.index("for _attempt in range(2):"))
         # Tazeleme kilit altında nobet_tazele.py'de; davranışı test_tazele.py dener.
         self.assertIn("fresh_modules(_FRESH_MODULES, force=force)", source)
-        for name in ("db.py", "nobet_kalicilik.py", "nobet_core.py", "nobet_iyilestir.py"):
+        for name in ("db.py", "nobet_kalicilik.py", "nobet_gunler.py", "nobet_ucret.py", "nobet_core.py", "nobet_iyilestir.py"):
             self.assertTrue(_app_source(name).rstrip().endswith(
                 "_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns"), name)
+
+    def test_gunler_ve_ucret_cekirdege_bagimli_degil(self):
+        # Döngüsel içe aktarma olmasın: nobet_core bu iki dosyadan okur, tersi olmaz.
+        import ast
+        def imported(name):
+            tree = ast.parse(_app_source(name))
+            return {
+                (node.module if isinstance(node, ast.ImportFrom) else alias.name).split(".")[0]
+                for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+                for alias in (getattr(node, "names", None) or [None])
+            }
+        self.assertNotIn("nobet_core", imported("nobet_gunler.py"))
+        self.assertNotIn("nobet_core", imported("nobet_ucret.py"))
+        self.assertFalse({n for n in imported("nobet_gunler.py") if n.startswith(("nobet", "db"))})
 
     def test_tazelenmeyen_yerel_modul_kalmaz(self):
         # Klasör taraması yerine elle tutulan liste: yeni bir .py eklenip listelere
