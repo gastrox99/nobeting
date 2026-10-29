@@ -464,8 +464,9 @@ LOCK_TIMEOUT = "8s"
 
 def _lock_key(cur, *parts):
     """Aynı kayda yazan işlemleri sıraya sokar (satır yokken FOR UPDATE kilitlemez)."""
-    cur.execute("SET LOCAL lock_timeout = %s", (LOCK_TIMEOUT,))
-    cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', ("/".join(str(p) for p in parts),))
+    # Tek gidiş-dönüş: iki komut aynı istekte gider.
+    cur.execute("SET LOCAL lock_timeout = %s; SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (LOCK_TIMEOUT, "/".join(str(p) for p in parts)))
 
 
 # Biten ay bu kadar gün sonra kendiliğinden kilitlenir; kilit "açık aylar" listesiyle kalkar.
@@ -624,7 +625,8 @@ def save_schedule(name, year, month, team_members, schedule_df, pref_df=None, se
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor() as cur:
                 _lock_key(cur, "schedules", owner, name, year, month)
-                if month_is_locked(year, month, _open_months(cur, owner)):
+                # Süresi dolmamış ay hiç kilitli olamaz: açık aylar yalnız gerekirse okunur.
+                if month_is_locked(year, month, []) and month_is_locked(year, month, _open_months(cur, owner)):
                     raise MonthLocked(year, month)
                 # Beklenmeyen içerik sürümü; yazılan içerik de buna eşit değilse çakışmadır.
                 conflict_version = None
