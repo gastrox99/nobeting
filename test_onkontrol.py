@@ -51,3 +51,14 @@ def test_neden_yok_cevabi_kisiyi_bulur():
 def test_ics_satir_sonu_kacirilir():
     from nobet_core import _ics_escape
     assert _ics_escape("a\r\nb\rc\nd") == "a\\nb\\nc\\nd"
+
+
+def test_ay_sonu_cakismasi_sonraki_ayin_ilk_nobetiyle_olculur():
+    from nobet_onkontrol import ay_sonu_cakismalari, ilk_nobet_gunleri
+    # Ekim 31 gün, dinlenme 2: 30. gün nöbeti + Kasım 1 → fark 2 → çakışır; Kasım 3 → fark 4 → uygun.
+    uyari = ay_sonu_cakismalari({"Ali": 30, "Ayşe": 30, "Can": -2}, {"Ali": 1, "Ayşe": 3, "Can": 1}, 31, 2)
+    assert len(uyari) == 1 and "Ali" in uyari[0] and "30. gün" in uyari[0] and "1. günü" in uyari[0]
+    frame = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=["2 Cum", "5 Pzt"])
+    frame.at["Ali", "5 Pzt"] = True
+    frame.at["Ali", "2 Cum"] = True
+    assert ilk_nobet_gunleri(frame) == {"Ali": 2}

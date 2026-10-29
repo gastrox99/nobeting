@@ -189,7 +189,9 @@ from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_yil import render_year_summary
-from nobet_onkontrol import paylasim_kontrolleri, render_precheck, render_why_not
+from nobet_onkontrol import (
+    ay_sonu_cakismalari, ilk_nobet_gunleri, paylasim_kontrolleri, render_precheck, render_why_not,
+)
 from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
     finish_approved_requests, pending_count, render_pending_badge, render_request_status, render_team_requests,
@@ -1410,6 +1412,33 @@ if "failed_at" in _prev_ctx:
         "şu an uygulanmıyor. Bir dakika sonra yeniden denenecek."
     )
 prev_last_shift = {p: d for p, d in _prev_ctx["last_shift"].items() if p in isimler}
+
+
+def _load_next_first_shift(year, month):
+    """Sonraki ayın kayıtlı listesinde kişi başına ilk nöbet günü; kayıt yoksa ya da okunamazsa boş."""
+    if not _db_ready:
+        return {}
+    _next = previous_period(year, month, -1)
+    try:
+        _loaded, _ = load_auto_saved_assignments([_next], owner=current_owner, include_preferences=True)
+    except Exception as _error:
+        log_unexpected("Sonraki ay ilk nöbetler", _error)
+        return {}
+    _frame = _loaded.get(_next)
+    if _frame is None or _frame.empty:
+        return {}
+    _frame = as_bool_frame(_frame)
+    _aliases = st.session_state.get("name_aliases")
+    _frame = _frame.rename(index={_p: resolve_alias(_p, _aliases, isimler) for _p in _frame.index})
+    if _frame.index.has_duplicates:
+        _frame = _frame.groupby(level=0).any()
+    return ilk_nobet_gunleri(_frame)
+
+
+# Dönem değişince bir kez okunur (ay sonu dinlenme kontrolü için).
+if st.session_state.get("next_month_first_shift_period") != (yil, ay):
+    st.session_state.next_month_first_shift = _load_next_first_shift(yil, ay)
+    st.session_state.next_month_first_shift_period = (yil, ay)
 _balance_history_on = st.session_state.get("balance_history", True)
 # Hafta sonu sınırı olanlar hafta sonu dengesine (geçmiş dahil) katılmaz.
 _special_capped = special_capped_people(st.session_state.get("person_limits", {}))
@@ -1774,6 +1803,11 @@ for col in sutunlar:
                 pair = tuple(sorted((nobetciler[i], nobetciler[j])))
                 if pair in st.session_state.forbidden_pairs:
                     forbidden_msg.append(f"🚫 **{gun_no}. Gün**: {nobetciler[i]} ve {nobetciler[j]} birlikte çalışamaz!")
+
+violations += ay_sonu_cakismalari(
+    {p: d for p, d in last_shift_check.items() if p in st.session_state.next_month_first_shift},
+    st.session_state.next_month_first_shift, gun_sayisi, min_bosluk,
+)
 
 # Eksik günler tek satırda toplanır; kuralların engellediği günlerin nedeni altta küçük yazılır.
 _schedule_empty = not bool(edited_df.values.any())
