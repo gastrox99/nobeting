@@ -171,9 +171,12 @@ def test_kayit_ve_geri_yukleme_tek_sayfa_ister():
 
 class _SayanImlec(psycopg2.extensions.cursor):
     sayac = None
+    sorgular = None
 
     def execute(self, query, vars=None):
         text = query.decode() if isinstance(query, bytes) else str(query)
+        if _SayanImlec.sorgular is not None:
+            _SayanImlec.sorgular.append(text)
         if "INSERT INTO schedule_data" in text and _SayanImlec.sayac is not None:
             _SayanImlec.sayac.append(text.count("),("))
         return super().execute(query, vars)
@@ -235,6 +238,33 @@ def test_geri_yukleme_her_ayi_tek_insertle_yazar(sayan_db):
     assert db.restore_owner_data(backup, owner=owner)
     assert len(inserts) == 2  # ay başına bir INSERT
     _, loaded, _, _, _ = db.load_schedule("Otomatik_2026_12", 2026, 12, owner=owner)
+    assert loaded.loc[names, list(schedule.columns)].equals(schedule)
+
+
+def test_hucre_tiklamasi_kaydi_yedi_sorguda_biter(sayan_db):
+    """Hücre tıklaması = bir kayıt; uzak veritabanında her sorgu bir gidiş-dönüş.
+
+    Eskiden 9 sorgu: zaman sınırı ve kilit ayrı gidiyor, bitmemiş ayda bile
+    açık aylar okunuyordu.
+    """
+    owner, _ = sayan_db
+    names, schedule = _buyuk_ay(team=8)
+    year, month = db._today().year, db._today().month  # bu ay: kilitli olamaz
+    name = f"Otomatik_{year}_{month:02d}"
+    box = {}
+    assert db.save_schedule(name, year, month, names, schedule, rows_liste=[], owner=owner,
+                            expected_version=db.FORCE, version_out=box)
+    schedule.iat[0, 1] = True
+    sorgular = []
+    _SayanImlec.sorgular = sorgular
+    try:
+        assert db.save_schedule(name, year, month, names, schedule, rows_liste=[], owner=owner,
+                                expected_version=box["version"], version_out=box)
+    finally:
+        _SayanImlec.sorgular = None
+    assert len(sorgular) == 7, sorgular
+    assert not any("app_settings" in q for q in sorgular)
+    _, loaded, _, _, _ = db.load_schedule(name, year, month, owner=owner)
     assert loaded.loc[names, list(schedule.columns)].equals(schedule)
 
 
