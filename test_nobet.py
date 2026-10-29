@@ -1236,7 +1236,8 @@ class TestFixedShifts(unittest.TestCase):
     def test_uygulama_baglantilari(self):
         source = _app_source()
         self.assertIn('fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)', source)
-        self.assertIn('settings_dict={"locked": locks_to_json(_active_locks),', source)
+        self.assertIn('settings_dict={"locked": locks_to_json(locks), "hidden": hidden}', source)
+        self.assertIn("rows_liste, _active_locks,", source)
         self.assertIn("'locked': set(st.session_state.get('locked_cells', set())),", source)
         self.assertIn(':has(.cell-locked) .stButton > button', source)
         self.assertIn("st.session_state.locked_cells = set()\n                st.session_state.hidden_people = {}\n                st.session_state.cached_rows_liste = None", source)
