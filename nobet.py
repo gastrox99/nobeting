@@ -25,11 +25,11 @@ from nobet_tazele import code_version, fresh_modules
 
 # Arayüz bölümleri ayrı dosyalarda. Küçük oldukları için her çalışmada
 # yeniden okunurlar; böylece sunucuda eski bir kopya kalıp yeni nobet.py ile
-# uyumsuz çalışamaz.
+# uyumsuz çalışamaz. Sıra önemli: bir modülün içe aktardığı arayüz modülü ondan önce yeniden yüklenir.
 _UI_MODULES = (
-    "nobet_stil", "nobet_durum", "nobet_paylasim", "nobet_disa_aktar",
+    "nobet_stil", "nobet_durum", "nobet_yil", "nobet_onkontrol", "nobet_paylasim", "nobet_disa_aktar",
     "nobet_yedek", "nobet_tablo", "nobet_takvim", "nobet_analiz",
-    "nobet_ekip", "nobet_talepler", "nobet_yil", "nobet_onkontrol",
+    "nobet_ekip", "nobet_talepler",
 )
 
 

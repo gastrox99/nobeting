@@ -2314,6 +2314,17 @@ class TestStaleModuleRecovery(unittest.TestCase):
                          {"nobet_gunler"})
         self.assertNotIn("session_state", _app_source("nobet_algoritma.py"))
 
+    def test_arayuz_modulleri_bagimliliklarindan_sonra_yuklenir(self):
+        # Sunucuda eski kopya kalırsa, bir modül başka bir arayüz modülünü ondan önce
+        # yeniden yüklenmeden içe aktarırsa yeni isimleri bulamaz (canlıda ImportError olmuştu).
+        import ast
+        source = _app_source("nobet.py")
+        order = re.findall(r'"(\w+)"', re.search(r"_UI_MODULES = \((.*?)\)", source, flags=re.S).group(1))
+        for position, name in enumerate(order):
+            for node in ast.walk(ast.parse(_app_source(name + ".py"))):
+                if isinstance(node, ast.ImportFrom) and node.module in order:
+                    self.assertLess(order.index(node.module), position, f"{name} -> {node.module}")
+
     def test_tazelenmeyen_yerel_modul_kalmaz(self):
         # Klasör taraması yerine elle tutulan liste: yeni bir .py eklenip listelere
         # yazılmazsa canlıda eski kopyası hafızada kalabilirdi; burada yakalanır.
