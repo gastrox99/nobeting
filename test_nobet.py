@@ -92,7 +92,6 @@ from nobet_core import (
     period_key,
     persistence_fingerprint,
     use_compact_schedule_editor,
-    create_print_html,
     build_limit_violation_messages,
     parse_schedule_import_date,
     undo_history_state,
@@ -1068,67 +1067,7 @@ class _FakeDbCursor:
 
     def fetchall(self):
         return self.data_rows
-class TestCreatePrintHtml(unittest.TestCase):
 
-    def _sample_dfs(self):
-        df_liste = pd.DataFrame({
-            "Tarih": ["1 Oca Çar", "2 Oca Per"],
-            "Görev1": ["Ali", "Ayşe"],
-            "Görev2": ["Mehmet", "Fatma"]
-        })
-        df_stats = pd.DataFrame({"Toplam": [3, 4]}, index=["Ali", "Ayşe"])
-        return df_liste, df_stats
-
-    def test_html_ciktisi_string(self):
-        df_liste, df_stats = self._sample_dfs()
-        html = create_print_html(df_liste, df_stats, 2025, 1)
-        self.assertIsInstance(html, str)
-
-    def test_html_baslik_iceriyor(self):
-        df_liste, df_stats = self._sample_dfs()
-        html = create_print_html(df_liste, df_stats, 2025, 1)
-        self.assertIn("Ocak 2025", html)
-
-    def test_html_isimler_iceriyor(self):
-        df_liste, df_stats = self._sample_dfs()
-        html = create_print_html(df_liste, df_stats, 2025, 1)
-        self.assertIn("Ali", html)
-        self.assertIn("Mehmet", html)
-
-    def test_html_tablo_iceriyor(self):
-        df_liste, df_stats = self._sample_dfs()
-        html = create_print_html(df_liste, df_stats, 2025, 1)
-        self.assertIn("<table>", html)
-        self.assertIn("</table>", html)
-
-    def test_html_ozel_karakterli_isimleri_escape_eder(self):
-        df_liste = pd.DataFrame({
-            "<Rol>": ["<script>alert('x')</script>"],
-            "Tarih": ["1 Oca Çar"],
-        })
-        df_stats = pd.DataFrame({"<Toplam>": [1]}, index=["Ali & Ayşe"])
-
-        html = create_print_html(df_liste, df_stats, 2025, 1)
-
-        self.assertIn("&lt;Rol&gt;", html)
-        self.assertIn("&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;", html)
-        self.assertNotIn("<script>alert('x')</script>", html)
-
-    def test_html_sayisal_hucreleri_yazdirir(self):
-        df_liste = pd.DataFrame({"Tarih": ["1 Oca Çar"], "Görev1": [1]})
-        df_stats = pd.DataFrame({"Toplam": [2]}, index=["Ali"])
-
-        html = create_print_html(df_liste, df_stats, 2025, 1)
-
-        self.assertIn("<td>1</td>", html)
-
-    def test_tum_aylar_calisir(self):
-        df_liste, df_stats = self._sample_dfs()
-        ay_isimleri = {1:"Ocak",2:"Şubat",3:"Mart",4:"Nisan",5:"Mayıs",6:"Haziran",
-                       7:"Temmuz",8:"Ağustos",9:"Eylül",10:"Ekim",11:"Kasım",12:"Aralık"}
-        for ay, isim in ay_isimleri.items():
-            html = create_print_html(df_liste, df_stats, 2025, ay)
-            self.assertIn(isim, html, f"{ay}. ay için '{isim}' HTML'de bulunamadı")
 
 class TestPreferenceGridAccessibility(unittest.TestCase):
     """Streamlit widget'larını hedefleyen mobil tercih stillerini korur."""
@@ -2692,16 +2631,9 @@ class TestSharedCoreFunctions(unittest.TestCase):
     def test_ekipte_olmayan_isimler(self):
         self.assertEqual(unknown_names(["Zeynep", "Ali", "Zeynep", "Can"], ["Ali"]), ["Can", "Zeynep"])
 
-    def test_yazdirma_cizelge_ve_ozet_tablosunu_icerir(self):
-        df_liste = pd.DataFrame({"Tarih": ["04.01.2025 Cmt"], "Görev1": ["Ali"]})
-        df_stats = pd.DataFrame({"Toplam": [1]}, index=["Ali"])
-        html = create_print_html(df_liste, df_stats, 2025, 1)
-        self.assertIn("Nöbet Yükü Özeti", html)
-        self.assertIn("class='weekend'", html)
-
     def test_uygulama_kopya_fonksiyon_tanimlamaz(self):
         source = _app_source()
-        for name in ("escape_html", "validate_inputs", "create_print_html"):
+        for name in ("escape_html", "validate_inputs"):
             self.assertNotIn(f"\ndef {name}(", source, f"{name} nobet_core'dan alınmalı")
         self.assertIn("build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)", source)
         self.assertIn("parse_person_limits_with_issues(limits_text)", source)
@@ -4080,6 +4012,9 @@ class TestYazdirmaDuzeni(unittest.TestCase):
         # Nöbet hücreleri düğme; yazdırmada gizlenmemeli.
         self.assertNotIn(".st-key-schedule-grid button", print_css)
         self.assertIn(".st-key-preference-grid", print_css)
+        # Ayarlar paneli ve sekmelerin altındaki öğeler boş kutu / boş 2. sayfa bırakmasın.
+        self.assertIn(".st-key-ayarlar-panel", print_css)
+        self.assertIn('[data-testid="stTabs"] ~ *', print_css)
 
 
 class TestGoogleGirisPaketleri(unittest.TestCase):

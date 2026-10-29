@@ -20,7 +20,6 @@ from nobet_core import (
     build_preference_share_text,
     build_share_text,
     csv_safe_frame,
-    create_print_html,
     import_schedule_table,
     parse_schedule_import_date,
     preference_overview,
@@ -132,9 +131,6 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                      _finance=df_stats_finance.copy(), _yil=yil):
         return convert_df_to_excel(_liste, _load, _finance, yil=_yil)
 
-    def _html_bytes(_liste=df_liste.copy(), _load=df_stats_load.copy(), _yil=yil, _ay=ay):
-        return create_print_html(_liste, _load, _yil, _ay).encode('utf-8')
-
     _share_cache = st.session_state.setdefault("share_token_cache", {})
     # Excel yükleme seyrek kullanıldığı için Yedek bölümünde (render_excel_import).
     # Kapsayıcı anahtarı (bottom-actions) telefonda dört düğmeyi tek satırda tutar (nobet_stil.py).
@@ -152,8 +148,6 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                 "cursor:pointer;\">🖨️ Yazdır (A4)</button>",
                 height=48,
             )
-            st.download_button("🖨️ Yazdırılabilir sayfa", _html_bytes, f"nobet_{yil}_{ay:02d}.html", "text/html",
-                               on_click="ignore", width="stretch")
             st.download_button("🖼️ Resim (PNG)", _png_bytes, f"nobet_{yil}_{ay:02d}.png", "image/png",
                                on_click="ignore", width="stretch")
             # BOM'lu UTF-8: Excel'de Ş, ğ, ı gibi harfler bozulmadan açılır.
