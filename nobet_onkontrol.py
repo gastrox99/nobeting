@@ -86,3 +86,23 @@ def render_why_not(isimler, sutunlar, gun_detaylari, reasons_for_day, schedule):
         column = by_day[day]
         st.write(neden_yok_cevabi(reasons_for_day(schedule, column), person))
         st.caption("Şu anki listeye ve ayarlara göre; dinlenme, limit, izin ve yasak çift kurallarına bakar.")
+
+
+def ilk_nobet_gunleri(frame):
+    """Kaydedilmiş ayın kişi başına ilk nöbet günü (nöbeti olmayan yer almaz)."""
+    first = {}
+    for person in frame.index:
+        days = [_column_day(c) for c in frame.columns if bool(frame.at[person, c]) and _column_day(c) is not None]
+        if days:
+            first[person] = min(days)
+    return first
+
+
+def ay_sonu_cakismalari(last_days, next_first, days_in_month, min_bosluk):
+    """Bu ayın son nöbeti ile sonraki ayın ilk nöbeti arası dinlenme kuralına uymayanlar için uyarı metinleri."""
+    messages = []
+    for person, last in last_days.items():
+        first = next_first.get(person)
+        if last > 0 and first is not None and (days_in_month - last) + first <= min_bosluk:
+            messages.append(f"⚠️ **{person}**: {last}. gün nöbeti ile sonraki ayın {first}. günü dinlenme kuralına uymuyor.")
+    return messages
