@@ -119,6 +119,7 @@ for _attempt in range(2):
             required_work_hours,
             NOBET_UNVANLARI,
             ELLE_UNVAN,
+            katsayi_uyarisi,
             unvan_saat_ucreti,
             donem_adi,
             tr_sayi,
@@ -188,10 +189,10 @@ from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_yil import render_year_summary
-from nobet_onkontrol import render_precheck
+from nobet_onkontrol import paylasim_kontrolleri, render_precheck
 from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
-    finish_approved_requests, render_pending_badge, render_request_status, render_team_requests,
+    finish_approved_requests, pending_count, render_pending_badge, render_request_status, render_team_requests,
 )
 from streamlit_local_storage import LocalStorage
 
@@ -2076,9 +2077,14 @@ df_stats_load, df_stats_finance, pair_display = st.session_state.cached_analysis
 st.divider()
 
 # ── İndirme/paylaşım/yükleme/yedek düğmeleri ince yatay satır (nobet_disa_aktar.py) ──
+_share_check = paylasim_kontrolleri(
+    pending_count(current_owner) if _db_ready else 0,
+    [gun_detaylari[col]["day_num"] for col, _ in _missing_days],
+    katsayi_uyarisi(yil, ay) if st.session_state.get("unvan_val", ELLE_UNVAN) != ELLE_UNVAN else None,
+)
 render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_roles,
                yil, ay, gun_detaylari, isimler, sutunlar, role_names,
-               _db_ready, current_owner, save_undo_state)
+               _db_ready, current_owner, save_undo_state, share_check=_share_check)
 render_backup_section(
     current_owner, yil, ay, isimler, _db_ready,
     excel_import=lambda: render_excel_import(

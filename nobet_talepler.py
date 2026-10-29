@@ -132,10 +132,15 @@ def finish_approved_requests(owner, yil, ay, saved):
         st.rerun()
 
 
+def pending_count(owner):
+    """Onay bekleyen (bu oturumda onaylananlar hariç) talep sayısı."""
+    _approved_ids = {_id for _id, _, _ in st.session_state.get(_APPROVED_KEY) or []}
+    return len([_r for _r in _requests(owner) if _r["id"] not in _approved_ids])
+
+
 def render_pending_badge(owner):
     """Ay çubuğunun altında onay bekleyen talep sayısı; Ayarlar açıkken de görünür."""
-    _approved_ids = {_id for _id, _, _ in st.session_state.get(_APPROVED_KEY) or []}
-    _n = len([_r for _r in _requests(owner) if _r["id"] not in _approved_ids])
+    _n = pending_count(owner)
     if _n:
         st.caption(f"🔔 {_n} ekip talebi onay bekliyor")
 

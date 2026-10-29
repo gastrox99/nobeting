@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from db import create_share_link, delete_all_share_links, get_share_link
+from nobet_onkontrol import render_share_check
 from nobet_core import (
     EXCEL_IMPORT_MAX_BYTES,
     EXCEL_IMPORT_MAX_ROWS,
@@ -119,7 +120,7 @@ def app_base_url():
 
 def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_roles,
                    yil, ay, gun_detaylari, isimler, sutunlar, role_names,
-                   db_ready, current_owner, save_undo_state):
+                   db_ready, current_owner, save_undo_state, share_check=()):
     """Dışa aktar / Paylaş / Yedekle düğmelerini çizer."""
     # PNG/Excel/HTML yalnızca butona tıklanınca üretilir (eskiden her nöbet
     # işaretlemesinde matplotlib ile yeniden çiziliyordu). Varsayılan argümanlar
@@ -154,6 +155,7 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
             st.download_button("📄 CSV", csv_safe_frame(df_liste).to_csv(index=False).encode('utf-8-sig'),
                                f"nobet_{yil}_{ay:02d}.csv", "text/csv",
                                on_click="ignore", width="stretch")
+            render_share_check(share_check)
             st.markdown("**💬 WhatsApp metni**")
             _wa_text = build_share_text(
                 liste_rows, liste_roles, yil, ay,
@@ -172,6 +174,7 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                 if "all" not in _share_cache:
                     _share_cache["all"] = get_share_link(current_owner, 0, 0)
                 _token = _share_cache["all"]
+                render_share_check(share_check)
                 st.caption(
                     "Ekip arkadaşlarınız bu tek bağlantıyla giriş yapmadan bütün ayların listesini görebilir; "
                     "her ay yeni bağlantı göndermeniz gerekmez. Kendi adlarını seçip nöbetlerini takvimlerine ekleyebilirler."
