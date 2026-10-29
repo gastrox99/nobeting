@@ -12,6 +12,8 @@ import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
 
+from nobet_kalicilik import otomatik_kayit_adi
+
 _last_error = None
 
 # Yalnızca bunlar "veritabanı hatası" sayılır; geri kalanı (TypeError vb.) bir
@@ -835,7 +837,7 @@ def load_auto_saved_assignments(periods, owner="", include_preferences=False):
     ``include_preferences`` ise (çizelgeler, {(yıl, ay): kayıtlı tercih
     JSON'u}) döner; müsait değil günleri bundan sayılır.
     """
-    wanted = {f"Otomatik_{year}_{month:02d}": (year, month) for year, month in periods}
+    wanted = {otomatik_kayit_adi(year, month): (year, month) for year, month in periods}
     if not wanted:
         return ({}, {}) if include_preferences else {}
     conn = None
@@ -1121,7 +1123,7 @@ def list_shared_months(owner):
         return [
             (row['year'], row['month'], row['updated_tr'])
             for row in rows
-            if row['name'] == f"Otomatik_{row['year']}_{row['month']:02d}"
+            if row['name'] == otomatik_kayit_adi(row['year'], row['month'])
         ]
     except Exception as e:
         _log_error("List shared months", e)
