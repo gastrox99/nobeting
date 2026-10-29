@@ -4080,3 +4080,10 @@ class TestYazdirmaDuzeni(unittest.TestCase):
         # Nöbet hücreleri düğme; yazdırmada gizlenmemeli.
         self.assertNotIn(".st-key-schedule-grid button", print_css)
         self.assertIn(".st-key-preference-grid", print_css)
+
+
+class TestGoogleGirisPaketleri(unittest.TestCase):
+    def test_google_giris_paketleri_yuklu(self):
+        # Streamlit 1.66 girişi Authlib'in Starlette istemcisiyle yapar; o da
+        # httpx ister. Eksikse "Google ile giriş yap" sunucu hatası verir.
+        from authlib.integrations import starlette_client  # noqa: F401

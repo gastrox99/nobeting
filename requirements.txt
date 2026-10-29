@@ -12,3 +12,5 @@ streamlit-local-storage==0.0.25
 ortools==9.15.6755
 # Google ile giriş (st.login) için gerekli
 Authlib==1.9.1
+# Authlib'in Streamlit 1.66 girişinde kullandığı istemci (yoksa giriş sunucu hatası verir)
+httpx==0.28.1
