@@ -2736,8 +2736,9 @@ class TestGoogleLoginSupport(unittest.TestCase):
             )
         shared = _app_source("nobet_paylasim.py")
         # Liste (load_schedule), talep sekmesindeki ekip (load_app_settings) ve
-        # kişinin ücreti (load_schedule + load_app_settings).
-        self.assertEqual(shared.count("owner=_owner"), 4)
+        # kişinin ücreti (load_schedule + load_app_settings) ve yıl özeti
+        # (load_auto_saved_assignments + load_app_settings).
+        self.assertEqual(shared.count("owner=_owner"), 6)
         self.assertNotIn("owner=_owner", source.replace(shared, ""))
         # Giriş kontrolü ayarlar yüklenmeden önce yapılmalı.
         self.assertLess(source.index("AUTH_ENABLED = _auth_configured()"),
