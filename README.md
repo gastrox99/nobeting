@@ -1,6 +1,6 @@
 # Adil Nöbet
 
-En fazla 8 kişilik ekipler için iki birimde adil nöbet listeleri hazırlayan Python 3.12 ve Streamlit uygulaması. Nöbetleri planlama, elle düzenleme, analiz etme ve dışa aktarma özellikleri sunar.
+En fazla 8 kişilik ekipler için (tasarım hedefi; teknik üst sınır 50 kişi) iki birimde adil nöbet listeleri hazırlayan Python 3.12 ve Streamlit uygulaması. Nöbetleri planlama, elle düzenleme, analiz etme ve dışa aktarma özellikleri sunar.
 
 Canlı site: https://nobeting-n3t8zgwcucrj9fgmo5eswn.streamlit.app ("Site yoklama" iş akışı günde iki kez açar, uykudaysa uyandırır).
 
