@@ -61,3 +61,28 @@ def render_share_check(items):
     """Paylaş / WhatsApp açılırken; sorun yoksa hiçbir şey göstermez."""
     if items:
         st.warning("🔎 Göndermeden önce:\n\n" + "\n\n".join(f"- {i}" for i in items))
+
+
+def neden_yok_cevabi(reasons, person):
+    """explain_missing_day sonucundan tek kişi için cevap; kişi o gün nöbetçiyse (listede yoksa) bunu söyler."""
+    for label, names in reasons:
+        for name in names:
+            if name == person or name.startswith(f"{person} ("):
+                detail = name[len(person):].strip()
+                return f"{person}: {label} {detail}".strip()
+    return f"{person} o gün zaten nöbetçi."
+
+
+def render_why_not(isimler, sutunlar, gun_detaylari, reasons_for_day, schedule):
+    """Analiz altı: bir gün ve kişi seçince o kişinin o güne neden yazılmadığını (şu anki listeye göre) söyler."""
+    if not isimler:
+        return
+    with st.expander("❓ Neden o gün yok?", expanded=False):
+        by_day = {gun_detaylari[c]["day_num"]: c for c in sutunlar}
+        day = st.selectbox("Gün", list(by_day), key="neden_gun")
+        person = st.selectbox("Kişi", isimler, key="neden_kisi")
+        if day is None or not person:
+            return
+        column = by_day[day]
+        st.write(neden_yok_cevabi(reasons_for_day(schedule, column), person))
+        st.caption("Şu anki listeye ve ayarlara göre; dinlenme, limit, izin ve yasak çift kurallarına bakar.")
