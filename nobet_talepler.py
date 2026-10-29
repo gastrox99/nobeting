@@ -8,7 +8,7 @@ import time
 
 import streamlit as st
 
-from db import decide_team_request, list_team_requests
+from db import decide_team_request, get_share_link, list_team_requests
 from nobet_core import (
     TR_AY_ADLARI,
     apply_team_request,
@@ -16,11 +16,13 @@ from nobet_core import (
     resolve_alias,
     team_request_summary,
 )
+from nobet_disa_aktar import app_base_url, whatsapp_url
 
 _CACHE_KEY = "team_requests_cache"
 _CACHE_SECONDS = 60
 # Onaylanıp tercihlere işlenen, ay kaydedilince onaylandı olarak işaretlenecek talepler: [(id, yıl, ay)].
 _APPROVED_KEY = "team_requests_approved"
+_ALL_CACHE_KEY = "team_requests_all_cache"
 
 
 def _requests(owner):
@@ -29,6 +31,63 @@ def _requests(owner):
         _cached = (time.monotonic(), list_team_requests(owner))
         st.session_state[_CACHE_KEY] = _cached
     return _cached[1]
+
+
+def talep_durumu(isimler, requests, yil, ay, aliases=None):
+    """Ay için talep göndermiş ve göndermemiş kişiler: (gönderen, göndermeyen), ekip sırasıyla.
+
+    ``requests`` bekleyen ve karara bağlanmış tüm talepleri içerir; her biri o ay için sayılır."""
+    _sent = {
+        resolve_alias(_r["person"], aliases, isimler)
+        for _r in requests if (_r["year"], _r["month"]) == (yil, ay)
+    }
+    return [_p for _p in isimler if _p in _sent], [_p for _p in isimler if _p not in _sent]
+
+
+def hatirlatma_metni(eksik, yil, ay, link):
+    """Talep göndermeyenlere WhatsApp hatırlatması (metin)."""
+    return (
+        f"{TR_AY_ADLARI[ay]} {yil} nöbet listesi hazırlanıyor. İzin ve tercihlerini bu bağlantıdan "
+        f"gönder (adını seçip \"Talep Gönder\" sekmesinden): {link}"
+        + (f"\nHenüz göndermeyenler: {', '.join(eksik)}" if eksik else "")
+    )
+
+
+def _all_requests(owner):
+    _cached = st.session_state.get(_ALL_CACHE_KEY)
+    if not _cached or time.monotonic() - _cached[0] > _CACHE_SECONDS:
+        _cached = (time.monotonic(), list_team_requests(owner, include_decided=True))
+        st.session_state[_ALL_CACHE_KEY] = _cached
+    return _cached[1]
+
+
+def render_request_status(owner, yil, ay, isimler):
+    """Bu ay talep gönderenleri ve göndermeyenleri gösterir; göndermeyenlere hatırlatma bağlantısı verir."""
+    if not isimler:
+        return
+    _sent, _missing = talep_durumu(
+        isimler, _all_requests(owner), yil, ay, st.session_state.get("name_aliases"),
+    )
+    with st.expander(f"📋 Talep durumu ({len(_sent)}/{len(isimler)} gönderdi)", expanded=False):
+        st.markdown(
+            f"**Gönderdi:** {', '.join(_sent) if _sent else '—'}  \n"
+            f"**Göndermedi:** {', '.join(_missing) if _missing else '—'}"
+        )
+        if not _missing:
+            return
+        # Paylaş düğmesiyle aynı önbellek: oturumda bir kez okunur.
+        _share_cache = st.session_state.setdefault("share_token_cache", {})
+        if "all" not in _share_cache:
+            _share_cache["all"] = get_share_link(owner, 0, 0)
+        _token = _share_cache["all"]
+        if not _token:
+            st.caption("Hatırlatma için önce alttaki 🔗 Paylaş ile ekip bağlantısını oluşturun.")
+            return
+        st.link_button(
+            "💬 Göndermeyenlere hatırlat (WhatsApp)",
+            whatsapp_url(hatirlatma_metni(_missing, yil, ay, f"{app_base_url()}?paylas={_token}")),
+            width="stretch",
+        )
 
 
 def _approve(owner, request, person, save_undo_state):
@@ -133,4 +192,4 @@ def render_team_requests(owner, yil, ay, isimler, save_undo_state):
                 + ". O aya geçince burada görünür."
             )
         st.button("🔄 Talepleri yenile", key="talep_yenile",
-                  on_click=lambda: st.session_state.pop(_CACHE_KEY, None))
+                  on_click=lambda: [st.session_state.pop(_k, None) for _k in (_CACHE_KEY, _ALL_CACHE_KEY)])

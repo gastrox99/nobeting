@@ -68,3 +68,39 @@ def test_onay_yalnizca_yazili_gunleri_degistirir():
     assert result.loc["Ayşe"].tolist() == [0, 0, 0]
     assert pref.loc["Ali"].tolist() == [0, 0, 2]  # özgün tablo değişmez
     assert apply_team_request(pref, "Yok", {"tercih": [1]})[1] == 0
+
+
+def _istek(person, year=2026, month=10):
+    return {"id": 1, "year": year, "month": month, "person": person, "days": {}, "status": "pending"}
+
+
+def test_talep_durumu_gonderen_ve_gondermeyeni_ekip_sirasiyla_ayirir():
+    from nobet_talepler import talep_durumu
+    istekler = [_istek("Can"), _istek("Ali", 2026, 11), _istek("Eski Ad")]
+    gonderen, eksik = talep_durumu(["Ali", "Ayşe", "Can", "Yeni Ad"], istekler, 2026, 10, {"Eski Ad": "Yeni Ad"})
+    assert gonderen == ["Can", "Yeni Ad"]          # başka aydaki talep sayılmaz, eski ad güncel adıyla
+    assert eksik == ["Ali", "Ayşe"]
+
+
+def test_hatirlatma_metni_ay_baglanti_ve_eksikleri_icerir():
+    from nobet_talepler import hatirlatma_metni
+    metin = hatirlatma_metni(["Ali", "Ayşe"], 2026, 11, "https://x.app?paylas=abc")
+    assert "Kasım 2026" in metin and "https://x.app?paylas=abc" in metin
+    assert "Ali, Ayşe" in metin
+    assert "Henüz göndermeyenler" not in hatirlatma_metni([], 2026, 11, "https://x.app")
+
+
+def test_uygulamada_talep_durumu_gonderenleri_sayar():
+    from test_bozuk_kayit import _app, _stop, _october_columns, _corrupt_month_loader
+    at, patches = _app(
+        _corrupt_month_loader(_october_columns()), lambda *a, **k: True, team="Ali, Ayşe, Can",
+        list_team_requests=lambda *a, **k: [dict(_istek("Can"), created_tr=None)],
+        get_share_link=lambda *a: "tok123",
+    )
+    try:
+        at.run()
+        assert [e.value for e in at.exception] == []
+        etiketler = [e.label for e in at.expander]
+    finally:
+        _stop(patches)
+    assert any("Talep durumu (1/3 gönderdi)" in etiket for etiket in etiketler)
