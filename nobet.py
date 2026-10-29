@@ -1533,9 +1533,13 @@ def _simulation_context():
     )
 
 
+# Elle İyileştir 5 sn; kendiliğinden çalışanı her simülasyonda beklenmesin diye kısa.
+AUTO_IMPROVE_SECONDS = 2.5
+
+
 def _auto_improve(schedule):
-    """Boş nöbet, ya da toplam, hafta sonu veya Cuma farkı 1'den büyükse İyileştir'in
-    çözücüsünü bir kez dener: (çizelge, düzeldi_mi)."""
+    """Boş nöbet, fark ya da karşılanmayan tercih varsa İyileştir'in çözücüsünü
+    (kısa süreli) bir kez dener: (çizelge, düzeldi_mi)."""
     try:
         from nobet_iyilestir import improve_if_needed
     except ImportError:
@@ -1548,6 +1552,7 @@ def _auto_improve(schedule):
         initial_last_shift=prev_last_shift, history_special=history_special,
         history_total=history_total, history_holiday=history_holiday,
         together_pairs=st.session_state.get("together_pairs", set()),
+        time_limit=AUTO_IMPROVE_SECONDS,
     )
 
 

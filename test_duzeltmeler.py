@@ -89,6 +89,21 @@ def test_iyilestir_gerekirse_toplam_farkini_kapatir():
     assert (fixed.sum(axis=0) == 1).all()
 
 
+def test_iyilestir_karsilanmayan_tercih_varsa_dener():
+    people, cols, gd, unwanted = _tight_case()
+    schedule = pd.DataFrame(False, index=people, columns=cols)
+    for i, c in enumerate(cols):
+        schedule.at[people[i % 4], c] = True        # dengeli, ama Ali 2. günü istiyor
+    preferred = pd.DataFrame(0, index=people, columns=cols)
+    preferred.at["Ali", cols[1]] = 1
+    fixed, changed = improve_if_needed(
+        schedule, people, cols, unwanted, gd, 0, 1, df_preferred=preferred,
+    )
+    assert changed and bool(fixed.at["Ali", cols[1]])
+    totals = fixed.sum(axis=1)
+    assert totals.max() - totals.min() <= 1
+
+
 def test_iyilestir_gerekmiyorsa_dokunmaz():
     people, cols, gd, unwanted = _tight_case()
     schedule = pd.DataFrame(False, index=people, columns=cols)
