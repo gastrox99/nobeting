@@ -1,0 +1,25 @@
+name: Site yoklama
+
+# Streamlit Community Cloud 12 saat kullanılmayan uygulamayı uyutur. Bu iş akışı
+# günde iki kez siteyi açar (uykudaysa uyandırır); açılmazsa kırmızı olur ve
+# GitHub e-posta ile haber verir.
+on:
+  schedule:
+    - cron: "17 5,17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  yokla:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-test.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python .github/scripts/site_yokla.py
