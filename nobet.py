@@ -29,7 +29,7 @@ from nobet_tazele import code_version, fresh_modules
 _UI_MODULES = (
     "nobet_stil", "nobet_durum", "nobet_paylasim", "nobet_disa_aktar",
     "nobet_yedek", "nobet_tablo", "nobet_takvim", "nobet_analiz",
-    "nobet_ekip", "nobet_talepler",
+    "nobet_ekip", "nobet_talepler", "nobet_yil",
 )
 
 
@@ -187,6 +187,7 @@ from nobet_yedek import render_backup_section, run_requested_snapshot, take_dail
 from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
+from nobet_yil import render_year_summary
 from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
     finish_approved_requests, render_pending_badge, render_request_status, render_team_requests,
@@ -2089,5 +2090,7 @@ st.subheader("📊 Analiz")
 render_analysis_tab(isimler, role_names, _prev_ctx, history_special, history_total, history_holiday,
                     df_stats_load, df_stats_finance, pair_display, df_liste, liste_rows, liste_roles,
                     yil, ay, zorunlu_saat, arife_gunleri, edited_df)
+if _db_ready:
+    render_year_summary(current_owner, yil, isimler, st.session_state.get("holidays_by_period", {}))
 
 _render_version_footer()

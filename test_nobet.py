@@ -103,7 +103,7 @@ from nobet_core import (
 APP_FILES = (
     "nobet.py", "nobet_stil.py", "nobet_durum.py", "nobet_paylasim.py", "nobet_disa_aktar.py",
     "nobet_yedek.py", "nobet_tablo.py", "nobet_takvim.py", "nobet_analiz.py",
-    "nobet_ekip.py", "nobet_talepler.py",
+    "nobet_ekip.py", "nobet_talepler.py", "nobet_yil.py",
 )
 
 
