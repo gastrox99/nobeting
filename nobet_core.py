@@ -2832,61 +2832,6 @@ def add_overflow_roles(rows, role_names, schedule, columns):
     return out, role_names + extra_roles
 
 
-def create_print_html(df_liste, df_stats_load, yil, ay):
-    """Yazdırma dostu HTML oluşturur (günlük liste + nöbet yükü özeti)."""
-    ay_isimleri = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran",
-                   7:"Temmuz", 8:"Ağustos", 9:"Eylül", 10:"Ekim", 11:"Kasım", 12:"Aralık"}
-    month_name = escape_html(ay_isimleri[ay])
-    html = f"""
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Nöbet Listesi - {month_name} {yil}</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; padding: 20px; }}
-            h1 {{ text-align: center; color: #333; }}
-            table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
-            th {{ background-color: #4CAF50; color: white; }}
-            tr:nth-child(even) {{ background-color: #f2f2f2; }}
-            .weekend {{ background-color: #e3f2fd !important; }}
-            @media print {{
-                body {{ margin: 0; }}
-                button {{ display: none; }}
-            }}
-        </style>
-    </head>
-    <body>
-        <h1>Nöbet Listesi - {month_name} {yil}</h1>
-        <table>
-            <tr>{''.join(f'<th>{escape_html(col)}</th>' for col in df_liste.columns)}</tr>
-    """
-
-    for _, row in df_liste.iterrows():
-        tarih = str(row.get('Tarih', ''))
-        css_class = 'weekend' if 'Cmt' in tarih or 'Paz' in tarih else ''
-        html += f"<tr class='{css_class}'>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
-
-    html += """
-        </table>
-        <h2>Nöbet Yükü Özeti</h2>
-        <table>
-            <tr><th>İsim</th>""" + ''.join(f'<th>{escape_html(col)}</th>' for col in df_stats_load.columns) + "</tr>"
-
-    for idx, row in df_stats_load.iterrows():
-        html += f"<tr><td><strong>{escape_html(idx)}</strong></td>{''.join(f'<td>{escape_html(val)}</td>' for val in row)}</tr>"
-
-    html += """
-        </table>
-        <p style="text-align: center; color: #666; margin-top: 30px;">
-            Oluşturulma: """ + now_tr().strftime("%d.%m.%Y %H:%M") + """
-        </p>
-    </body>
-    </html>
-    """
-    return html
-
-
 # --- YEDEK (tüm veriyi indirme ve geri yükleme) ---
 BACKUP_FORMAT = "nobeting-yedek"
 BACKUP_VERSION = 1
