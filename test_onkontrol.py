@@ -37,3 +37,12 @@ def test_paylasim_kontrolleri_hepsi_yesilse_bos():
     assert paylasim_kontrolleri(0, [], None) == []
     uyari = paylasim_kontrolleri(2, [14, 22], "Katsayı eski.")
     assert uyari[0].startswith("2 ekip talebi") and "14, 22" in uyari[1] and uyari[2] == "Katsayı eski."
+
+
+def test_neden_yok_cevabi_kisiyi_bulur():
+    from nobet_onkontrol import neden_yok_cevabi
+    reasons = [("dinlenmede", ["Ali (13. gün nöbetli)", "Can (geçen ayın sonunda nöbetli)"]),
+               ("uygun, elle atanabilir", ["Ece"])]
+    assert neden_yok_cevabi(reasons, "Ali") == "Ali: dinlenmede (13. gün nöbetli)"
+    assert neden_yok_cevabi(reasons, "Ece") == "Ece: uygun, elle atanabilir"
+    assert neden_yok_cevabi(reasons, "Ayşe") == "Ayşe o gün zaten nöbetçi."
