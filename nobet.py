@@ -29,7 +29,7 @@ from nobet_tazele import code_version, fresh_modules
 _UI_MODULES = (
     "nobet_stil", "nobet_durum", "nobet_paylasim", "nobet_disa_aktar",
     "nobet_yedek", "nobet_tablo", "nobet_takvim", "nobet_analiz",
-    "nobet_ekip", "nobet_talepler", "nobet_yil",
+    "nobet_ekip", "nobet_talepler", "nobet_yil", "nobet_onkontrol",
 )
 
 
@@ -188,6 +188,7 @@ from nobet_tablo import render_grid_tab
 from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_yil import render_year_summary
+from nobet_onkontrol import render_precheck
 from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
     finish_approved_requests, render_pending_badge, render_request_status, render_team_requests,
@@ -1698,6 +1699,8 @@ if _improve_notice:
         )
     else:
         st.info(_lines[0])
+
+render_precheck(df_unwanted, sutunlar, kişi_sayısı, min_bosluk, st.session_state.get('person_limits', {}))
 
 _incomplete = st.session_state.incomplete_simulation
 if _incomplete is not None:
