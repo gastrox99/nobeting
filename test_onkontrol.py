@@ -46,3 +46,8 @@ def test_neden_yok_cevabi_kisiyi_bulur():
     assert neden_yok_cevabi(reasons, "Ali") == "Ali: dinlenmede (13. gün nöbetli)"
     assert neden_yok_cevabi(reasons, "Ece") == "Ece: uygun, elle atanabilir"
     assert neden_yok_cevabi(reasons, "Ayşe") == "Ayşe o gün zaten nöbetçi."
+
+
+def test_ics_satir_sonu_kacirilir():
+    from nobet_core import _ics_escape
+    assert _ics_escape("a\r\nb\rc\nd") == "a\\nb\\nc\\nd"

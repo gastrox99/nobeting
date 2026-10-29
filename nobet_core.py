@@ -2719,7 +2719,7 @@ def shared_updated_text(moment):
 def _ics_escape(text):
     return (
         str(text).replace("\\", "\\\\").replace(";", "\\;")
-        .replace(",", "\\,").replace("\n", "\\n")
+        .replace(",", "\\,").replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n")
     )
 
 
