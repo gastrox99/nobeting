@@ -420,7 +420,8 @@ if 'app_settings_loaded' not in st.session_state:
                 # kullanıcı onaylayınca bilinen sürümle yeniden yazılabilir.
                 st.session_state.app_settings_load_failed = True
                 st.session_state.settings_corrupt = _settings_corrupt
-        except Exception:
+        except Exception as _error:
+            log_unexpected("Ayarları okuma", _error)
             st.session_state.app_settings_load_failed = True
             st.warning("⚠️ Kayıtlı ekip ve ayarlar okunamadı. Sayfayı yenileyin.")
     apply_app_settings(st.session_state, _stored_settings)
@@ -1346,7 +1347,8 @@ def _load_previous_context(year, month):
         _loaded_all, _prefs_all = load_auto_saved_assignments(
             _periods, owner=current_owner, include_preferences=True,
         )
-    except Exception:
+    except Exception as _error:
+        log_unexpected("Önceki aylar bağlamı", _error)
         # Bir dakika sonra yeniden denenir; o zamana kadar uyarı gösterilir.
         _ctx["failed_at"] = time.monotonic()
         return _ctx

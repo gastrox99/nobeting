@@ -15,6 +15,7 @@ import streamlit as st
 
 from db import (
     list_shared_months,
+    log_unexpected,
     list_team_requests,
     load_app_settings,
     load_schedule,
@@ -108,7 +109,8 @@ def render_shared_view(token, db_ready):
         return
     try:
         _target = resolve_share_token(token, raise_on_error=True)
-    except Exception:
+    except Exception as _error:
+        log_unexpected("Paylaşım bağlantısı", _error)
         st.warning(_unreachable)
         return
     if not _target:
@@ -117,7 +119,8 @@ def render_shared_view(token, db_ready):
     _owner, _year, _month = _target
     try:
         _team = _cached_team(_owner)
-    except Exception:
+    except Exception as _error:
+        log_unexpected("Paylaşım ekip listesi", _error)
         _team = []
     if not _team:
         # Ekip girilmemişse eskisi gibi yalnızca liste (talep gönderilemez).

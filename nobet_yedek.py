@@ -113,7 +113,8 @@ def run_requested_snapshot(current_owner, yil, ay):
         return
     try:
         _summary_sn = take_snapshot(SNAPSHOT_MANUAL, current_owner, _period_sn)
-    except Exception:
+    except Exception as _error:
+        log_unexpected("Elle yedek", _error)
         st.error("❌ Yedek alınamadı (veritabanına ulaşılamadı). Tekrar deneyin.")
         return
     _month_text = f"{TR_AY_ADLARI[ay]} {yil}"
@@ -128,12 +129,14 @@ def restore_backup(parsed, summary, current_owner):
     """Geri yüklemeden önce mevcut hâlin kopyasını alır, sonra yedeği yükler."""
     try:
         take_snapshot(SNAPSHOT_BEFORE_RESTORE, current_owner)
-    except Exception:
+    except Exception as _error:
+        log_unexpected("Geri yükleme öncesi kopya", _error)
         st.error("❌ Mevcut hâlin kopyası alınamadığı için geri yükleme yapılmadı. Tekrar deneyin.")
         return
     try:
         restore_owner_data(parsed, owner=current_owner)
-    except Exception:
+    except Exception as _error:
+        log_unexpected("Geri yükleme", _error)
         st.error("❌ Geri yükleme başarısız oldu; hiçbir kayıt değişmedi. Tekrar deneyin.")
         return
     # Ekrandaki eski durum yedeğin üzerine otomatik kaydedilmesin:
@@ -289,7 +292,8 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
                 if st.button("📦 Yedeği hazırla", width="stretch"):
                     try:
                         _settings_bk, _schedules_bk = export_owner_data(owner=current_owner)
-                    except Exception:
+                    except Exception as _error:
+                        log_unexpected("Yedeği hazırla", _error)
                         st.error("❌ Yedek hazırlanamadı (veritabanına ulaşılamadı). Tekrar deneyin.")
                     else:
                         st.session_state.backup_bytes = backup_to_bytes(build_backup(_settings_bk, _schedules_bk))
