@@ -3,12 +3,16 @@
 
 PNG/Excel/HTML dosyaları yalnızca düğmeye tıklanınca üretilir.
 """
+import calendar
+import datetime
 import importlib.util
 import re
+from pathlib import Path
 from urllib.parse import quote
 from io import BytesIO
 
 import matplotlib.pyplot as plt
+import openpyxl
 import pandas as pd
 import streamlit as st
 
@@ -100,6 +104,38 @@ def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance, yil=None):
     return output.getvalue()
 
 
+IDARE_SABLONU = Path(__file__).with_name("sablon") / "idare_ikili.xlsx"
+_IDARE_GUNLERI = ("PAZARTESI", "SALI", "ÇARŞAMBA", "PERŞEMBE", "CUMA", "CUMARTESI", "PAZAR")
+
+
+def fill_idare_sablonu(liste_rows, role_names, yil, ay):
+    """İdarenin ikili nöbet çizelgesi şablonunu seçilen ayın listesiyle doldurur.
+
+    Şablonda ad sütunları D ve E'dir; ilk iki görev bunlara yazılır. Ay 31 günden
+    kısaysa fazla satırlar boş kalır.
+    """
+    wb = openpyxl.load_workbook(IDARE_SABLONU)
+    ws = wb.active
+    _ay_adi = TR_AY_ADLARI[ay].replace("i", "İ").replace("ı", "I").upper()
+    ws["A3"] = f"AY/YIL: {_ay_adi}/{yil}"
+    for gun in range(1, calendar.monthrange(yil, ay)[1] + 1):
+        _tarih = datetime.date(yil, ay, gun)
+        _satir = gun + 4
+        ws[f"A{_satir}"] = _tarih
+        ws[f"B{_satir}"] = _IDARE_GUNLERI[_tarih.weekday()]
+        _kayit = liste_rows[gun - 1] if gun <= len(liste_rows) else {}
+        for _sutun, _gorev in zip("DE", role_names[:2]):
+            _ad = _kayit.get(_gorev)
+            _hucre = ws[f"{_sutun}{_satir}"]
+            if _ad not in (None, "", "-"):
+                _hucre.value = str(_ad)
+                # "=" ile başlayan ad Excel'de formül olarak çalışmasın.
+                _hucre.data_type = "s"
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
 def whatsapp_url(text):
     """WhatsApp'ı verilen metin yazılı açan bağlantı (telefonda uygulama açılır)."""
     return "https://wa.me/?text=" + quote(text, safe="")
@@ -132,6 +168,9 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                      _finance=df_stats_finance.copy(), _yil=yil):
         return convert_df_to_excel(_liste, _load, _finance, yil=_yil)
 
+    def _idare_bytes(_rows=liste_rows, _roles=list(liste_roles), _yil=yil, _ay=ay):
+        return fill_idare_sablonu(_rows, _roles, _yil, _ay)
+
     _share_cache = st.session_state.setdefault("share_token_cache", {})
     # Excel yükleme seyrek kullanıldığı için Yedek bölümünde (render_excel_import).
     # Kapsayıcı anahtarı (bottom-actions) telefonda dört düğmeyi tek satırda tutar (nobet_stil.py).
@@ -142,6 +181,9 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
             st.download_button("📊 Excel", _excel_bytes, f"nobet_{yil}_{ay:02d}.xlsx",
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                on_click="ignore", width="stretch", disabled=not EXCEL_AVAILABLE)
+            st.download_button("🏥 İdare şablonuna aktar", _idare_bytes, f"idare_sablonu_{yil}_{ay:02d}.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               on_click="ignore", width="stretch")
             # Sayfanın kendi yazdırma penceresi (A4 yatay, yalnız tablo ve takvim; nobet_stil.py).
             st.iframe(
                 "<button onclick=\"window.parent.print()\" style=\"width:100%;padding:8px;border-radius:8px;"
