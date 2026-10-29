@@ -71,7 +71,7 @@ gözlemlerinden uyarlanmıştır (kaynak: github.com/multica-ai/andrej-karpathy-
 5. **Kapanış:** Ne düzeldi (kullanıcının göreceği şekilde), davranışta ne değişti,
    toplam test sayısı ve canlı sitede bir kez denenecek adımlar. Algoritma veya
    veri kaydetmeyi etkileyen büyük değişikliklerden sonra elle başlatılan
-   "Maymun testi" iş akışını (yaklaşık 50 dk) öner.
+   "Maymun testi" iş akışını (yaklaşık 30 dk) öner.
 
 ## Denge
 
