@@ -61,7 +61,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Paketleri kur
-        run: pip install -r requirements.txt pytest playwright pyflakes
+        run: pip install -r requirements.txt -r requirements-test.txt
       - name: Chromium kur
         if: steps.tarayici.outputs.gerekli == 'true'
         run: python -m playwright install --with-deps chromium
