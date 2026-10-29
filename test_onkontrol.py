@@ -30,3 +30,10 @@ def test_toplam_kapasite_ve_limit_hesabi():
     limits = {p: {"max": 2} for p in ("Ali", "Ayşe", "Can", "Ece")}
     uyari = onkontrol_uyarilari(_izinler(Ali=[], Ayşe=[], Can=[], Ece=[]), GUNLER, 2, 1, limits)
     assert any("kapasitesi 8" in u and "gereken 20" in u and "en az 12" in u for u in uyari)
+
+
+def test_paylasim_kontrolleri_hepsi_yesilse_bos():
+    from nobet_onkontrol import paylasim_kontrolleri
+    assert paylasim_kontrolleri(0, [], None) == []
+    uyari = paylasim_kontrolleri(2, [14, 22], "Katsayı eski.")
+    assert uyari[0].startswith("2 ekip talebi") and "14, 22" in uyari[1] and uyari[2] == "Katsayı eski."

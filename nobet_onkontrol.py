@@ -42,3 +42,22 @@ def render_precheck(df_unwanted, columns, kisi_sayisi, min_bosluk, person_limits
     if warnings:
         st.warning("🔎 Ön kontrol (olası sorunlar; simülasyon çalıştırmadan görünür):\n\n"
                    + "\n\n".join(f"- {w}" for w in warnings))
+
+
+def paylasim_kontrolleri(bekleyen, eksik_gunler, katsayi_metni):
+    """Paylaşmadan önce gösterilecek kısa uyarılar; hepsi yeşilse boş liste."""
+    items = []
+    if bekleyen:
+        items.append(f"{bekleyen} ekip talebi onay bekliyor.")
+    if eksik_gunler:
+        items.append(f"{len(eksik_gunler)} günün nöbetçisi eksik: {', '.join(str(d) for d in eksik_gunler[:_EN_FAZLA_GUN])}"
+                     + (" …" if len(eksik_gunler) > _EN_FAZLA_GUN else "."))
+    if katsayi_metni:
+        items.append(katsayi_metni)
+    return items
+
+
+def render_share_check(items):
+    """Paylaş / WhatsApp açılırken; sorun yoksa hiçbir şey göstermez."""
+    if items:
+        st.warning("🔎 Göndermeden önce:\n\n" + "\n\n".join(f"- {i}" for i in items))
