@@ -18,6 +18,11 @@ import os
 _UYARILI = {"cakisma": "conflict", "surum_bilinmiyor": "version_unknown"}
 
 
+def otomatik_kayit_adi(yil, ay):
+    """Bir ayın tek kaydının adı ("Otomatik_2026_03"); uygulama yalnız bunu okur ve yazar."""
+    return f"Otomatik_{yil}_{ay:02d}"
+
+
 def kaydi_durdur(ss, donem, neden):
     donem = tuple(donem)
     ss["autosave_blocked_period"] = donem

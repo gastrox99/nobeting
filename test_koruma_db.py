@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -729,3 +730,47 @@ def test_paylasim_linki_gercekten_yoksa_gecersiz_der():
     finally:
         _stop(patches)
     assert any("geçersiz" in m for m in messages)
+
+
+# --- C4: iki kayıt yeri (bu ay, ay değişimi) ortak yardımcıdan geçer; sonuç aynı kalır ---
+
+def test_bu_ayda_cakisma_kaydi_durdurur_ve_kimin_degistirdigini_soyler():
+    def conflict(*args, **kwargs):
+        raise db.SaveConflict(args[0], "Telefon", datetime(2026, 10, 1, 9, 5))
+
+    at, patches = _app(conflict)
+    try:
+        _simulate(at)
+        message = at.session_state["persistence_error"]
+        reason = at.session_state["autosave_block_reason"]
+    finally:
+        _stop(patches)
+    assert "başka bir yerde" in message and "Telefon" in message
+    assert reason == "cakisma"
+
+
+@pytest.mark.parametrize("kind,month,reason", [("kilitli", 11, None), ("cakisma", 10, "cakisma")])
+def test_ay_degisiminde_kilitli_ay_gecer_cakismada_kalir(kind, month, reason):
+    calls = []
+
+    def save(*args, version_out=None, **kwargs):
+        calls.append(args[:3])
+        if mode["kind"] == "kilitli":
+            raise db.MonthLocked(args[1], args[2])
+        if mode["kind"] == "cakisma":
+            raise db.SaveConflict(args[0], "Telefon", None)
+        return True
+
+    mode = {"kind": None}
+    at, patches = _app(save)
+    try:
+        _simulate(at)
+        mode["kind"] = kind
+        calls.clear()
+        at.session_state["last_saved_fingerprint"] = "kaydedilmemiş"
+        _pick_month(at, 11)
+        state = (_month(at), at.session_state["autosave_block_reason"])
+    finally:
+        _stop(patches)
+    assert state == (month, reason)
+    assert calls[0] == ("Otomatik_2026_10", 2026, 10)  # önce çıkılan ay kaydedilir

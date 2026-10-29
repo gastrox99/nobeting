@@ -17,6 +17,7 @@ from itertools import combinations as _combinations, permutations as _permutatio
 from html import escape as _escape_html
 from numbers import Integral
 
+from nobet_kalicilik import otomatik_kayit_adi
 from nobet_gunler import (  # noqa: F401  (eski içe aktarmalar çalışsın diye yeniden dışa aktarılır)
     PREF_LEAVE, PREF_UNAVAILABLE, BLOCKED_PREFS, MAX_PREF_CODE, TR_GUN_KISA, TR_AY_ADLARI, TR_FIXED_HOLIDAYS, TR_RELIGIOUS_HOLIDAYS,
     TR_FIXED_HALF_DAYS, period_key, parse_holiday_days, build_gun_detaylari,
@@ -2944,7 +2945,7 @@ def parse_backup(raw):
             continue
         # Uygulama yalnızca "Otomatik_YYYY_AA" kayıtlarını kullanır; diğerleri
         # (eski elle kayıtlar) görünmeden yer kaplardı, geri yüklenmez.
-        if name != f"Otomatik_{year}_{month:02d}":
+        if name != otomatik_kayit_adi(year, month):
             skipped += 1
             continue
         key = (name, year, month)
@@ -3078,7 +3079,7 @@ def snapshot_label(item):
 
 def month_backup(backup, year, month):
     """Tüm veriden yalnızca o ayın otomatik kaydını içeren yedek (ayarlar hariç)."""
-    name = f"Otomatik_{year}_{month:02d}"
+    name = otomatik_kayit_adi(year, month)
     return {
         **backup,
         "settings": None,

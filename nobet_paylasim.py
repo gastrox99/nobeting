@@ -24,6 +24,7 @@ from db import (
     submit_team_request,
 )
 from nobet_yil import kisi_ve_ortalama, yil_ozeti
+from nobet_kalicilik import otomatik_kayit_adi
 from nobet_core import (
     TALEP_METIN_SINIRI,
     TALEP_TURLERI,
@@ -465,7 +466,7 @@ def _person_pay(_owner, year, month, person, list_days):
 
     Günler çizelgeden okunur; çizelgede kişi yoksa listedeki günler (list_days) kullanılır.
     """
-    _loaded = load_schedule(f"Otomatik_{year}_{month:02d}", year, month, owner=_owner)
+    _loaded = load_schedule(otomatik_kayit_adi(year, month), year, month, owner=_owner)
     _schedule = _loaded[1] if _loaded else None
     _days, _prefs = list(list_days), None
     if _schedule is not None and not _schedule.empty and person in _schedule.index:
@@ -486,7 +487,7 @@ def _person_pay(_owner, year, month, person, list_days):
 
 def _shared_rows(_owner, year, month):
     """Paylaşım sayfası için ayın satırları ve görevleri: (satırlar, görevler); yoksa (None, None)."""
-    _loaded = load_schedule(f"Otomatik_{year}_{month:02d}", year, month, owner=_owner, include_preferences=False)
+    _loaded = load_schedule(otomatik_kayit_adi(year, month), year, month, owner=_owner, include_preferences=False)
     _rows = _loaded[4] if _loaded and len(_loaded) > 4 and _loaded[4] else None
     _schedule = _loaded[1] if _loaded else None
     if _schedule is not None:

@@ -33,8 +33,9 @@ _UI_MODULES = (
 )
 
 
-# Sıra önemli: nobet_core, nobet_gunler/nobet_ucret/nobet_algoritma'dan; nobet_iyilestir nobet_core'dan isim alır.
-_FRESH_MODULES = ("db", "nobet_kalicilik", "nobet_gunler", "nobet_ucret", "nobet_algoritma", "nobet_core", "nobet_iyilestir")
+# Sıra önemli: db ve nobet_core, nobet_kalicilik'ten; nobet_core, nobet_gunler/nobet_ucret/nobet_algoritma'dan;
+# nobet_iyilestir nobet_core'dan isim alır.
+_FRESH_MODULES = ("nobet_kalicilik", "db", "nobet_gunler", "nobet_ucret", "nobet_algoritma", "nobet_core", "nobet_iyilestir")
 
 
 def _fresh_modules(force=False):
@@ -84,7 +85,7 @@ for _attempt in range(2):
             ping_db,
             SCHEMA_VERSION,
         )
-        from nobet_kalicilik import kaydi_durdur, kayit_durdu_mu, engeli_kaldir, engelleri_sifirla
+        from nobet_kalicilik import kaydi_durdur, kayit_durdu_mu, engeli_kaldir, engelleri_sifirla, otomatik_kayit_adi
         from nobet_core import (
             history_adjustment,
             history_special_adjustment,
@@ -1008,6 +1009,36 @@ sutunlar = list(gun_detaylari)
 zorunlu_saat, arife_gunleri = required_work_hours(gun_detaylari, official_half_days(yil, ay))
 
 # --- SESSION ---
+def _save_period(period, team, schedule, preferences, rows, locks, hidden, error_label):
+    """Ayın otomatik kaydı; iki kayıt yerinin (ay değişimi ve her çalışma) ortak kısmı.
+
+    ``(sonuç, hata)`` döner. Sonuç: "tamam", "yazilamadi" (veritabanı hatası),
+    "kilitli", "cakisma", "surum_bilinmiyor" ya da "hata" (kod hatası, iz günlüğe).
+    Çakışma ve bilinmeyen sürümde bu ayın kaydı durdurulur; kilitli ayda karar çağıranda.
+    """
+    _year, _month = period
+    _box = _version_box("schedule_version")
+    try:
+        _ok = save_schedule(
+            otomatik_kayit_adi(_year, _month), _year, _month, team, schedule,
+            pref_df=preferences, rows_liste=rows, owner=current_owner,
+            settings_dict={"locked": locks_to_json(locks), "hidden": hidden},
+            expected_version=_box.get("version"), version_out=_box, writer=_writer,
+        )
+    except MonthLocked as _error:
+        return "kilitli", _error
+    except SaveConflict as _error:
+        kaydi_durdur(st.session_state, period, "cakisma")
+        return "cakisma", _error
+    except VersionUnknown as _error:
+        kaydi_durdur(st.session_state, period, "surum_bilinmiyor")
+        return "surum_bilinmiyor", _error
+    except Exception as _error:
+        log_unexpected(error_label, _error)
+        return "hata", _error
+    return ("tamam" if _ok else "yazilamadi"), None
+
+
 def _save_outgoing_period(period, schedule, preferences, rows):
     _old_yil, _old_ay = period
     # Okunamayan bir dönemin kaydının üzerine yazma; değişmediyse tekrar yazma.
@@ -1027,33 +1058,16 @@ def _save_outgoing_period(period, schedule, preferences, rows):
         return True
     st.session_state.pop("backup_bytes", None)
     # False dönerse ay değişimi durdurulur: son değişiklikler kaybolmasın.
-    _box = _version_box("schedule_version")
-    try:
-        return bool(save_schedule(
-            f"Otomatik_{_old_yil}_{_old_ay:02d}", _old_yil, _old_ay, list(schedule.index),
-            schedule, pref_df=preferences, rows_liste=rows, owner=current_owner,
-            settings_dict={"locked": locks_to_json(_locks), "hidden": _hidden},
-            expected_version=_box.get("version"), version_out=_box, writer=_writer,
-        ))
-    except MonthLocked:
-        # Kilitli ayda değişiklik yapılamaz; kaydedilecek bir şey yok, ay değişebilir.
-        return True
-    except SaveConflict:
-        kaydi_durdur(st.session_state, period, "cakisma")
-        st.session_state.conflict_leave_ack = tuple(period)
-        st.session_state.period_revert_reason = "conflict"
-        return False
-    except VersionUnknown:
-        # Sürüm bilinmiyor: çakışmadaki gibi bir kez uyarılır, ikinci denemede
+    _result, _ = _save_period(period, list(schedule.index), schedule, preferences, rows, _locks, _hidden,
+                              "Ay değişiminde kayıt")
+    if _result in ("cakisma", "surum_bilinmiyor"):
+        # Çakışma ya da bilinmeyen sürüm: bir kez uyarılır, ikinci denemede
         # bu sekmedeki değişiklikler atılarak ay değişir.
-        kaydi_durdur(st.session_state, period, "surum_bilinmiyor")
         st.session_state.conflict_leave_ack = tuple(period)
-        st.session_state.period_revert_reason = "version_unknown"
-        return False
-    except Exception as _error:
-        # Kod hatası: ay değişmesin (son değişiklikler kaybolmasın), iz günlüğe.
-        log_unexpected("Ay değişiminde kayıt", _error)
-        return False
+        st.session_state.period_revert_reason = "conflict" if _result == "cakisma" else "version_unknown"
+    # Kilitli ayda değişiklik yapılamaz; kaydedilecek bir şey yok, ay değişebilir.
+    # Kod ya da veritabanı hatasında ay değişmez (son değişiklikler kaybolmasın).
+    return _result in ("tamam", "kilitli")
 
 # Ay/yıl değişince eski ayın çizelgesini yeni aya taşımak yerine kaydet ve
 # yeni ayın kendi kaydını yükle (aksi halde otomatik kayıt o ayın üzerine yazar).
@@ -1065,7 +1079,7 @@ if st.session_state.get("period_switch_blocked"):
 
 if 'schedule_bool' not in st.session_state:
     # Sayfa yenilenmesinde otomatik geri yükle
-    _auto_name = f"Otomatik_{yil}_{ay:02d}"
+    _auto_name = otomatik_kayit_adi(yil, ay)
 
     # Sürüm, çizelgeyle aynı okumadan gelir; okuma başarısızsa None kalır ve
     # kayıt durdurulur (VersionUnknown). Eskiden sürüm ayrı okunuyordu: o okuma
@@ -1973,43 +1987,31 @@ elif (
     not kayit_durdu_mu(st.session_state, (yil, ay))
     and _persist_fp != st.session_state.get("last_saved_fingerprint")
 ):
-    auto_name = f"Otomatik_{yil}_{ay:02d}"
-    _saved_ok = False
-    _save_conflict = False
-    _schedule_version = _version_box("schedule_version")
-    try:
-        _saved_ok = save_schedule(auto_name, yil, ay, isimler, st.session_state.schedule_bool,
-                                  pref_df=st.session_state.get('pref_df'),
-                                  rows_liste=rows_liste, owner=current_owner,
-                                  settings_dict={"locked": locks_to_json(_active_locks),
-                                                 "hidden": _hidden_people},
-                                  expected_version=_schedule_version.get("version"),
-                                  version_out=_schedule_version, writer=_writer)
-    except SaveConflict as _conflict:
+    _result, _error = _save_period((yil, ay), isimler, st.session_state.schedule_bool,
+                                   st.session_state.get('pref_df'), rows_liste, _active_locks,
+                                   _hidden_people, "Otomatik kayıt")
+    _saved_ok = _result == "tamam"
+    _save_conflict = _result not in ("tamam", "yazilamadi")
+    if _result == "cakisma":
         # Bu ay başka bir yerde (ör. telefonda) değişmiş; onların üzerine yazma.
-        _save_conflict = True
-        kaydi_durdur(st.session_state, (yil, ay), "cakisma")
         update_persistence_feedback(
             st.session_state,
             False,
             "⚠️ Bu ayın çizelgesi başka bir yerde (telefon ya da başka sekme) değiştirilmiş. "
             "Yeni değişikliklerin üzerine yazmamak için kayıt durduruldu. Sayfayı yenileyin; "
             "bu sekmedeki değişiklikleri kaybetmek istemiyorsanız önce Excel olarak indirin."
-            + conflict_writer_text(_conflict.writer, _conflict.saved_at, _writer),
+            + conflict_writer_text(_error.writer, _error.saved_at, _writer),
         )
-    except MonthLocked:
-        _save_conflict = True
+    elif _result == "kilitli":
         kaydi_durdur(st.session_state, (yil, ay), "kilitli")
         update_persistence_feedback(
             st.session_state,
             False,
             "🔒 Bu ay kilitli; değişiklikler kaydedilmedi. Ayın üstündeki 🔓 düğmesiyle kilidi açın.",
         )
-    except VersionUnknown:
+    elif _result == "surum_bilinmiyor":
         # Çakışmadaki gibi: kayıt durur, ay değiştirilirse bir kez uyarılıp
         # ikinci denemede bu sekmedeki değişiklikler atılarak geçilir.
-        _save_conflict = True
-        kaydi_durdur(st.session_state, (yil, ay), "surum_bilinmiyor")
         update_persistence_feedback(
             st.session_state,
             False,
@@ -2017,10 +2019,8 @@ elif (
             "üzerine yazmamak için kayıt yapılmadı. Sayfayı yenileyin; bu sekmedeki "
             "değişiklikleri kaybetmek istemiyorsanız önce Excel olarak indirin.",
         )
-    except Exception as _error:
-        # Veritabanı değil, kod hatası: "bağlantı" diye gösterme, izi günlüğe yaz.
-        log_unexpected("Otomatik kayıt", _error)
-        _save_conflict = True
+    elif _result == "hata":
+        # Veritabanı değil, kod hatası: "bağlantı" diye gösterme, iz günlükte.
         update_persistence_feedback(
             st.session_state,
             False,

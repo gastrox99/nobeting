@@ -1236,7 +1236,8 @@ class TestFixedShifts(unittest.TestCase):
     def test_uygulama_baglantilari(self):
         source = _app_source()
         self.assertIn('fixed_assignments=active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)', source)
-        self.assertIn('settings_dict={"locked": locks_to_json(_active_locks),', source)
+        self.assertIn('settings_dict={"locked": locks_to_json(locks), "hidden": hidden}', source)
+        self.assertIn("rows_liste, _active_locks,", source)
         self.assertIn("'locked': set(st.session_state.get('locked_cells', set())),", source)
         self.assertIn(':has(.cell-locked) .stButton > button', source)
         self.assertIn("st.session_state.locked_cells = set()\n                st.session_state.hidden_people = {}\n                st.session_state.cached_rows_liste = None", source)
@@ -2267,7 +2268,7 @@ class TestStaleModuleRecovery(unittest.TestCase):
         source = _app_source("nobet.py")
         listed = re.search(r"_FRESH_MODULES = \((.*?)\)", source, flags=re.S).group(1)
         # nobet_iyilestir eskiyken İyileştir "ortools yüklü değil" diyordu.
-        self.assertEqual(re.findall(r'"(\w+)"', listed), ["db", "nobet_kalicilik", "nobet_gunler", "nobet_ucret", "nobet_algoritma", "nobet_core", "nobet_iyilestir"])
+        self.assertEqual(re.findall(r'"(\w+)"', listed), ["nobet_kalicilik", "db", "nobet_gunler", "nobet_ucret", "nobet_algoritma", "nobet_core", "nobet_iyilestir"])
         self.assertLess(source.index("\n_fresh_modules()\n"), source.index("for _attempt in range(2):"))
         # Tazeleme kilit altında nobet_tazele.py'de; davranışı test_tazele.py dener.
         self.assertIn("fresh_modules(_FRESH_MODULES, force=force)", source)
@@ -2275,6 +2276,25 @@ class TestStaleModuleRecovery(unittest.TestCase):
                      "nobet_iyilestir.py"):
             self.assertTrue(_app_source(name).rstrip().endswith(
                 "_nobet_loaded_stamp = os.stat(__file__).st_mtime_ns"), name)
+
+    def test_tazelenen_modul_bagimli_oldugu_modulden_sonra_gelir(self):
+        # Önce gelen modül, sonrakinden isim alırsa canlıda o eski kopyadan okur;
+        # yeni isim eksikse sayfa ImportError ile kalır.
+        import ast
+        source = _app_source("nobet.py")
+        order = re.findall(r'"(\w+)"', re.search(r"_FRESH_MODULES = \((.*?)\)", source, flags=re.S).group(1))
+        for index, name in enumerate(order):
+            tree = ast.parse(_app_source(name + ".py"))
+            used = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+            self.assertFalse(used & set(order[index + 1:]), name)
+
+    def test_otomatik_kayit_adi_tek_yerde(self):
+        from nobet_kalicilik import otomatik_kayit_adi
+        self.assertEqual(otomatik_kayit_adi(2026, 3), "Otomatik_2026_03")
+        self.assertEqual(otomatik_kayit_adi(2026, 12), "Otomatik_2026_12")
+        for name in APP_FILES + ("db.py", "nobet_core.py"):
+            if name != "nobet_kalicilik.py":
+                self.assertNotIn('f"Otomatik_', _app_source(name), name)
 
     def test_gunler_ve_ucret_cekirdege_bagimli_degil(self):
         # Döngüsel içe aktarma olmasın: nobet_core bu dosyalardan okur, tersi olmaz.
