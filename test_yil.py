@@ -41,3 +41,13 @@ def test_yil_ozeti_eski_ad_guncel_ada_cevrilir_ve_bos_yil_bos_tablo_verir():
     assert list(tablo["Kişi"]) == ["Yeni"] and aylar == 1
     bos, aylar = yil_ozeti({}, {}, 2026, {}, ["Yeni"], {})
     assert bos.empty and aylar == 0
+
+
+def test_kisi_ve_ortalama_yalniz_kendi_satirini_verir():
+    from nobet_yil import kisi_ve_ortalama
+    ekim, _ = _ay(2026, 10, {"Ali": [2, 3], "Ayşe": [4]})
+    tablo, _ = yil_ozeti({(2026, 10): ekim}, {}, 2026, {}, ["Ali", "Ayşe"], {})
+    benim, ortalama = kisi_ve_ortalama(tablo, "Ali")
+    assert benim["Nöbet"] == 2 and ortalama["Nöbet"] == 1.5
+    assert "Kişi" not in benim and "Ayşe" not in str(benim)
+    assert kisi_ve_ortalama(tablo, "Yok") is None

@@ -81,6 +81,17 @@ def yil_ozeti(schedules, prefs, year, aliases, team, holidays_by_period):
     return pd.DataFrame(rows, columns=["Kişi", *SUTUNLAR]), months
 
 
+def kisi_ve_ortalama(table, person):
+    """Paylaşım sayfası için: kişinin kendi satırı ve ekip ortalaması; başkasının satırı döndürülmez.
+
+    Kişi tabloda yoksa None. Ortalama, nöbeti olan herkesin (kişi dahil) ortalamasıdır."""
+    sayilar = table.set_index("Kişi")
+    if person not in sayilar.index:
+        return None
+    ortalama = sayilar[SUTUNLAR[:-1]].mean().round(1)
+    return sayilar.loc[person].to_dict(), ortalama.to_dict()
+
+
 def render_year_summary(owner, yil, isimler, holidays_by_period):
     """Açılınca yılın on iki ayını bir sorguyla okur; kapalıyken veritabanına gitmez."""
     st.markdown("**📆 Yıl özeti**")

@@ -18,10 +18,12 @@ from db import (
     log_unexpected,
     list_team_requests,
     load_app_settings,
+    load_auto_saved_assignments,
     load_schedule,
     resolve_share_token,
     submit_team_request,
 )
+from nobet_yil import kisi_ve_ortalama, yil_ozeti
 from nobet_core import (
     TALEP_METIN_SINIRI,
     TALEP_TURLERI,
@@ -94,6 +96,11 @@ def _cached_team(owner):
 @st.cache_data(ttl=10, show_spinner=False)
 def _cached_person_pay(owner, year, month, person, list_days):
     return _person_pay(owner, year, month, person, list_days)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_my_year(owner, year, person):
+    return _my_year(owner, year, person)
 
 
 def render_shared_view(token, db_ready):
@@ -265,6 +272,7 @@ def _render_list(_owner, _year, _month, _person):
         )
     if _person:
         _render_pay(_owner, _year, _month, _person, _rows, _roles)
+        _render_my_year(_owner, _person)
     st.caption("Liste, liste sahibi değişiklik yaptıkça güncellenir.")
 
 
@@ -338,6 +346,41 @@ def _render_pay(_owner, _year, _month, _person, _rows, _roles):
             "saatin kadar saate uygulanır. %25 yalnız resmi ve dini bayramlarda. Damga vergisi "
             "düşülmüş nettir; tahminidir, liste değişirse değişir."
         )
+
+
+def _my_year(_owner, year, person):
+    """Kişinin yıl özeti ve ekip ortalaması (başkasının satırı sayfaya gelmez); veri yoksa None."""
+    _schedules, _prefs = load_auto_saved_assignments(
+        [(year, _m) for _m in range(1, 13)], owner=_owner, include_preferences=True,
+    )
+    _settings = load_app_settings(owner=_owner) or {}
+    _team = _team_of(_owner)
+    _table, _months = yil_ozeti(_schedules, _prefs, year, None, _team, _settings.get("holidays_by_period"))
+    _found = kisi_ve_ortalama(_table, person)
+    return (*_found, _months) if _found else None
+
+
+def _render_my_year(_owner, _person):
+    """Kişinin kendi yıllık nöbet dağılımı, ekip ortalamasıyla yan yana."""
+    _year = now_tr().year
+    with st.expander(f"📆 {_year} yılım", expanded=False):
+        if not st.toggle("Yıllık özetimi göster", key="paylasim_yilim"):
+            return
+        try:
+            _result = _cached_my_year(_owner, _year, _person)
+        except Exception as _error:
+            log_unexpected("Paylaşım yıl özeti", _error)
+            st.warning("⚠️ Yıl özeti okunamadı. Birazdan tekrar deneyin.")
+            return
+        if not _result:
+            st.info(f"{_year} için kayıtlı nöbetin yok.")
+            return
+        _mine, _avg, _months = _result
+        st.dataframe(pd.DataFrame(
+            [{"": "Ben", **_mine},
+             {"": "Ekip ortalaması", **{_k: f"{_v:g}" for _k, _v in _avg.items()}, "Tercih karşılandı": "—"}]
+        ), hide_index=True, width="stretch")
+        st.caption(f"{_months} kayıtlı ay. Tercih karşılandı = istediğin günlerin kaçında nöbet yazıldı.")
 
 
 # Kutu başlıkları: ekibin anlayacağı dille, parantezde uygulamadaki adı.
