@@ -5,6 +5,7 @@ PNG/Excel/HTML dosyaları yalnızca düğmeye tıklanınca üretilir.
 """
 import calendar
 import datetime
+import difflib
 import importlib.util
 import re
 from pathlib import Path
@@ -162,6 +163,70 @@ def read_uzman_excel(dosya, yil, ay):
     return gunler, atlanan
 
 
+_ASCII_HARF = str.maketrans("İıŞşĞğÜüÖöÇç", "IISSGGUUOOCC")
+
+
+def _ascii_buyuk(metin):
+    """Türkçe harfleri ASCII'ye çevirip büyütür ("Murat Özgümüş" → "MURAT OZGUMUS")."""
+    return " ".join(str(metin).translate(_ASCII_HARF).upper().split())
+
+
+def _buyuk(metin):
+    return metin.replace("i", "İ").replace("ı", "I").upper()
+
+
+def personel_oku(metin):
+    """"Ad;Soyad;Grup" satırlarından [(ad, soyad, grup)]; adı ya da soyadı boş satırlar atlanır."""
+    kisiler = []
+    for satir in (metin or "").splitlines():
+        ad, soyad, grup = ([_p.strip() for _p in satir.split(";")] + ["", "", ""])[:3]
+        if ad and soyad:
+            kisiler.append((ad, soyad, grup))
+    return kisiler
+
+
+def personel_yaz(kisiler):
+    """[(ad, soyad, grup)] → kayıt metni; ad ve soyadı boş olanlar yazılmaz."""
+    temiz = [[str(_p or "").replace(";", " ").strip() for _p in k] for k in kisiler]
+    return "\n".join(";".join(k) for k in temiz if k[0] and k[1])
+
+
+def kisa_adlar(kisiler, dosya_adlari):
+    """Dosyadaki adlar ("MURAT OZGUMUS", "SINEM A") → ortak listedeki kısa ad.
+
+    Kısa ad adın ilk sözcüğüdür; aynı ilk ada sahip başka biri varsa soyadın baş harfi
+    eklenir ("MURAT Ö."). Eşleştirme sırayla: tam ad, adın başı ("IREM GUR"), ad + soyad
+    baş harfi ("SINEM A"), soyad sonu ("MEHMET ARDA BALCAN"), yazım benzerliği (≥ 0,85).
+    Bir aşamada birden çok kişi çıkarsa ya da hiçbiri çıkmazsa ad olduğu gibi kalır.
+    """
+    _ilk = [_ascii_buyuk(ad).split()[0] for ad, _soyad, _grup in kisiler]
+    _sayac = {_i: _ilk.count(_i) for _i in _ilk}
+    _kayitlar = []
+    for (ad, soyad, _grup), _i in zip(kisiler, _ilk):
+        _kisa = _buyuk(ad.split()[0]) + (f" {_buyuk(soyad)[0]}." if _sayac[_i] > 1 else "")
+        _kayitlar.append({"ilk": _i, "soyad": _ascii_buyuk(soyad), "tam": _ascii_buyuk(f"{ad} {soyad}"), "kisa": _kisa})
+    sonuc = {}
+    for _dosya_adi in dosya_adlari:
+        _ad = _ascii_buyuk(_dosya_adi)
+        _parca = _ad.split()
+        _asamalar = (
+            lambda k: k["tam"] == _ad,
+            lambda k: k["tam"].startswith(_ad + " "),
+            lambda k: len(_parca) > 1 and len(_parca[-1]) == 1
+            and k["ilk"] == _parca[0] and k["soyad"][0] == _parca[-1],
+            lambda k: _ad.endswith(" " + k["soyad"]),
+            lambda k: difflib.SequenceMatcher(None, _ad, k["tam"]).ratio() >= 0.85,
+        )
+        sonuc[_dosya_adi] = _dosya_adi
+        for _asama in _asamalar:
+            _adaylar = [_k for _k in _kayitlar if _asama(_k)]
+            if _adaylar:
+                if len(_adaylar) == 1:
+                    sonuc[_dosya_adi] = _adaylar[0]["kisa"]
+                break
+    return sonuc
+
+
 def ortak_liste_excel(liste_rows, liste_roles, uzman_adlari, yil, ay, gun_detaylari):
     """Tarih | UZMAN (2 ad) | görev 1 | görev 2 biçiminde ortak liste; hafta sonu ve tatil gri."""
     wb = openpyxl.Workbook()
@@ -200,8 +265,37 @@ def ortak_liste_excel(liste_rows, liste_roles, uzman_adlari, yil, ay, gun_detayl
     return output.getvalue()
 
 
+def _render_personel_listesi():
+    """Uzman ve pratisyenlerin ad-soyad listesi; kısa adlar buradan bulunur, ayarlarla birlikte kaydedilir."""
+    with st.expander("📇 Personel listesi"):
+        st.caption("Ad, soyad ve grup (Uzman / Pratisyen). Ortak listedeki kısa adlar buradan bulunur. "
+                   "Satır ekleyip silerek düzenleyin.")
+        _kayit = st.session_state.get("personel_text", "")
+        _tablo = pd.DataFrame(personel_oku(_kayit), columns=["Ad", "Soyad", "Grup"])
+        _yeni = st.data_editor(
+            _tablo, num_rows="dynamic", hide_index=True, width="stretch", key="personel_tablosu",
+            column_config={"Grup": st.column_config.SelectboxColumn("Grup", options=["Uzman", "Pratisyen"])},
+        )
+        with st.form("personel_toplu_ekle", clear_on_submit=True):
+            _toplu = st.text_area("Toplu ekle (her satıra bir ad soyad)", height=110)
+            _grup = st.selectbox("Grup", ["Uzman", "Pratisyen"])
+            if st.form_submit_button("Ekle"):
+                _var = {_ascii_buyuk(f"{_a} {_s}") for _a, _s, _g in personel_oku(_kayit)}
+                _eklenen = [(" ".join(_p[:-1]), _p[-1], _grup) for _p in (_l.split() for _l in _toplu.splitlines())
+                            if len(_p) > 1 and _ascii_buyuk(" ".join(_p)) not in _var]
+                if _eklenen:
+                    st.session_state.personel_text = personel_yaz(personel_oku(_kayit) + _eklenen)
+                    st.rerun()
+        _yeni_metin = personel_yaz(_yeni.itertuples(index=False, name=None))
+        if _yeni_metin != _kayit:
+            # Ayarlar bir sonraki çalışmada kaydedilir; hemen yeniden çalıştırıp kaydı beklet.
+            st.session_state.personel_text = _yeni_metin
+            st.rerun()
+
+
 def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
     """Dışa aktar içinde: uzman Excel'i yüklenince ortak liste ve uzman idare şablonu indirilir."""
+    _render_personel_listesi()
     with st.expander("👥 Uzman listesi ile birleştir"):
         st.caption("Diğer ekibin Excel'ini yükleyin (Tarih + iki nöbetçi sütunu). Ortak liste ve "
                    "uzman idare şablonu hazırlanır; bu ayın kendi listeniz de aynı yerde yer alır.")
@@ -227,10 +321,14 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
         if len(_gunler) < len(gun_detaylari) or _atlanan:
             st.warning(f"⚠️ {len(gun_detaylari)} günden {len(_gunler)} gün okundu; "
                        f"{_atlanan} satır (başka ay ya da okunamayan tarih) atlandı.")
-        st.caption("Listede görünecek adları düzeltebilirsiniz (ör. MURAT OZGUMUS → MURAT Ö.).")
         _adlar = sorted({_ad for _cift in _gunler.values() for _ad in _cift if _ad})
+        _kisa = kisa_adlar(personel_oku(st.session_state.get("personel_text", "")), _adlar)
+        _bulunamayan = [_ad for _ad in _adlar if _kisa[_ad] == _ad]
+        if _bulunamayan and st.session_state.get("personel_text"):
+            st.warning("⚠️ Personel listesinde bulunamadı: " + ", ".join(_bulunamayan))
+        st.caption("Listede görünecek adları düzeltebilirsiniz (ör. MURAT OZGUMUS → MURAT Ö.).")
         _duzenlenen = st.data_editor(
-            pd.DataFrame({"Dosyadaki ad": _adlar, "Listede görünecek ad": _adlar}),
+            pd.DataFrame({"Dosyadaki ad": _adlar, "Listede görünecek ad": [_kisa[_ad] for _ad in _adlar]}),
             disabled=["Dosyadaki ad"], hide_index=True, width="stretch", key=f"uzman_adlar_{_dosya.file_id}",
         )
         _esle = dict(zip(_duzenlenen["Dosyadaki ad"], _duzenlenen["Listede görünecek ad"].fillna("")))
