@@ -84,3 +84,18 @@ def test_yedek_adaylari_hafta_sonu_az_tutana_oncelik_verir():
     assert adaylar == ["Ece", "Can", "Ayşe"]
     assert ("izinli / müsait değil", ["Deniz"]) in nedenler
     assert schedule.at["Ali", col]          # öneri çizelgeyi değiştirmez
+
+
+def test_telafi_gunleri_ayni_ay_icinde_sonraki_gunlerden_yedegin_nobeti():
+    from nobet_core import build_gun_detaylari
+    from nobet_onkontrol import telafi_gunleri
+    days = build_gun_detaylari(2026, 11, 30, [])
+    names = ["Ali", "Ece"]
+    schedule = pd.DataFrame(False, index=names, columns=list(days))
+    unwanted = pd.DataFrame(False, index=names, columns=list(days))
+    schedule.at["Ece", "14 Cmt"] = True      # yedek yazıldı (Ali çıktı)
+    for c in ("12 Per", "19 Per", "26 Per", "29 Pzt"):
+        schedule.at["Ece", c] = True
+    schedule.at["Ali", "18 Çar"] = True      # 19. günle dinlenme çakışır
+    unwanted.loc["Ali", "29 Pzt"] = True      # müsait değil
+    assert telafi_gunleri(schedule, "14 Cmt", "Ali", "Ece", days, unwanted, 1) == ["26 Per"]

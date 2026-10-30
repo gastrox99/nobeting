@@ -114,6 +114,17 @@ def yedek_adaylari(schedule, col, cikamayan, gun_detaylari, df_unwanted, min_bos
                                     if l != MISSING_DAY_FREE_LABEL]
 
 
+def telafi_gunleri(schedule, column, cikan, yedek, gun_detaylari, df_unwanted, min_bosluk,
+                   person_limits=None, forbidden_pairs=None, initial_last_shift=None):
+    """Yedek yazıldıktan sonra çıkan kişiye telafi olarak verilebilecek günler: aynı ay,
+    boşalan günden sonra, yedeğin nöbetli olduğu ve çıkanın kurallara uyduğu günler."""
+    gun = gun_detaylari[column]["day_num"]
+    return [c for c in schedule.columns
+            if c in gun_detaylari and gun_detaylari[c]["day_num"] > gun and bool(schedule.at[yedek, c])
+            and cikan in yedek_adaylari(schedule, c, yedek, gun_detaylari, df_unwanted, min_bosluk,
+                                        person_limits, forbidden_pairs, initial_last_shift)[0]]
+
+
 def render_backup_suggestion(isimler, sutunlar, gun_detaylari, schedule, df_unwanted, min_bosluk,
                              person_limits, forbidden_pairs, initial_last_shift, assign_backup):
     """Analiz altı: çıkamayan kişinin gününe yazılabilecek yedekleri sıralar; seçileni o güne yazar."""
@@ -139,9 +150,24 @@ def render_backup_suggestion(isimler, sutunlar, gun_detaylari, schedule, df_unwa
         secilen = st.radio("Yedek", adaylar, key="yedek_secim")
         if st.button(f"{secilen} {day}. güne yazılsın, {out} çıkarılsın", key="yedek_yaz"):
             assign_backup(out, secilen, column)
+            st.session_state["yedek_telafi"] = (out, secilen, column)
             st.rerun()
         if nedenler:
             st.caption("Diğerleri: " + " · ".join(f"{label}: {', '.join(names)}" for label, names in nedenler))
+        telafi = st.session_state.get("yedek_telafi")
+        if telafi and telafi[0] in schedule.index and telafi[1] in schedule.index and telafi[2] in schedule.columns:
+            cikan, yedek, sutun = telafi
+            gunler = telafi_gunleri(schedule, sutun, cikan, yedek, gun_detaylari, df_unwanted, min_bosluk,
+                                    person_limits, forbidden_pairs, initial_last_shift)
+            st.markdown(f"**Telafi:** {yedek} {gun_detaylari[sutun]['day_num']}. gün fazla nöbet tuttu. "
+                        f"{cikan} ay içinde şu günlerden birini alabilir:")
+            if not gunler:
+                st.caption("Bu ay için uygun gün yok.")
+            for c in gunler:
+                if st.button(f"{gun_detaylari[c]['day_num']}. gün {cikan}'e, {yedek} çıksın", key=f"yedek_telafi_{c}"):
+                    assign_backup(yedek, cikan, c)
+                    st.session_state.pop("yedek_telafi", None)
+                    st.rerun()
 
 
 def ilk_nobet_gunleri(frame):
