@@ -1521,6 +1521,7 @@ APP_SETTINGS_FIELDS = {
     "name_aliases": ("name_aliases", _aliases),
     "last_backup": ("last_backup_at", _text),
     "open_months": ("open_months", _period_list),
+    "personnel": ("personel_text", _text),
 }
 
 
@@ -1556,7 +1557,7 @@ SETTINGS_FIELD_LABELS = {
     "fixed_roles": "sabit görev yeri", "together_pairs": "birlikte çalışmak isteyen",
     "limits": "nöbet sınırları", "balance_history": "önceki aylarla dengele",
     "name_aliases": "ad değişiklikleri", "last_backup": "son yedek",
-    "open_months": "açılan aylar",
+    "open_months": "açılan aylar", "personnel": "personel listesi",
 }
 
 

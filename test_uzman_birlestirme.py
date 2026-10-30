@@ -50,3 +50,49 @@ def test_uzman_idare_sablonu_basligi_degisir():
     )).active
     assert ws["B1"].value == "UZMAN BAŞLIK"
     assert (ws["D5"].value, ws["E5"].value) == ("A", "B")
+
+
+from nobet_core import apply_app_settings, collect_app_settings
+from nobet_disa_aktar import kisa_adlar, personel_oku, personel_yaz
+
+_PERSONEL = [
+    ("Murat", "Özgümüş", "Uzman"), ("Murat", "Alpaslan", "Uzman"), ("Doğuş", "Uyanık", "Uzman"),
+    ("Serpil Canan", "Erbuyun", "Uzman"), ("Sinem", "Aksoy", "Uzman"), ("Ali", "Alagöz", "Pratisyen"),
+]
+
+
+def test_kisa_adlar_ilk_ad_ve_ayni_adda_soyad_bas_harfi():
+    sonuc = kisa_adlar(_PERSONEL, ["MURAT OZGUMUS", "MURAT ALPASLAN", "DOGUS UYANIK",
+                                   "SERPIL CANAN ERBUYUN", "SINEM A", "ALI ALAGOZ", "BILINMEYEN KISI"])
+    assert sonuc == {
+        "MURAT OZGUMUS": "MURAT Ö.", "MURAT ALPASLAN": "MURAT A.", "DOGUS UYANIK": "DOĞUŞ",
+        "SERPIL CANAN ERBUYUN": "SERPİL", "SINEM A": "SİNEM", "ALI ALAGOZ": "ALİ",
+        "BILINMEYEN KISI": "BILINMEYEN KISI",
+    }
+
+
+def test_belirsiz_ad_eslesmez():
+    kisiler = [("Murat", "Özgümüş", ""), ("Murat", "Özgür", "")]
+    assert kisa_adlar(kisiler, ["MURAT O"]) == {"MURAT O": "MURAT O"}
+
+
+def test_personel_metni_gidip_gelir_ve_noktalı_virgul_temizlenir():
+    metin = personel_yaz(_PERSONEL + [("Boş", "", ""), ("A;B", "C", "Uzman")])
+    assert personel_oku(metin) == _PERSONEL + [("A B", "C", "Uzman")]
+
+
+def test_personel_listesi_ayarlarla_kaydedilir():
+    durum = {"personel_text": "Ali;Veli;Uzman"}
+    ayarlar = collect_app_settings(durum)
+    assert ayarlar["personnel"] == "Ali;Veli;Uzman"
+    yeni = {}
+    apply_app_settings(yeni, ayarlar)
+    assert yeni["personel_text"] == "Ali;Veli;Uzman"
+
+
+def test_kisa_adlar_yazim_farki_ve_eksik_sozcuk():
+    kisiler = [("İsmahangül", "Özbayrak", ""), ("Murat", "Alparslan", ""), ("Murat", "Özgümüş", ""),
+               ("Arda", "Balcan", ""), ("İrem", "Gür Türkan", ""), ("Sinem", "Akkaya", "")]
+    sonuc = kisa_adlar(kisiler, ["ISMIHAN OZBAYRAK", "MURAT ALPASLAN", "MEHMET ARDA BALCAN", "IREM GUR"])
+    assert sonuc == {"ISMIHAN OZBAYRAK": "İSMAHANGÜL", "MURAT ALPASLAN": "MURAT A.",
+                     "MEHMET ARDA BALCAN": "ARDA", "IREM GUR": "İREM"}
