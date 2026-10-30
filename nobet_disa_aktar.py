@@ -13,6 +13,7 @@ from io import BytesIO
 
 import matplotlib.pyplot as plt
 import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import streamlit as st
 
@@ -108,14 +109,16 @@ IDARE_SABLONU = Path(__file__).with_name("sablon") / "idare_ikili.xlsx"
 _IDARE_GUNLERI = ("PAZARTESI", "SALI", "ÇARŞAMBA", "PERŞEMBE", "CUMA", "CUMARTESI", "PAZAR")
 
 
-def fill_idare_sablonu(liste_rows, role_names, yil, ay):
+def fill_idare_sablonu(liste_rows, role_names, yil, ay, baslik=None):
     """İdarenin ikili nöbet çizelgesi şablonunu seçilen ayın listesiyle doldurur.
 
     Şablonda ad sütunları D ve E'dir; ilk iki görev bunlara yazılır. Ay 31 günden
-    kısaysa fazla satırlar boş kalır.
+    kısaysa fazla satırlar boş kalır. ``baslik`` verilirse şablonun başlığı değişir.
     """
     wb = openpyxl.load_workbook(IDARE_SABLONU)
     ws = wb.active
+    if baslik:
+        ws["B1"] = baslik
     _ay_adi = TR_AY_ADLARI[ay].replace("i", "İ").replace("ı", "I").upper()
     ws["A3"] = f"AY/YIL: {_ay_adi}/{yil}"
     for gun in range(1, calendar.monthrange(yil, ay)[1] + 1):
@@ -134,6 +137,116 @@ def fill_idare_sablonu(liste_rows, role_names, yil, ay):
     output = BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def read_uzman_excel(dosya, yil, ay):
+    """Diğer ekibin Excel'i ("Tarih" + iki nöbetçi sütunu): ({gün: (ad1, ad2)}, atlanan satır).
+
+    Seçili ay dışındaki ya da okunamayan tarihli satırlar atlanır (sayılır). "Tarih"
+    sütunu ve ardından iki sütun yoksa None döner.
+    """
+    tablo = pd.read_excel(dosya, nrows=EXCEL_IMPORT_MAX_ROWS)
+    sutunlar = [str(c).lower() for c in tablo.columns]
+    tarih_i = next((i for i, c in enumerate(sutunlar) if "tarih" in c), None)
+    if tarih_i is None or tarih_i + 2 >= len(sutunlar):
+        return None
+    gunler, atlanan = {}, 0
+    for _, satir in tablo.iterrows():
+        _t = parse_schedule_import_date(satir.iloc[tarih_i])
+        if not _t or (_t["month"], _t["year"]) != (ay, yil) or _t["day"] in gunler:
+            atlanan += 1
+            continue
+        gunler[_t["day"]] = tuple(
+            "" if pd.isna(_v) else str(_v).strip() for _v in satir.iloc[tarih_i + 1:tarih_i + 3]
+        )
+    return gunler, atlanan
+
+
+def ortak_liste_excel(liste_rows, liste_roles, uzman_adlari, yil, ay, gun_detaylari):
+    """Tarih | UZMAN (2 ad) | görev 1 | görev 2 biçiminde ortak liste; hafta sonu ve tatil gri."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ortak Liste"
+    _kenar = Side(style="thin")
+    _cerceve = Border(left=_kenar, right=_kenar, top=_kenar, bottom=_kenar)
+    _gri = PatternFill("solid", fgColor="BFBFBF")
+    _roller = list(liste_roles[:2])
+    ws["A1"], ws["B1"] = "TARİH", "UZMAN"
+    ws.merge_cells("B1:C1")
+    for _sutun, _rol in zip("DE", _roller):
+        ws[f"{_sutun}1"] = str(_rol)
+    for gun, _detay in sorted((d["day_num"], d) for d in gun_detaylari.values()):
+        _satir = gun + 1
+        _kayit = liste_rows[gun - 1] if gun <= len(liste_rows) else {}
+        _adlar = list(uzman_adlari.get(gun, ("", ""))) + [_kayit.get(_rol) for _rol in _roller]
+        ws[f"A{_satir}"] = _detay["full_date"]
+        for _sutun, _ad in zip("BCDE", _adlar):
+            if _ad not in (None, "", "-"):
+                ws[f"{_sutun}{_satir}"].value = str(_ad)
+                # "=" ile başlayan ad Excel'de formül olarak çalışmasın.
+                ws[f"{_sutun}{_satir}"].data_type = "s"
+        for _sutun in "ABCDE":
+            _hucre = ws[f"{_sutun}{_satir}"]
+            _hucre.border = _cerceve
+            if _detay["weekend"] or _detay["holiday"]:
+                _hucre.fill = _gri
+    for _sutun in "ABCDE":
+        ws[f"{_sutun}1"].font = Font(bold=True)
+        ws[f"{_sutun}1"].alignment = Alignment(horizontal="center")
+        ws[f"{_sutun}1"].border = _cerceve
+        ws.column_dimensions[_sutun].width = 20
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
+    """Dışa aktar içinde: uzman Excel'i yüklenince ortak liste ve uzman idare şablonu indirilir."""
+    with st.expander("👥 Uzman listesi ile birleştir"):
+        st.caption("Diğer ekibin Excel'ini yükleyin (Tarih + iki nöbetçi sütunu). Ortak liste ve "
+                   "uzman idare şablonu hazırlanır; bu ayın kendi listeniz de aynı yerde yer alır.")
+        _dosya = st.file_uploader("Uzman Excel (.xlsx)", type=["xlsx"], key="uzman_excel",
+                                  label_visibility="collapsed")
+        if _dosya is None:
+            return
+        if _dosya.size > EXCEL_IMPORT_MAX_BYTES:
+            st.error("Dosya çok büyük (en fazla 2 MB).")
+            return
+        try:
+            _okunan = read_uzman_excel(_dosya, yil, ay)
+        except Exception:
+            st.error("Dosya okunamadı. Excel (.xlsx) olduğundan emin olun.")
+            return
+        if _okunan is None:
+            st.error("Dosya formatı uyumsuz: 'Tarih' sütunu ve ardından iki nöbetçi sütunu gerekli.")
+            return
+        _gunler, _atlanan = _okunan
+        if not _gunler:
+            st.warning(f"Seçili döneme ({ay:02d}/{yil}) ait satır bulunamadı.")
+            return
+        if len(_gunler) < len(gun_detaylari) or _atlanan:
+            st.warning(f"⚠️ {len(gun_detaylari)} günden {len(_gunler)} gün okundu; "
+                       f"{_atlanan} satır (başka ay ya da okunamayan tarih) atlandı.")
+        st.caption("Listede görünecek adları düzeltebilirsiniz (ör. MURAT OZGUMUS → MURAT Ö.).")
+        _adlar = sorted({_ad for _cift in _gunler.values() for _ad in _cift if _ad})
+        _duzenlenen = st.data_editor(
+            pd.DataFrame({"Dosyadaki ad": _adlar, "Listede görünecek ad": _adlar}),
+            disabled=["Dosyadaki ad"], hide_index=True, width="stretch", key=f"uzman_adlar_{_dosya.file_id}",
+        )
+        _esle = dict(zip(_duzenlenen["Dosyadaki ad"], _duzenlenen["Listede görünecek ad"].fillna("")))
+        _gorunen = {g: tuple(_esle.get(_ad, _ad) for _ad in _cift) for g, _cift in _gunler.items()}
+        _baslik = st.text_input("Uzman çizelgesi başlığı", "YOĞUN BAKIM UZMAN DOKTOR NÖBET ÇİZELGESİ")
+        _uzman_rows = [
+            dict(zip(("Uzman 1", "Uzman 2"), _gorunen.get(g, ("", ""))))
+            for g in range(1, len(gun_detaylari) + 1)
+        ]
+        _xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        st.download_button("📋 Ortak liste (Excel)",
+                           ortak_liste_excel(liste_rows, liste_roles, _gorunen, yil, ay, gun_detaylari),
+                           f"ortak_liste_{yil}_{ay:02d}.xlsx", _xlsx, on_click="ignore", width="stretch")
+        st.download_button("🏥 Uzman idare şablonu",
+                           fill_idare_sablonu(_uzman_rows, ["Uzman 1", "Uzman 2"], yil, ay, baslik=_baslik),
+                           f"idare_sablonu_uzman_{yil}_{ay:02d}.xlsx", _xlsx, on_click="ignore", width="stretch")
 
 
 def whatsapp_url(text):
@@ -184,6 +297,7 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
             st.download_button("🏥 İdare şablonuna aktar", _idare_bytes, f"idare_sablonu_{yil}_{ay:02d}.xlsx",
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                on_click="ignore", width="stretch")
+            render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari)
             # Sayfanın kendi yazdırma penceresi (A4 yatay, yalnız tablo ve takvim; nobet_stil.py).
             st.iframe(
                 "<button onclick=\"window.parent.print()\" style=\"width:100%;padding:8px;border-radius:8px;"
