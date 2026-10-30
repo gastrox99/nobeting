@@ -50,7 +50,7 @@ def render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, t
         dp_we = sum(1 for c in dp_shifts if gun_detaylari[c]['weekend'])
         dp_hol = sum(1 for c in dp_shifts if gun_detaylari[c]['holiday'] and not gun_detaylari[c]['weekend'])
         dp_weekday = len(dp_shifts) - dp_we - dp_hol
-        dp_total_h, dp_fm_h, dp_pay = nobet_ucreti_hesapla(
+        _, _, dp_pay = nobet_ucreti_hesapla(
             len(dp_shifts),
             sum(1 for c in dp_shifts if gun_detaylari[c]['holiday'] and (
                 resmi_tatil_gunleri is None or gun_detaylari[c]['day_num'] in resmi_tatil_gunleri)),

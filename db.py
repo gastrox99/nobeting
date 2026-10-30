@@ -1059,25 +1059,6 @@ def get_share_link(owner, year, month):
             conn.close()
 
 
-def delete_share_link(owner, year, month):
-    conn = None
-    try:
-        conn = _connect()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    'DELETE FROM share_links WHERE owner = %s AND year = %s AND month = %s',
-                    (owner, year, month),
-                )
-        return True
-    except Exception as e:
-        _log_error("Delete share link", e)
-        return False
-    finally:
-        if conn is not None:
-            conn.close()
-
-
 def delete_all_share_links(owner):
     """Close every share link of the owner (the permanent one and old monthly ones)."""
     conn = None
