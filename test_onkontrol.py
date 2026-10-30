@@ -62,3 +62,40 @@ def test_ay_sonu_cakismasi_sonraki_ayin_ilk_nobetiyle_olculur():
     frame.at["Ali", "5 Pzt"] = True
     frame.at["Ali", "2 Cum"] = True
     assert ilk_nobet_gunleri(frame) == {"Ali": 2}
+
+
+def test_yedek_adaylari_hafta_sonu_az_tutana_oncelik_verir():
+    from nobet_core import build_gun_detaylari
+    from nobet_onkontrol import yedek_adaylari
+    days = build_gun_detaylari(2026, 11, 30, [])
+    cols = list(days)
+    names = ["Ali", "Ayşe", "Can", "Deniz", "Ece", "Fuat"]
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    col = "14 Cmt"
+    for p in ("Ali", "Fuat"):
+        schedule.at[p, col] = True
+    schedule.at["Ayşe", "7 Cmt"] = True      # 1 hafta sonu
+    for c in ("2 Pzt", "3 Sal", "4 Çar"):
+        schedule.at["Can", c] = True         # 0 hafta sonu, 3 nöbet
+    schedule.at["Ece", "5 Per"] = True       # 0 hafta sonu, 1 nöbet
+    unwanted.at["Deniz", col] = True
+    adaylar, nedenler = yedek_adaylari(schedule, col, "Ali", days, unwanted, 1)
+    assert adaylar == ["Ece", "Can", "Ayşe"]
+    assert ("izinli / müsait değil", ["Deniz"]) in nedenler
+    assert schedule.at["Ali", col]          # öneri çizelgeyi değiştirmez
+
+
+def test_telafi_gunleri_ayni_ay_icinde_sonraki_gunlerden_yedegin_nobeti():
+    from nobet_core import build_gun_detaylari
+    from nobet_onkontrol import telafi_gunleri
+    days = build_gun_detaylari(2026, 11, 30, [])
+    names = ["Ali", "Ece"]
+    schedule = pd.DataFrame(False, index=names, columns=list(days))
+    unwanted = pd.DataFrame(False, index=names, columns=list(days))
+    schedule.at["Ece", "14 Cmt"] = True      # yedek yazıldı (Ali çıktı)
+    for c in ("12 Per", "19 Per", "26 Per", "29 Pzt"):
+        schedule.at["Ece", c] = True
+    schedule.at["Ali", "18 Çar"] = True      # 19. günle dinlenme çakışır
+    unwanted.loc["Ali", "29 Pzt"] = True      # müsait değil
+    assert telafi_gunleri(schedule, "14 Cmt", "Ali", "Ece", days, unwanted, 1) == ["26 Per"]
