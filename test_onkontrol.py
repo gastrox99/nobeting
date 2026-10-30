@@ -62,3 +62,25 @@ def test_ay_sonu_cakismasi_sonraki_ayin_ilk_nobetiyle_olculur():
     frame.at["Ali", "5 Pzt"] = True
     frame.at["Ali", "2 Cum"] = True
     assert ilk_nobet_gunleri(frame) == {"Ali": 2}
+
+
+def test_yedek_adaylari_hafta_sonu_az_tutana_oncelik_verir():
+    from nobet_core import build_gun_detaylari
+    from nobet_onkontrol import yedek_adaylari
+    days = build_gun_detaylari(2026, 11, 30, [])
+    cols = list(days)
+    names = ["Ali", "Ayşe", "Can", "Deniz", "Ece", "Fuat"]
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    col = "14 Cmt"
+    for p in ("Ali", "Fuat"):
+        schedule.at[p, col] = True
+    schedule.at["Ayşe", "7 Cmt"] = True      # 1 hafta sonu
+    for c in ("2 Pzt", "3 Sal", "4 Çar"):
+        schedule.at["Can", c] = True         # 0 hafta sonu, 3 nöbet
+    schedule.at["Ece", "5 Per"] = True       # 0 hafta sonu, 1 nöbet
+    unwanted.at["Deniz", col] = True
+    adaylar, nedenler = yedek_adaylari(schedule, col, "Ali", days, unwanted, 1)
+    assert adaylar == ["Ece", "Can", "Ayşe"]
+    assert ("izinli / müsait değil", ["Deniz"]) in nedenler
+    assert schedule.at["Ali", col]          # öneri çizelgeyi değiştirmez
