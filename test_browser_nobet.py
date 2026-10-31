@@ -17,6 +17,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect, sync_playwright
 
 
@@ -485,8 +486,16 @@ def test_unvan_secilince_saat_ucreti_gelir_ve_elle_degisir(app_url):
         try:
             unvan = _settings_box(page, "combobox", "🩺 Ünvan:")
             _wait_idle(page, 1.0)
-            unvan.press("ArrowDown")
-            page.get_by_role("option", name="Tabip", exact=True).click()
+            # Yoğun makinede ilk ok tuşu yutulabilir; liste açılana kadar birkaç kez dene.
+            option = page.get_by_role("option", name="Tabip", exact=True)
+            for _ in range(4):
+                unvan.press("ArrowDown")
+                try:
+                    option.wait_for(timeout=5000)
+                    break
+                except PlaywrightTimeoutError:
+                    page.keyboard.press("Escape")
+            option.click()
             _wait_idle(page)
             rate = lambda: float(_settings_box(page, "spinbutton", "💰 Saat Ücreti (TL):").input_value())
             auto = rate()

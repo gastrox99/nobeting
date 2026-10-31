@@ -8,6 +8,7 @@ import datetime
 import difflib
 import importlib.util
 import re
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
 from io import BytesIO
@@ -18,7 +19,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import streamlit as st
 
-from db import create_share_link, delete_all_share_links, get_share_link
+from db import create_share_link, delete_all_share_links, get_share_link, log_unexpected
 from nobet_onkontrol import render_share_check
 from nobet_core import (
     EXCEL_IMPORT_MAX_BYTES,
@@ -106,8 +107,10 @@ def convert_df_to_excel(df_liste, df_stats_load, df_stats_finance, yil=None):
     return output.getvalue()
 
 
+# Uzman dosyasında birkaç ay alt alta olabilir; bir ay en fazla 31 satır olduğundan 400 satır yeter.
+UZMAN_EXCEL_MAX_ROWS = 400
 IDARE_SABLONU = Path(__file__).with_name("sablon") / "idare_ikili.xlsx"
-_IDARE_GUNLERI = ("PAZARTESI", "SALI", "ÇARŞAMBA", "PERŞEMBE", "CUMA", "CUMARTESI", "PAZAR")
+_IDARE_GUNLERI = ("PAZARTESİ", "SALI", "ÇARŞAMBA", "PERŞEMBE", "CUMA", "CUMARTESİ", "PAZAR")
 
 
 def fill_idare_sablonu(liste_rows, role_names, yil, ay, baslik=None):
@@ -146,13 +149,18 @@ def read_uzman_excel(dosya, yil, ay):
     Seçili ay dışındaki ya da okunamayan tarihli satırlar atlanır (sayılır). "Tarih"
     sütunu ve ardından iki sütun yoksa None döner.
     """
-    tablo = pd.read_excel(dosya, nrows=EXCEL_IMPORT_MAX_ROWS)
-    sutunlar = [str(c).lower() for c in tablo.columns]
-    tarih_i = next((i for i, c in enumerate(sutunlar) if "tarih" in c), None)
-    if tarih_i is None or tarih_i + 2 >= len(sutunlar):
+    tablo = pd.read_excel(dosya, header=None, nrows=UZMAN_EXCEL_MAX_ROWS)
+    # Başlık ("Tarih", büyük/küçük harf fark etmez) ilk 10 satırda aranır.
+    baslik_i = tarih_i = None
+    for _i in range(min(10, len(tablo))):
+        _sutun = next((_j for _j, _c in enumerate(tablo.iloc[_i]) if "TARIH" in _ascii_buyuk(_c)), None)
+        if _sutun is not None:
+            baslik_i, tarih_i = _i, _sutun
+            break
+    if tarih_i is None or tarih_i + 2 >= tablo.shape[1]:
         return None
     gunler, atlanan = {}, 0
-    for _, satir in tablo.iterrows():
+    for _, satir in tablo.iloc[baslik_i + 1:].iterrows():
         _t = parse_schedule_import_date(satir.iloc[tarih_i])
         if not _t or (_t["month"], _t["year"]) != (ay, yil) or _t["day"] in gunler:
             atlanan += 1
@@ -229,14 +237,16 @@ def kisa_adlar(kisiler, dosya_adlari):
     Kısa ad, personel listesinde elle yazılmışsa o; yoksa adın ilk sözcüğüdür; aynı ilk ada sahip başka biri varsa soyadın baş harfi
     eklenir ("MURAT Ö."). Eşleştirme sırayla: tam ad, adın başı ("IREM GUR"), ad + soyad
     baş harfi ("SINEM A"), soyad sonu ("MEHMET ARDA BALCAN"), yazım benzerliği (≥ 0,85).
-    Bir aşamada birden çok kişi çıkarsa ya da hiçbiri çıkmazsa ad olduğu gibi kalır.
+    Bir aşamada birden çok kişi çıkarsa, hiçbiri çıkmazsa ya da iki dosya adı aynı kısa ada denk gelirse ad olduğu gibi kalır.
     """
     _kayitlar = _kisa_kayitlari(kisiler)
     sonuc = {}
     for _dosya_adi in dosya_adlari:
         _k = _eslesen_kisi(_kayitlar, _dosya_adi)
         sonuc[_dosya_adi] = _k["kisa"] if _k else _dosya_adi
-    return sonuc
+    # İki dosya adı aynı kısa ada çıkıyorsa ikisi de bağlanmaz (iki kişi tek ada karışmasın).
+    _cakisan = {_k for _k in sonuc.values() if list(sonuc.values()).count(_k) > 1}
+    return {_a: (_a if _k in _cakisan and _k != _a else _k) for _a, _k in sonuc.items()}
 
 
 def ortak_liste_excel(liste_rows, liste_roles, uzman_adlari, yil, ay, gun_detaylari):
@@ -320,7 +330,11 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
             return
         try:
             _okunan = read_uzman_excel(_dosya, yil, ay)
-        except Exception:
+        except (ValueError, OSError, zipfile.BadZipFile):
+            st.error("Dosya okunamadı. Excel (.xlsx) olduğundan emin olun.")
+            return
+        except Exception as _e:
+            log_unexpected("Uzman Excel", _e)
             st.error("Dosya okunamadı. Excel (.xlsx) olduğundan emin olun.")
             return
         if _okunan is None:
@@ -338,7 +352,7 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
         _kisa = kisa_adlar(_personel, _adlar)
         _bulunamayan = [_ad for _ad in _adlar if _kisa[_ad] == _ad]
         if _bulunamayan and st.session_state.get("personel_text"):
-            st.warning("⚠️ Personel listesinde bulunamadı: " + ", ".join(_bulunamayan))
+            st.warning("⚠️ Personel listesinde bulunamadı ya da başka bir adla karıştı: " + ", ".join(_bulunamayan))
         st.caption("Listede görünecek adları düzeltebilirsiniz (ör. MURAT OZGUMUS → MURAT Ö.).")
         _duzenlenen = st.data_editor(
             pd.DataFrame({"Dosyadaki ad": _adlar, "Listede görünecek ad": [_kisa[_ad] for _ad in _adlar]}),
@@ -351,7 +365,7 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
         for _ad in _adlar:
             _yeni_kisa = str(_esle[_ad]).strip()
             _k = _eslesen_kisi(_kayitlar, _ad)
-            if _k and _yeni_kisa and _yeni_kisa != _k["kisa"]:
+            if _k and _yeni_kisa and _yeni_kisa != _kisa[_ad]:
                 _guncel[_k["sira"]][3] = _yeni_kisa
         if _guncel != [list(_p) for _p in _personel]:
             st.session_state.personel_text = personel_yaz(_guncel)
@@ -419,6 +433,9 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
             st.download_button("🏥 İdare şablonuna aktar", _idare_bytes, f"idare_sablonu_{yil}_{ay:02d}.xlsx",
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                on_click="ignore", width="stretch")
+            if len(liste_roles) > 2:
+                st.caption("⚠️ İdare şablonunda yalnız ilk iki görev sütunu var; 3. ve sonraki "
+                           "kişiler şablona yazılmaz.")
             render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari)
             # Sayfanın kendi yazdırma penceresi (A4 yatay, yalnız tablo ve takvim; nobet_stil.py).
             st.iframe(
@@ -548,7 +565,9 @@ def render_excel_import(yil, ay, gun_detaylari, isimler, sutunlar, role_names, s
                     pd.read_excel(_xl, sheet_name=_sheet, nrows=EXCEL_IMPORT_MAX_ROWS),
                     isimler, sutunlar, gun_detaylari, role_names, yil, ay,
                 )
-            except Exception:
+            except Exception as _e:
+                if not isinstance(_e, (ValueError, OSError, zipfile.BadZipFile)):
+                    log_unexpected("Excel içe aktarma", _e)
                 _msgs.append(("error",
                     "Dosya okunamadı. Lütfen uygulamadan indirilen Excel formatını "
                     "('Tarih' + görev sütunları) kullandığınızdan emin olun."))
