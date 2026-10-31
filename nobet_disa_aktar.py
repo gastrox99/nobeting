@@ -206,7 +206,7 @@ def kisa_adlar(kisiler, dosya_adlari):
     Kısa ad adın ilk sözcüğüdür; aynı ilk ada sahip başka biri varsa soyadın baş harfi
     eklenir ("MURAT Ö."). Eşleştirme sırayla: tam ad, adın başı ("IREM GUR"), ad + soyad
     baş harfi ("SINEM A"), soyad sonu ("MEHMET ARDA BALCAN"), yazım benzerliği (≥ 0,85).
-    Bir aşamada birden çok kişi çıkarsa ya da hiçbiri çıkmazsa ad olduğu gibi kalır.
+    Bir aşamada birden çok kişi çıkarsa, hiçbiri çıkmazsa ya da iki dosya adı aynı kısa ada denk gelirse ad olduğu gibi kalır.
     """
     _ilk = [_ascii_buyuk(ad).split()[0] for ad, _soyad, _grup in kisiler]
     _sayac = {_i: _ilk.count(_i) for _i in _ilk}
@@ -233,7 +233,9 @@ def kisa_adlar(kisiler, dosya_adlari):
                 if len(_adaylar) == 1:
                     sonuc[_dosya_adi] = _adaylar[0]["kisa"]
                 break
-    return sonuc
+    # İki dosya adı aynı kısa ada çıkıyorsa ikisi de bağlanmaz (iki kişi tek ada karışmasın).
+    _cakisan = {_k for _k in sonuc.values() if list(sonuc.values()).count(_k) > 1}
+    return {_a: (_a if _k in _cakisan and _k != _a else _k) for _a, _k in sonuc.items()}
 
 
 def ortak_liste_excel(liste_rows, liste_roles, uzman_adlari, yil, ay, gun_detaylari):
@@ -403,7 +405,7 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
         _kisa = kisa_adlar(personel_oku(st.session_state.get("personel_text", "")), _adlar)
         _bulunamayan = [_ad for _ad in _adlar if _kisa[_ad] == _ad]
         if _bulunamayan and st.session_state.get("personel_text"):
-            st.warning("⚠️ Personel listesinde bulunamadı: " + ", ".join(_bulunamayan))
+            st.warning("⚠️ Personel listesinde bulunamadı ya da başka bir adla karıştı: " + ", ".join(_bulunamayan))
         st.caption("Listede görünecek adları düzeltebilirsiniz (ör. MURAT OZGUMUS → MURAT Ö.).")
         _duzenlenen = st.data_editor(
             pd.DataFrame({"Dosyadaki ad": _adlar, "Listede görünecek ad": [_kisa[_ad] for _ad in _adlar]}),
