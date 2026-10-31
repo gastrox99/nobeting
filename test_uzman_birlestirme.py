@@ -78,7 +78,7 @@ def test_belirsiz_ad_eslesmez():
 
 def test_personel_metni_gidip_gelir_ve_noktalı_virgul_temizlenir():
     metin = personel_yaz(_PERSONEL + [("Boş", "", ""), ("A;B", "C", "Uzman")])
-    assert personel_oku(metin) == _PERSONEL + [("A B", "C", "Uzman")]
+    assert personel_oku(metin) == [_p + ("",) for _p in _PERSONEL] + [("A B", "C", "Uzman", "")]
 
 
 def test_personel_listesi_ayarlarla_kaydedilir():
@@ -96,3 +96,12 @@ def test_kisa_adlar_yazim_farki_ve_eksik_sozcuk():
     sonuc = kisa_adlar(kisiler, ["ISMIHAN OZBAYRAK", "MURAT ALPASLAN", "MEHMET ARDA BALCAN", "IREM GUR"])
     assert sonuc == {"ISMIHAN OZBAYRAK": "İSMAHANGÜL", "MURAT ALPASLAN": "MURAT A.",
                      "MEHMET ARDA BALCAN": "ARDA", "IREM GUR": "İREM"}
+
+
+def test_elle_yazilan_kisa_ad_kullanilir_ve_kaydedilir():
+    kisiler = [("Murat", "Özgümüş", "Uzman", "MURO"), ("Murat", "Alpaslan", "Uzman", "")]
+    assert kisa_adlar(kisiler, ["MURAT OZGUMUS", "MURAT ALPASLAN"]) == {
+        "MURAT OZGUMUS": "MURO", "MURAT ALPASLAN": "MURAT A."}
+    metin = personel_yaz(kisiler)
+    assert metin == "Murat;Özgümüş;Uzman;MURO\nMurat;Alpaslan;Uzman"
+    assert personel_oku(metin) == kisiler
