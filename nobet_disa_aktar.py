@@ -20,7 +20,10 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import streamlit as st
 
-from db import create_share_link, delete_all_share_links, get_share_link, log_unexpected
+from db import (
+    MonthLocked, create_share_link, delete_all_share_links, get_share_link, load_uzman_list, log_unexpected,
+    save_uzman_list,
+)
 from nobet_onkontrol import render_share_check
 from nobet_core import (
     EXCEL_IMPORT_MAX_BYTES,
@@ -381,38 +384,87 @@ def _render_personel_listesi():
             st.rerun()
 
 
-def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
-    """Dışa aktar içinde: uzman Excel'i yüklenince ortak liste ve uzman idare şablonu indirilir."""
+def _kayitli_uzman_listesi(owner, yil, ay):
+    """Ayın kayıtlı uzman listesi ``(dosya adı, günler)`` ya da None; oturumda bir kez okunur."""
+    _onbellek = st.session_state.setdefault("uzman_listesi_kayit", {})
+    if (owner, yil, ay) not in _onbellek:
+        _onbellek[(owner, yil, ay)] = load_uzman_list(owner, yil, ay)
+    return _onbellek[(owner, yil, ay)]
+
+
+def _uzman_listesini_kaydet(owner, yil, ay, dosya, gunler):
+    """Yüklenen dosyanın günlerini aya bir kez kaydeder (her yeniden çizimde değil)."""
+    _isaret = (owner, yil, ay, dosya.file_id)
+    if st.session_state.get("uzman_listesi_kaydedilen") == _isaret:
+        return
+    try:
+        if st.session_state.get("ay_kilitli"):
+            raise MonthLocked(yil, ay)
+        _ok = save_uzman_list(owner, yil, ay, dosya.name, gunler)
+    except MonthLocked:
+        st.info("🔒 Ay kilitli; uzman listesi bu aya kaydedilmedi (indirmeler çalışır).")
+        return
+    if not _ok:
+        st.warning("⚠️ Uzman listesi kaydedilemedi; indirmeler çalışır. Sonra yeniden yükleyin.")
+        return
+    st.session_state.uzman_listesi_kaydedilen = _isaret
+    st.session_state.setdefault("uzman_listesi_kayit", {})[(owner, yil, ay)] = (dosya.name, gunler)
+    st.success(f"✅ Uzman listesi bu aya kaydedildi ({dosya.name}).")
+
+
+def _yuklenen_uzman_gunleri(dosya, yil, ay, gun_detaylari):
+    """Yüklenen dosyanın ``{gün: (ad1, ad2)}`` günleri; okunamazsa uyarı yazar, None döner."""
+    if dosya.size > EXCEL_IMPORT_MAX_BYTES:
+        st.error("Dosya çok büyük (en fazla 2 MB).")
+        return None
+    try:
+        _okunan = read_uzman_excel(dosya, yil, ay)
+    except (ValueError, OSError, zipfile.BadZipFile):
+        st.error("Dosya okunamadı. Excel (.xlsx) olduğundan emin olun.")
+        return None
+    except Exception as _e:
+        log_unexpected("Uzman Excel", _e)
+        st.error("Dosya okunamadı. Excel (.xlsx) olduğundan emin olun.")
+        return None
+    if _okunan is None:
+        st.error("Dosya formatı uyumsuz: 'Tarih' sütunu ve ardından iki nöbetçi sütunu gerekli.")
+        return None
+    _gunler, _atlanan = _okunan
+    if not _gunler:
+        st.warning(f"Seçili döneme ({ay:02d}/{yil}) ait satır bulunamadı.")
+        return None
+    if len(_gunler) < len(gun_detaylari) or _atlanan:
+        st.warning(f"⚠️ {len(gun_detaylari)} günden {len(_gunler)} gün okundu; "
+                   f"{_atlanan} satır (başka ay ya da okunamayan tarih) atlandı.")
+    return _gunler
+
+
+def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari, owner="", db_ready=False):
+    """Dışa aktar içinde: uzman Excel'i yüklenince ortak liste ve uzman idare şablonu indirilir.
+
+    Yüklenen liste aya kaydedilir; ay yeniden açılınca dosya yüklemeden hazır gelir.
+    """
     _render_personel_listesi()
-    with st.expander("👥 Uzman listesi ile birleştir"):
-        st.caption("Diğer ekibin Excel'ini yükleyin (Tarih + iki nöbetçi sütunu). Ortak liste ve "
-                   "uzman idare şablonu hazırlanır; bu ayın kendi listeniz de aynı yerde yer alır.")
+    _kayitli = _kayitli_uzman_listesi(owner, yil, ay) if db_ready else None
+    with st.expander("👥 Uzman listesi ile birleştir" + (" ✓" if _kayitli else "")):
+        if _kayitli:
+            st.caption(f"Uzman listesi: {_kayitli[0]} yüklendi. Değiştirmek için yeni dosyayı yükleyin.")
+        else:
+            st.caption("Diğer ekibin Excel'ini yükleyin (Tarih + iki nöbetçi sütunu). Ortak liste ve "
+                       "uzman idare şablonu hazırlanır; bu ayın kendi listeniz de aynı yerde yer alır.")
         _dosya = st.file_uploader("Uzman Excel (.xlsx)", type=["xlsx"], key="uzman_excel",
                                   label_visibility="collapsed")
-        if _dosya is None:
+        if _dosya is not None:
+            _gunler = _yuklenen_uzman_gunleri(_dosya, yil, ay, gun_detaylari)
+            if _gunler is None:
+                return
+            if db_ready:
+                _uzman_listesini_kaydet(owner, yil, ay, _dosya, _gunler)
+            _tablo_anahtari = f"uzman_adlar_{_dosya.file_id}"
+        elif _kayitli:
+            _gunler, _tablo_anahtari = _kayitli[1], f"uzman_adlar_kayit_{yil}_{ay}"
+        else:
             return
-        if _dosya.size > EXCEL_IMPORT_MAX_BYTES:
-            st.error("Dosya çok büyük (en fazla 2 MB).")
-            return
-        try:
-            _okunan = read_uzman_excel(_dosya, yil, ay)
-        except (ValueError, OSError, zipfile.BadZipFile):
-            st.error("Dosya okunamadı. Excel (.xlsx) olduğundan emin olun.")
-            return
-        except Exception as _e:
-            log_unexpected("Uzman Excel", _e)
-            st.error("Dosya okunamadı. Excel (.xlsx) olduğundan emin olun.")
-            return
-        if _okunan is None:
-            st.error("Dosya formatı uyumsuz: 'Tarih' sütunu ve ardından iki nöbetçi sütunu gerekli.")
-            return
-        _gunler, _atlanan = _okunan
-        if not _gunler:
-            st.warning(f"Seçili döneme ({ay:02d}/{yil}) ait satır bulunamadı.")
-            return
-        if len(_gunler) < len(gun_detaylari) or _atlanan:
-            st.warning(f"⚠️ {len(gun_detaylari)} günden {len(_gunler)} gün okundu; "
-                       f"{_atlanan} satır (başka ay ya da okunamayan tarih) atlandı.")
         _adlar = sorted({_ad for _cift in _gunler.values() for _ad in _cift if _ad})
         _personel = personel_oku(st.session_state.get("personel_text", ""))
         _kisa = kisa_adlar(_personel, _adlar)
@@ -422,7 +474,7 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
         st.caption("Listede görünecek adları düzeltebilirsiniz (ör. MURAT OZGUMUS → MURAT Ö.).")
         _duzenlenen = st.data_editor(
             pd.DataFrame({"Dosyadaki ad": _adlar, "Listede görünecek ad": [_kisa[_ad] for _ad in _adlar]}),
-            disabled=["Dosyadaki ad"], hide_index=True, width="stretch", key=f"uzman_adlar_{_dosya.file_id}",
+            disabled=["Dosyadaki ad"], hide_index=True, width="stretch", key=_tablo_anahtari,
         )
         _esle = dict(zip(_duzenlenen["Dosyadaki ad"], _duzenlenen["Listede görünecek ad"].fillna("")))
         # Düzeltilen kısa adlar personel listesine kaydedilir; bir dahaki sefere hazır gelir.
@@ -509,7 +561,8 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
             if len(liste_roles) > 2:
                 st.caption("⚠️ İdare şablonunda yalnız ilk iki görev sütunu var; 3. ve sonraki "
                            "kişiler şablona yazılmaz.")
-            render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari)
+            render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari,
+                                     owner=current_owner, db_ready=db_ready)
             # Sayfanın kendi yazdırma penceresi (A4 yatay, yalnız tablo ve takvim; nobet_stil.py).
             st.iframe(
                 "<button onclick=\"window.parent.print()\" style=\"width:100%;padding:8px;border-radius:8px;"
