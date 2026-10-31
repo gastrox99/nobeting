@@ -96,3 +96,30 @@ def test_kisa_adlar_yazim_farki_ve_eksik_sozcuk():
     sonuc = kisa_adlar(kisiler, ["ISMIHAN OZBAYRAK", "MURAT ALPASLAN", "MEHMET ARDA BALCAN", "IREM GUR"])
     assert sonuc == {"ISMIHAN OZBAYRAK": "İSMAHANGÜL", "MURAT ALPASLAN": "MURAT A.",
                      "MEHMET ARDA BALCAN": "ARDA", "IREM GUR": "İREM"}
+
+
+def test_uzman_excel_buyuk_harfli_tarih_basligi_okunur():
+    gunler, _ = read_uzman_excel(_uzman_excel(["01.08.2026"], ("TARİH", "N1", "N2")), 2026, 8)
+    assert gunler == {1: ("A1", "B1")}
+
+
+def test_uzman_excel_ustte_baslik_satiri_olan_dosya_okunur():
+    cikti = BytesIO()
+    pd.DataFrame(
+        [["UZMAN NÖBET ÇİZELGESİ", None, None], ["TARİH", "AD", "AD"], ["01.08.2026", "A1", "B1"]]
+    ).to_excel(cikti, index=False, header=False)
+    cikti.seek(0)
+    gunler, _ = read_uzman_excel(cikti, 2026, 8)
+    assert gunler == {1: ("A1", "B1")}
+
+
+def test_uzman_excel_iki_ay_alt_alta_ise_ikinci_ay_da_okunur():
+    tarihler = [f"{g:02d}.11.2026" for g in range(1, 31)] + [f"{g:02d}.12.2026" for g in range(1, 32)]
+    gunler, _ = read_uzman_excel(_uzman_excel(tarihler), 2026, 12)
+    assert len(gunler) == 31
+
+
+def test_idare_sablonu_gun_adlari_turkce_harfli():
+    ws = openpyxl.load_workbook(BytesIO(fill_idare_sablonu([], ["A", "B"], 2026, 8))).active
+    assert (ws["B5"].value, ws["B6"].value) == ("CUMARTESİ", "PAZAR")  # 1 Ağustos 2026 Cumartesi
+    assert ws["B7"].value == "PAZARTESİ"
