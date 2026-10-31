@@ -317,6 +317,20 @@ def init_db():
                 ''')
                 cur.execute('ALTER TABLE team_requests ADD COLUMN IF NOT EXISTS decided_at TIMESTAMP')
 
+                # Diğer ekibin (uzman) o aya ait listesi: Dışa aktar > «Uzman listesi ile
+                # birleştir»e yüklenen Excel'in okunan günleri; ayda tek liste.
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS uzman_lists (
+                        owner VARCHAR(320) NOT NULL DEFAULT '',
+                        year INTEGER NOT NULL,
+                        month INTEGER NOT NULL,
+                        file_name VARCHAR(255) NOT NULL,
+                        days_json TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (owner, year, month)
+                    )
+                ''')
+
                 # Ayarlar > «Son hatalar»: en yeni 20 hata (sunucu günlüğü kısa sürede siliniyor).
                 cur.execute('''
                     CREATE TABLE IF NOT EXISTS error_log (
@@ -1265,6 +1279,60 @@ def delete_team_request(owner, request_id):
     except Exception as e:
         _log_error("Delete team request", e)
         return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def save_uzman_list(owner, year, month, file_name, days):
+    """Ayın uzman listesini (gün → iki ad) yazar; önceki listenin yerine geçer.
+
+    Ay kilitliyse hiçbir şey yazılmaz ve ``MonthLocked`` yükseltilir.
+    Veritabanı hatasında False döner.
+    """
+    days_json = json.dumps({str(int(g)): list(adlar) for g, adlar in days.items()}, ensure_ascii=False)
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                if month_is_locked(year, month, []) and month_is_locked(year, month, _open_months(cur, owner)):
+                    raise MonthLocked(year, month)
+                cur.execute('''
+                    INSERT INTO uzman_lists (owner, year, month, file_name, days_json, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (owner, year, month) DO UPDATE
+                        SET file_name = EXCLUDED.file_name, days_json = EXCLUDED.days_json,
+                            updated_at = CURRENT_TIMESTAMP
+                ''', (owner, year, month, str(file_name)[:255], days_json))
+        return True
+    except MonthLocked:
+        raise
+    except Exception as e:
+        _log_error("Save uzman list", e)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def load_uzman_list(owner, year, month):
+    """Ayın kayıtlı uzman listesi ``(dosya adı, {gün: (ad1, ad2)})``; yoksa ya da okunamazsa None."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT file_name, days_json FROM uzman_lists WHERE owner = %s AND year = %s AND month = %s",
+                (owner, year, month),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return row[0], {int(g): tuple(adlar) for g, adlar in json.loads(row[1]).items()}
+    except Exception as e:
+        _log_error("Load uzman list", e)
+        return None
     finally:
         if conn is not None:
             conn.close()
