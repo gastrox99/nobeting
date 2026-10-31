@@ -3073,6 +3073,12 @@ class TestSwitchSchedulePeriod(unittest.TestCase):
         # Döneme bağlı olmayan ayarlar korunur.
         self.assertEqual(state["isimler_text"], "Ali")
 
+    def test_ay_degisince_telafi_paneli_bilgisi_silinir(self):
+        state = self._state()
+        state["yedek_telafi"] = ("Can", "Ali", "1 Çar")
+        switch_schedule_period(state, (2026, 11), lambda *args: None)
+        self.assertNotIn("yedek_telafi", state)
+
     def test_ayni_donemde_veya_ilk_yuklemede_hicbir_sey_degismez(self):
         state = self._state()
         self.assertFalse(switch_schedule_period(state, (2026, 10), lambda *a: self.fail()))
