@@ -185,54 +185,66 @@ def _buyuk(metin):
 
 
 def personel_oku(metin):
-    """"Ad;Soyad;Grup" satırlarından [(ad, soyad, grup)]; adı ya da soyadı boş satırlar atlanır."""
+    """"Ad;Soyad;Grup;Kısa ad" satırlarından [(ad, soyad, grup, kısa ad)]; adı ya da soyadı boş satırlar atlanır."""
     kisiler = []
     for satir in (metin or "").splitlines():
-        ad, soyad, grup = ([_p.strip() for _p in satir.split(";")] + ["", "", ""])[:3]
+        ad, soyad, grup, kisa = ([_p.strip() for _p in satir.split(";")] + ["", "", "", ""])[:4]
         if ad and soyad:
-            kisiler.append((ad, soyad, grup))
+            kisiler.append((ad, soyad, grup, kisa))
     return kisiler
 
 
 def personel_yaz(kisiler):
-    """[(ad, soyad, grup)] → kayıt metni; ad ve soyadı boş olanlar yazılmaz."""
+    """[(ad, soyad, grup, kısa ad)] → kayıt metni; ad ve soyadı boş olanlar yazılmaz."""
     temiz = [[str(_p or "").replace(";", " ").strip() for _p in k] for k in kisiler]
-    return "\n".join(";".join(k) for k in temiz if k[0] and k[1])
+    return "\n".join(";".join(k).rstrip(";") for k in temiz if k[0] and k[1])
+
+
+def _eslesen_kisi(kayitlar, dosya_adi):
+    """Dosyadaki ada karşılık gelen tek kayıt; birden çok ya da hiç aday varsa None."""
+    _ad = _ascii_buyuk(dosya_adi)
+    _parca = _ad.split()
+    _asamalar = (
+        lambda k: k["tam"] == _ad,
+        lambda k: k["tam"].startswith(_ad + " "),
+        lambda k: len(_parca) > 1 and len(_parca[-1]) == 1
+        and k["ilk"] == _parca[0] and k["soyad"][0] == _parca[-1],
+        lambda k: _ad.endswith(" " + k["soyad"]),
+        lambda k: difflib.SequenceMatcher(None, _ad, k["tam"]).ratio() >= 0.85,
+    )
+    for _asama in _asamalar:
+        _adaylar = [_k for _k in kayitlar if _asama(_k)]
+        if _adaylar:
+            return _adaylar[0] if len(_adaylar) == 1 else None
+    return None
+
+
+def _kisa_kayitlari(kisiler):
+    _ilk = [_ascii_buyuk(_k[0]).split()[0] for _k in kisiler]
+    _sayac = {_i: _ilk.count(_i) for _i in _ilk}
+    _kayitlar = []
+    for _sira, (_k, _i) in enumerate(zip(kisiler, _ilk)):
+        ad, soyad = _k[0], _k[1]
+        _elle = _k[3].strip() if len(_k) > 3 else ""
+        _kisa = _elle or _buyuk(ad.split()[0]) + (f" {_buyuk(soyad)[0]}." if _sayac[_i] > 1 else "")
+        _kayitlar.append({"sira": _sira, "ilk": _i, "soyad": _ascii_buyuk(soyad),
+                          "tam": _ascii_buyuk(f"{ad} {soyad}"), "kisa": _kisa})
+    return _kayitlar
 
 
 def kisa_adlar(kisiler, dosya_adlari):
     """Dosyadaki adlar ("MURAT OZGUMUS", "SINEM A") → ortak listedeki kısa ad.
 
-    Kısa ad adın ilk sözcüğüdür; aynı ilk ada sahip başka biri varsa soyadın baş harfi
+    Kısa ad, personel listesinde elle yazılmışsa o; yoksa adın ilk sözcüğüdür; aynı ilk ada sahip başka biri varsa soyadın baş harfi
     eklenir ("MURAT Ö."). Eşleştirme sırayla: tam ad, adın başı ("IREM GUR"), ad + soyad
     baş harfi ("SINEM A"), soyad sonu ("MEHMET ARDA BALCAN"), yazım benzerliği (≥ 0,85).
     Bir aşamada birden çok kişi çıkarsa, hiçbiri çıkmazsa ya da iki dosya adı aynı kısa ada denk gelirse ad olduğu gibi kalır.
     """
-    _ilk = [_ascii_buyuk(ad).split()[0] for ad, _soyad, _grup in kisiler]
-    _sayac = {_i: _ilk.count(_i) for _i in _ilk}
-    _kayitlar = []
-    for (ad, soyad, _grup), _i in zip(kisiler, _ilk):
-        _kisa = _buyuk(ad.split()[0]) + (f" {_buyuk(soyad)[0]}." if _sayac[_i] > 1 else "")
-        _kayitlar.append({"ilk": _i, "soyad": _ascii_buyuk(soyad), "tam": _ascii_buyuk(f"{ad} {soyad}"), "kisa": _kisa})
+    _kayitlar = _kisa_kayitlari(kisiler)
     sonuc = {}
     for _dosya_adi in dosya_adlari:
-        _ad = _ascii_buyuk(_dosya_adi)
-        _parca = _ad.split()
-        _asamalar = (
-            lambda k: k["tam"] == _ad,
-            lambda k: k["tam"].startswith(_ad + " "),
-            lambda k: len(_parca) > 1 and len(_parca[-1]) == 1
-            and k["ilk"] == _parca[0] and k["soyad"][0] == _parca[-1],
-            lambda k: _ad.endswith(" " + k["soyad"]),
-            lambda k: difflib.SequenceMatcher(None, _ad, k["tam"]).ratio() >= 0.85,
-        )
-        sonuc[_dosya_adi] = _dosya_adi
-        for _asama in _asamalar:
-            _adaylar = [_k for _k in _kayitlar if _asama(_k)]
-            if _adaylar:
-                if len(_adaylar) == 1:
-                    sonuc[_dosya_adi] = _adaylar[0]["kisa"]
-                break
+        _k = _eslesen_kisi(_kayitlar, _dosya_adi)
+        sonuc[_dosya_adi] = _k["kisa"] if _k else _dosya_adi
     # İki dosya adı aynı kısa ada çıkıyorsa ikisi de bağlanmaz (iki kişi tek ada karışmasın).
     _cakisan = {_k for _k in sonuc.values() if list(sonuc.values()).count(_k) > 1}
     return {_a: (_a if _k in _cakisan and _k != _a else _k) for _a, _k in sonuc.items()}
@@ -344,10 +356,10 @@ def ortak_liste_html(liste_rows, liste_roles, uzman_adlari, gun_detaylari):
 def _render_personel_listesi():
     """Uzman ve pratisyenlerin ad-soyad listesi; kısa adlar buradan bulunur, ayarlarla birlikte kaydedilir."""
     with st.expander("📇 Personel listesi"):
-        st.caption("Ad, soyad ve grup (Uzman / Pratisyen). Ortak listedeki kısa adlar buradan bulunur. "
-                   "Satır ekleyip silerek düzenleyin.")
+        st.caption("Ad, soyad ve grup (Uzman / Pratisyen). Ortak listedeki kısa adlar buradan bulunur; "
+                   "Kısa ad boşsa adın ilk sözcüğü kullanılır. Satır ekleyip silerek düzenleyin.")
         _kayit = st.session_state.get("personel_text", "")
-        _tablo = pd.DataFrame(personel_oku(_kayit), columns=["Ad", "Soyad", "Grup"])
+        _tablo = pd.DataFrame(personel_oku(_kayit), columns=["Ad", "Soyad", "Grup", "Kısa ad"])
         _yeni = st.data_editor(
             _tablo, num_rows="dynamic", hide_index=True, width="stretch", key="personel_tablosu",
             column_config={"Grup": st.column_config.SelectboxColumn("Grup", options=["Uzman", "Pratisyen"])},
@@ -356,8 +368,8 @@ def _render_personel_listesi():
             _toplu = st.text_area("Toplu ekle (her satıra bir ad soyad)", height=110)
             _grup = st.selectbox("Grup", ["Uzman", "Pratisyen"])
             if st.form_submit_button("Ekle"):
-                _var = {_ascii_buyuk(f"{_a} {_s}") for _a, _s, _g in personel_oku(_kayit)}
-                _eklenen = [(" ".join(_p[:-1]), _p[-1], _grup) for _p in (_l.split() for _l in _toplu.splitlines())
+                _var = {_ascii_buyuk(f"{_a} {_s}") for _a, _s, *_ in personel_oku(_kayit)}
+                _eklenen = [(" ".join(_p[:-1]), _p[-1], _grup, "") for _p in (_l.split() for _l in _toplu.splitlines())
                             if len(_p) > 1 and _ascii_buyuk(" ".join(_p)) not in _var]
                 if _eklenen:
                     st.session_state.personel_text = personel_yaz(personel_oku(_kayit) + _eklenen)
@@ -402,7 +414,8 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
             st.warning(f"⚠️ {len(gun_detaylari)} günden {len(_gunler)} gün okundu; "
                        f"{_atlanan} satır (başka ay ya da okunamayan tarih) atlandı.")
         _adlar = sorted({_ad for _cift in _gunler.values() for _ad in _cift if _ad})
-        _kisa = kisa_adlar(personel_oku(st.session_state.get("personel_text", "")), _adlar)
+        _personel = personel_oku(st.session_state.get("personel_text", ""))
+        _kisa = kisa_adlar(_personel, _adlar)
         _bulunamayan = [_ad for _ad in _adlar if _kisa[_ad] == _ad]
         if _bulunamayan and st.session_state.get("personel_text"):
             st.warning("⚠️ Personel listesinde bulunamadı ya da başka bir adla karıştı: " + ", ".join(_bulunamayan))
@@ -412,6 +425,17 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
             disabled=["Dosyadaki ad"], hide_index=True, width="stretch", key=f"uzman_adlar_{_dosya.file_id}",
         )
         _esle = dict(zip(_duzenlenen["Dosyadaki ad"], _duzenlenen["Listede görünecek ad"].fillna("")))
+        # Düzeltilen kısa adlar personel listesine kaydedilir; bir dahaki sefere hazır gelir.
+        _kayitlar = _kisa_kayitlari(_personel)
+        _guncel = [list(_p) for _p in _personel]
+        for _ad in _adlar:
+            _yeni_kisa = str(_esle[_ad]).strip()
+            _k = _eslesen_kisi(_kayitlar, _ad)
+            if _k and _yeni_kisa and _yeni_kisa != _kisa[_ad]:
+                _guncel[_k["sira"]][3] = _yeni_kisa
+        if _guncel != [list(_p) for _p in _personel]:
+            st.session_state.personel_text = personel_yaz(_guncel)
+            st.rerun()
         _gorunen = {g: tuple(_esle.get(_ad, _ad) for _ad in _cift) for g, _cift in _gunler.items()}
         _baslik = st.text_input("Uzman çizelgesi başlığı", "YOĞUN BAKIM UZMAN DOKTOR NÖBET ÇİZELGESİ")
         _uzman_rows = [

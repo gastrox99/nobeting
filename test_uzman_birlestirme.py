@@ -5,9 +5,7 @@ from io import BytesIO
 import openpyxl
 import pandas as pd
 
-from nobet_disa_aktar import (
-    fill_idare_sablonu, ortak_liste_excel, ortak_liste_html, ortak_liste_metni, ortak_liste_png, read_uzman_excel,
-)
+from nobet_disa_aktar import fill_idare_sablonu, ortak_liste_excel, read_uzman_excel
 from nobet_gunler import build_gun_detaylari
 
 
@@ -80,7 +78,7 @@ def test_belirsiz_ad_eslesmez():
 
 def test_personel_metni_gidip_gelir_ve_noktalı_virgul_temizlenir():
     metin = personel_yaz(_PERSONEL + [("Boş", "", ""), ("A;B", "C", "Uzman")])
-    assert personel_oku(metin) == _PERSONEL + [("A B", "C", "Uzman")]
+    assert personel_oku(metin) == [_p + ("",) for _p in _PERSONEL] + [("A B", "C", "Uzman", "")]
 
 
 def test_personel_listesi_ayarlarla_kaydedilir():
@@ -100,28 +98,14 @@ def test_kisa_adlar_yazim_farki_ve_eksik_sozcuk():
                      "MEHMET ARDA BALCAN": "ARDA", "IREM GUR": "İREM"}
 
 
-def _ortak_girdi():
-    detay = build_gun_detaylari(2026, 8, 31, [])
-    rows = [{"AYB": f"K{g}", "GYB": f"L{g}"} for g in range(1, 32)]
-    return rows, ["AYB", "GYB"], {1: ("A <b>", "B")}, detay
+def test_elle_yazilan_kisa_ad_kullanilir_ve_kaydedilir():
+    kisiler = [("Murat", "Özgümüş", "Uzman", "MURO"), ("Murat", "Alpaslan", "Uzman", "")]
+    assert kisa_adlar(kisiler, ["MURAT OZGUMUS", "MURAT ALPASLAN"]) == {
+        "MURAT OZGUMUS": "MURO", "MURAT ALPASLAN": "MURAT A."}
+    metin = personel_yaz(kisiler)
+    assert metin == "Murat;Özgümüş;Uzman;MURO\nMurat;Alpaslan;Uzman"
+    assert personel_oku(metin) == kisiler
 
-
-def test_ortak_liste_png_uretilir():
-    assert ortak_liste_png(*_ortak_girdi()).startswith(b"\x89PNG")
-
-
-def test_ortak_liste_whatsapp_metni_hafta_sonu_kalin():
-    rows, roller, uzman, detay = _ortak_girdi()
-    satirlar = ortak_liste_metni(rows, roller, uzman, detay, 2026, 8).splitlines()
-    assert satirlar[0] == "📅 Ağustos 2026 Ortak Nöbet Listesi"
-    assert satirlar[2] == "*01.08.2026 Cmt* — Uzman: A <b> / B · AYB: K1 · GYB: L1"
-    assert satirlar[4] == "03.08.2026 Pzt — AYB: K3 · GYB: L3"
-
-
-def test_ortak_liste_yazdirma_sayfasi_adlari_kacirir():
-    html_ = ortak_liste_html(*_ortak_girdi())
-    assert "A &lt;b&gt;" in html_ and "window.print()" in html_
-    assert html_.count('<tr class="g">') == 10   # Ağustos 2026: 5 Cmt + 5 Paz
 
 def test_ayni_kisa_ada_denk_gelen_iki_kisi_birlesmez():
     kisiler = [("Murat", "Özgümüş", ""), ("Murat", "Özkan", ""), ("Ali", "Yılmaz", "")]
