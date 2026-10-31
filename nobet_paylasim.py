@@ -356,7 +356,7 @@ def _my_year(_owner, year, person):
     )
     _settings = load_app_settings(owner=_owner) or {}
     _team = _team_of(_owner)
-    _table, _months = yil_ozeti(_schedules, _prefs, year, None, _team, _settings.get("holidays_by_period"))
+    _table, _months = yil_ozeti(_schedules, _prefs, year, _settings.get("name_aliases"), _team, _settings.get("holidays_by_period"))
     _found = kisi_ve_ortalama(_table, person)
     return (*_found, _months) if _found else None
 

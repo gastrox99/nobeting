@@ -1736,6 +1736,7 @@ PERIOD_STATE_KEYS = (
     "locked_cells",
     "hidden_people",
     "schedule_version",
+    "yedek_telafi",
 )
 
 
