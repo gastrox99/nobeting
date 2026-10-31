@@ -140,3 +140,63 @@ def test_idare_sablonu_gun_adlari_turkce_harfli():
     ws = openpyxl.load_workbook(BytesIO(fill_idare_sablonu([], ["A", "B"], 2026, 8))).active
     assert (ws["B5"].value, ws["B6"].value) == ("CUMARTESİ", "PAZAR")  # 1 Ağustos 2026 Cumartesi
     assert ws["B7"].value == "PAZARTESİ"
+
+
+def _kayitli_liste_uygulamasi():
+    import nobet_disa_aktar as m
+    from nobet_gunler import build_gun_detaylari as _gd
+    gd = _gd(2026, 11, 30, [])
+    m.render_uzman_birlestirme([{"AYB": "Ali", "GYB": "Can"}] * 30, ["AYB", "GYB"], 2026, 11, gd,
+                               owner="ben@example.com", db_ready=True)
+
+
+def test_kayitli_uzman_listesi_ay_acilinca_dosyasiz_hazir_gelir(monkeypatch):
+    import nobet_disa_aktar
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setattr(nobet_disa_aktar, "load_uzman_list",
+                        lambda owner, yil, ay: ("uzman_kasim.xlsx", {1: ("A1", "B1"), 2: ("A2", "")}))
+    at = AppTest.from_function(_kayitli_liste_uygulamasi, default_timeout=60)
+    at.run()
+    assert [e.value for e in at.exception] == []
+    assert any("Uzman listesi: uzman_kasim.xlsx yüklendi" in c.value for c in at.caption)
+    etiketler = [b.label for b in at.get("download_button")]
+    assert "📋 Ortak liste (Excel)" in etiketler and "🏥 Uzman idare şablonu" in etiketler
+
+
+def _kaydetme_uygulamasi():
+    import streamlit as st
+    import nobet_disa_aktar as m
+    st.session_state.setdefault("kayitlar", [])
+
+    class Dosya:
+        file_id, name = "f1", "uzman.xlsx"
+    m._uzman_listesini_kaydet("ben", 2026, 11, Dosya, {1: ("A", "B")})
+    st.write(len(st.session_state.kayitlar))
+
+
+def _sahte_kayit(*a):
+    import streamlit as st
+    st.session_state.kayitlar.append(a)
+    return True
+
+
+def test_yuklenen_uzman_listesi_aya_bir_kez_kaydedilir(monkeypatch):
+    import nobet_disa_aktar
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setattr(nobet_disa_aktar, "save_uzman_list", _sahte_kayit)
+    at = AppTest.from_function(_kaydetme_uygulamasi, default_timeout=60)
+    at.run()
+    at.run()  # yeniden çizim tekrar yazmaz
+    assert at.session_state["kayitlar"] == [("ben", 2026, 11, "uzman.xlsx", {1: ("A", "B")})]
+    assert at.session_state["uzman_listesi_kayit"][("ben", 2026, 11)] == ("uzman.xlsx", {1: ("A", "B")})
+
+
+def test_kilitli_ayda_uzman_listesi_kaydedilmez(monkeypatch):
+    import nobet_disa_aktar
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setattr(nobet_disa_aktar, "save_uzman_list", _sahte_kayit)
+    at = AppTest.from_function(_kaydetme_uygulamasi, default_timeout=60)
+    at.session_state["ay_kilitli"] = True
+    at.run()
+    assert at.session_state["kayitlar"] == []
+    assert any("Ay kilitli" in i.value for i in at.info)
