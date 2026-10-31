@@ -51,3 +51,15 @@ def test_kisi_ve_ortalama_yalniz_kendi_satirini_verir():
     assert benim["Nöbet"] == 2 and ortalama["Nöbet"] == 1.5
     assert "Kişi" not in benim and "Ayşe" not in str(benim)
     assert kisi_ve_ortalama(tablo, "Yok") is None
+
+
+def test_paylasim_yilim_ad_degisikligini_bilir(monkeypatch):
+    import nobet_paylasim
+    ocak, _ = _ay(2026, 1, {"Eski": [2, 3]})
+    subat, _ = _ay(2026, 2, {"Yeni": [4]})
+    monkeypatch.setattr(nobet_paylasim, "load_auto_saved_assignments",
+                        lambda *a, **k: ({(2026, 1): ocak, (2026, 2): subat}, {}))
+    monkeypatch.setattr(nobet_paylasim, "load_app_settings", lambda **k: {"name_aliases": {"Eski": "Yeni"}})
+    monkeypatch.setattr(nobet_paylasim, "_team_of", lambda owner: ["Yeni"])
+    benim, _ortalama, aylar = nobet_paylasim._my_year("sahip", 2026, "Yeni")
+    assert benim["Nöbet"] == 3 and aylar == 2
