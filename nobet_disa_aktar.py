@@ -6,6 +6,7 @@ PNG/Excel/HTML dosyaları yalnızca düğmeye tıklanınca üretilir.
 import calendar
 import datetime
 import difflib
+import html
 import importlib.util
 import re
 import zipfile
@@ -287,6 +288,71 @@ def ortak_liste_excel(liste_rows, liste_roles, uzman_adlari, yil, ay, gun_detayl
     return output.getvalue()
 
 
+def ortak_liste_satirlari(liste_rows, liste_roles, uzman_adlari, gun_detaylari):
+    """Ortak listenin satırları: (başlıklar, [(tarih, uzman1, uzman2, görev1, görev2, gri_mi), ...])."""
+    _roller = list(liste_roles[:2])
+    _satirlar = []
+    for gun, _detay in sorted((d["day_num"], d) for d in gun_detaylari.values()):
+        _kayit = liste_rows[gun - 1] if gun <= len(liste_rows) else {}
+        _adlar = list(uzman_adlari.get(gun, ("", ""))) + [_kayit.get(_rol) for _rol in _roller]
+        _adlar = ["" if _ad in (None, "-") else str(_ad) for _ad in _adlar]
+        _satirlar.append((_detay["full_date"], *_adlar, bool(_detay["weekend"] or _detay["holiday"])))
+    return ["TARİH", "UZMAN", "", *map(str, _roller)], _satirlar
+
+
+def ortak_liste_png(liste_rows, liste_roles, uzman_adlari, gun_detaylari):
+    """Ortak listenin resmi; hafta sonu ve tatil gri."""
+    _basliklar, _satirlar = ortak_liste_satirlari(liste_rows, liste_roles, uzman_adlari, gun_detaylari)
+    fig, ax = plt.subplots(figsize=(8, len(_satirlar) * 0.4 + 1))
+    try:
+        ax.axis('off')
+        table = ax.table(cellText=[s[:5] for s in _satirlar], colLabels=_basliklar, loc='center', cellLoc='center')
+        table.auto_set_font_size(False); table.set_fontsize(10); table.scale(1.2, 1.2)
+        for i, _satir in enumerate(_satirlar):
+            for j in range(5):
+                table[i + 1, j].set_facecolor("#bfbfbf" if _satir[5] else "white")
+        for j in range(5):
+            table[0, j].set_facecolor("#dddddd")
+            table[0, j].set_text_props(weight='bold')
+        buf = BytesIO()
+        fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+        return buf.getvalue()
+    finally:
+        plt.close(fig)
+
+
+def ortak_liste_metni(liste_rows, liste_roles, uzman_adlari, gun_detaylari, yil, ay):
+    """WhatsApp'a yapıştırmaya hazır ortak liste; hafta sonu ve tatiller kalın."""
+    _basliklar, _satirlar = ortak_liste_satirlari(liste_rows, liste_roles, uzman_adlari, gun_detaylari)
+    _satir_metni = []
+    for _tarih, _u1, _u2, _g1, _g2, _gri in _satirlar:
+        _etiket = f"*{_tarih}*" if _gri else _tarih
+        _parcalar = [f"{_etiket_adi}: {_ad}" for _etiket_adi, _ad in
+                     (("Uzman", " / ".join(a for a in (_u1, _u2) if a)), (_basliklar[3], _g1), (_basliklar[4], _g2)) if _ad]
+        _satir_metni.append(f"{_etiket} — {' · '.join(_parcalar) if _parcalar else 'boş'}")
+    return "\n".join([f"📅 {TR_AY_ADLARI[ay]} {yil} Ortak Nöbet Listesi", "", *_satir_metni])
+
+
+def ortak_liste_html(liste_rows, liste_roles, uzman_adlari, gun_detaylari):
+    """Kendi yazdırma düğmesi olan ortak liste sayfası (A4 yatay; hafta sonu gri)."""
+    _basliklar, _satirlar = ortak_liste_satirlari(liste_rows, liste_roles, uzman_adlari, gun_detaylari)
+    _kacis = html.escape
+    _govde = "".join(
+        "<tr{}>".format(' class="g"' if _s[5] else "") + "".join(f"<td>{_kacis(h)}</td>" for h in _s[:5]) + "</tr>"
+        for _s in _satirlar
+    )
+    return (
+        "<style>@page{size:A4 landscape;margin:10mm}body{font-family:sans-serif;font-size:12px}"
+        "table{border-collapse:collapse;width:100%}td,th{border:1px solid #444;padding:2px 6px;text-align:center}"
+        ".g td{background:#bfbfbf}@media screen{table{display:none}}@media print{button{display:none}}</style>"
+        "<button onclick=\"window.print()\" style=\"width:100%;padding:8px;border-radius:8px;"
+        "border:1px solid rgba(128,128,128,.4);background:transparent;color:inherit;font-size:14px;"
+        "cursor:pointer;\">🖨️ Ortak listeyi yazdır (A4)</button>"
+        f"<table><tr><th>{_kacis(_basliklar[0])}</th><th colspan=2>{_kacis(_basliklar[1])}</th>"
+        f"<th>{_kacis(_basliklar[3])}</th><th>{_kacis(_basliklar[4])}</th></tr>{_govde}</table>"
+    )
+
+
 def _render_personel_listesi():
     """Uzman ve pratisyenlerin ad-soyad listesi; kısa adlar buradan bulunur, ayarlarla birlikte kaydedilir."""
     with st.expander("📇 Personel listesi"):
@@ -383,6 +449,13 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari):
         st.download_button("🏥 Uzman idare şablonu",
                            fill_idare_sablonu(_uzman_rows, ["Uzman 1", "Uzman 2"], yil, ay, baslik=_baslik),
                            f"idare_sablonu_uzman_{yil}_{ay:02d}.xlsx", _xlsx, on_click="ignore", width="stretch")
+        st.download_button("🖼️ Ortak liste (PNG)",
+                           ortak_liste_png(liste_rows, liste_roles, _gorunen, gun_detaylari),
+                           f"ortak_liste_{yil}_{ay:02d}.png", "image/png", on_click="ignore", width="stretch")
+        _ortak_metin = ortak_liste_metni(liste_rows, liste_roles, _gorunen, gun_detaylari, yil, ay)
+        st.link_button("💬 Ortak listeyi WhatsApp'ta gönder", whatsapp_url(_ortak_metin), width="stretch")
+        st.code(_ortak_metin, language=None)
+        st.iframe(ortak_liste_html(liste_rows, liste_roles, _gorunen, gun_detaylari), height=48)
 
 
 def whatsapp_url(text):
