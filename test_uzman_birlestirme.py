@@ -98,6 +98,14 @@ def test_kisa_adlar_yazim_farki_ve_eksik_sozcuk():
                      "MEHMET ARDA BALCAN": "ARDA", "IREM GUR": "İREM"}
 
 
+def test_ayni_kisa_ada_denk_gelen_iki_kisi_birlesmez():
+    kisiler = [("Murat", "Özgümüş", ""), ("Murat", "Özkan", ""), ("Ali", "Yılmaz", "")]
+    sonuc = kisa_adlar(kisiler, ["MURAT OZGUMUS", "MURAT OZKAN"])
+    assert sonuc["MURAT OZGUMUS"] != sonuc["MURAT OZKAN"]
+    # Listede olmayan "ALI YILMAZER" ile "ALI YILMAZ" aynı kişiye bağlanmaz.
+    sonuc = kisa_adlar(kisiler, ["ALI YILMAZ", "ALI YILMAZER"])
+    assert sonuc == {"ALI YILMAZ": "ALI YILMAZ", "ALI YILMAZER": "ALI YILMAZER"}
+
 def test_uzman_excel_buyuk_harfli_tarih_basligi_okunur():
     gunler, _ = read_uzman_excel(_uzman_excel(["01.08.2026"], ("TARİH", "N1", "N2")), 2026, 8)
     assert gunler == {1: ("A1", "B1")}
