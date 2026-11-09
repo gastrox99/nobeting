@@ -22,7 +22,8 @@ with sync_playwright() as p:
         sayfa.frame_locator("iframe").first.locator("[data-testid='stApp']").wait_for(timeout=240_000)
     except Exception:
         sayfa.locator("[data-testid='stApp']").wait_for(timeout=60_000)
-    govde = sayfa.inner_text("body")
+    # Uygulama içeriği iç çerçevede olduğundan hata metni tüm çerçevelerde aranır.
+    govde = "\n".join(f.inner_text("body") for f in [sayfa.main_frame, *sayfa.frames[1:]])
     if any(h in govde for h in HATA):
         print("Sayfada hata metni var.")
         sys.exit(1)
