@@ -133,6 +133,7 @@ def fill_idare_sablonu(liste_rows, role_names, yil, ay, baslik=None):
         _tarih = datetime.date(yil, ay, gun)
         _satir = gun + 4
         ws[f"A{_satir}"] = _tarih
+        ws[f"A{_satir}"].number_format = "DD.MM.YYYY"
         ws[f"B{_satir}"] = _IDARE_GUNLERI[_tarih.weekday()]
         _kayit = liste_rows[gun - 1] if gun <= len(liste_rows) else {}
         for _sutun, _gorev in zip("DE", role_names[:2]):
@@ -251,6 +252,17 @@ def kisa_adlar(kisiler, dosya_adlari):
     # İki dosya adı aynı kısa ada çıkıyorsa ikisi de bağlanmaz (iki kişi tek ada karışmasın).
     _cakisan = {_k for _k in sonuc.values() if list(sonuc.values()).count(_k) > 1}
     return {_a: (_a if _k in _cakisan and _k != _a else _k) for _a, _k in sonuc.items()}
+
+
+def tam_adlar(kisiler, adlar):
+    """İdare şablonu için: personel listesinde bulunan ad → "Ad Soyad"; bulunamayan ya da karışan ad olduğu gibi kalır."""
+    _kayitlar = _kisa_kayitlari(kisiler)
+    _tam = {_k["sira"]: f"{kisiler[_k['sira']][0]} {kisiler[_k['sira']][1]}" for _k in _kayitlar}
+    _sonuc = {}
+    for _ad in adlar:
+        _k = _eslesen_kisi(_kayitlar, _ad)
+        _sonuc[_ad] = _tam[_k["sira"]] if _k else _ad
+    return _sonuc
 
 
 def ortak_liste_excel(liste_rows, liste_roles, uzman_adlari, yil, ay, gun_detaylari):
@@ -490,8 +502,9 @@ def render_uzman_birlestirme(liste_rows, liste_roles, yil, ay, gun_detaylari, ow
             st.rerun()
         _gorunen = {g: tuple(_esle.get(_ad, _ad) for _ad in _cift) for g, _cift in _gunler.items()}
         _baslik = st.text_input("Uzman çizelgesi başlığı", "YOĞUN BAKIM UZMAN DOKTOR NÖBET ÇİZELGESİ")
+        _tam = tam_adlar(_personel, _adlar)
         _uzman_rows = [
-            dict(zip(("Uzman 1", "Uzman 2"), _gorunen.get(g, ("", ""))))
+            dict(zip(("Uzman 1", "Uzman 2"), (_tam.get(_ad, _ad) for _ad in _gunler.get(g, ("", "")))))
             for g in range(1, len(gun_detaylari) + 1)
         ]
         _xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -543,7 +556,11 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
         return convert_df_to_excel(_liste, _load, _finance, yil=_yil)
 
     def _idare_bytes(_rows=liste_rows, _roles=list(liste_roles), _yil=yil, _ay=ay):
-        return fill_idare_sablonu(_rows, _roles, _yil, _ay)
+        _personel = personel_oku(st.session_state.get("personel_text", ""))
+        _adlar = {_a for _r in _rows for _g in _roles[:2] if (_a := _r.get(_g)) not in (None, "", "-")}
+        _tam = tam_adlar(_personel, _adlar)
+        _tam_rows = [{**_r, **{_g: _tam[_r[_g]] for _g in _roles[:2] if _r.get(_g) in _tam}} for _r in _rows]
+        return fill_idare_sablonu(_tam_rows, _roles, _yil, _ay)
 
     _share_cache = st.session_state.setdefault("share_token_cache", {})
     # Excel yükleme seyrek kullanıldığı için Yedek bölümünde (render_excel_import).

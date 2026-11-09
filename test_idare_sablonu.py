@@ -5,7 +5,7 @@ from io import BytesIO
 
 import openpyxl
 
-from nobet_disa_aktar import fill_idare_sablonu
+from nobet_disa_aktar import fill_idare_sablonu, tam_adlar
 
 
 def _rows(gun, roller):
@@ -38,3 +38,19 @@ def test_kisa_ayda_fazla_satirlar_bos_kalir_ve_formul_calismaz():
     assert ws["D5"].value == "=1+1" and ws["D5"].data_type == "s"
     assert ws["E6"].value is None
     assert ws["A33"].value is None and ws["D34"].value is None
+
+
+def test_tarih_gun_ay_yil_biciminde():
+    roller = ["Yoğun Bakım", "Servis"]
+    ws = _ac(fill_idare_sablonu(_rows(31, roller), roller, 2026, 7))
+    assert ws["A5"].number_format == "DD.MM.YYYY" and ws["A35"].number_format == "DD.MM.YYYY"
+
+
+def test_tam_ad_personel_listesinden_gelir():
+    kisiler = [("Faruk", "Köser", "Pratisyen", ""), ("Murat", "Özgümüş", "Uzman", ""),
+               ("Murat", "Aksoy", "Pratisyen", "")]
+    sonuc = tam_adlar(kisiler, ["Faruk", "MURAT OZGUMUS", "Murat", "Bilinmeyen"])
+    assert sonuc["Faruk"] == "Faruk Köser"
+    assert sonuc["MURAT OZGUMUS"] == "Murat Özgümüş"
+    assert sonuc["Murat"] == "Murat"  # iki Murat var: karışmasın
+    assert sonuc["Bilinmeyen"] == "Bilinmeyen"
