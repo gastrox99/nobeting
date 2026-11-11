@@ -192,8 +192,8 @@ from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_yil import render_year_summary
 from nobet_onkontrol import (
-    ay_sonu_cakismalari, ilk_nobet_gunleri, paylasim_kontrolleri, render_backup_suggestion, render_precheck,
-    render_why_not,
+    ay_sonu_cakismalari, ilk_nobet_gunleri, paylasim_kontrolleri, render_backup_suggestion, render_day_availability,
+    render_precheck, render_why_not,
 )
 from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
@@ -2152,6 +2152,12 @@ render_backup_suggestion(
     isimler, sutunlar, gun_detaylari, edited_df, df_unwanted, min_bosluk,
     st.session_state.get("person_limits", {}), st.session_state.get("forbidden_pairs", []),
     prev_last_shift, _assign_backup, yil, ay)
+_uygun_gun = st.session_state.pop("uygun_gun", None)
+_uygun_sutun = next((c for c in sutunlar if gun_detaylari[c]["day_num"] == _uygun_gun), None)
+if _uygun_sutun is not None and _uygun_sutun in edited_df.columns:
+    render_day_availability(
+        _uygun_gun, _uygun_sutun, _uygun_sutun.split()[-1], edited_df, gun_detaylari, df_unwanted, min_bosluk,
+        st.session_state.get("person_limits", {}), st.session_state.get("forbidden_pairs", []), prev_last_shift)
 if _db_ready:
     render_year_summary(current_owner, yil, isimler, st.session_state.get("holidays_by_period", {}))
 

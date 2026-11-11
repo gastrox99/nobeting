@@ -3797,6 +3797,7 @@ class TestFullAppRender(unittest.TestCase):
                 lambda: at.radio(key="mode_radio").set_value("✏️ Nöbet Ata/Kaldır"),
                 lambda: next(b for b in at.button if b.key and b.key.startswith("g_Ali_")).click(),
                 lambda: next(b for b in at.button if b.key == "cal_swap_3").click(),
+                lambda: next(b for b in at.button if b.key == "cal_uygun_3").click(),
                 lambda: next(b for b in at.button if b.label == "🔄 Sıfırla").click(),
             ]
             for step in steps:

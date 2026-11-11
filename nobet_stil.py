@@ -301,14 +301,14 @@ GLOBAL_CSS = """
 .st-key-cal-grid :is([data-testid="column"],[data-testid="stColumn"]) > [data-testid="stVerticalBlock"] {
     position: relative;
 }
-.st-key-cal-grid [class*="st-key-cal_swap_"] {
+.st-key-cal-grid :is([class*="st-key-cal_swap_"], [class*="st-key-cal_uygun_"]) {
     position: absolute !important;
     top: 4px;
     right: 4px;
     width: auto !important;
     z-index: 5;
 }
-.st-key-cal-grid [class*="st-key-cal_swap_"] button {
+.st-key-cal-grid :is([class*="st-key-cal_swap_"], [class*="st-key-cal_uygun_"]) button {
     min-height: 26px !important;
     height: 26px !important;
     width: 30px !important;
@@ -318,9 +318,10 @@ GLOBAL_CSS = """
     border: 1px solid rgba(128,128,128,.3) !important;
     border-radius: 7px !important;
 }
-.st-key-cal-grid [class*="st-key-cal_swap_"] button:hover {
+.st-key-cal-grid :is([class*="st-key-cal_swap_"], [class*="st-key-cal_uygun_"]) button:hover {
     background: rgba(128,128,128,.15) !important;
 }
+.st-key-cal-grid [class*="st-key-cal_uygun_"] { right: 38px; }
 @media (max-width: 640px) {
     .st-key-cal-head { display: none !important; }
     .st-key-cal-grid :is([data-testid="column"],[data-testid="stColumn"]):has(.cal-empty) { display: none !important; }

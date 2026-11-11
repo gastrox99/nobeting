@@ -101,6 +101,26 @@ def test_telafi_gunleri_ayni_ay_icinde_sonraki_gunlerden_yedegin_nobeti():
     assert telafi_gunleri(schedule, "14 Cmt", "Ali", "Ece", days, unwanted, 1) == ["26 Per"]
 
 
+def test_gun_uygunlari_nobetciyi_ayirir_uygunlari_sirali_verir_nedenleri_listeler():
+    from nobet_core import build_gun_detaylari
+    from nobet_onkontrol import gun_uygunlari
+    days = build_gun_detaylari(2026, 11, 30, [])
+    names = ["Ali", "Ayşe", "Can", "Deniz", "Ece", "Fuat"]
+    schedule = pd.DataFrame(False, index=names, columns=list(days))
+    unwanted = pd.DataFrame(False, index=names, columns=list(days))
+    col = "14 Cmt"
+    schedule.at["Ali", col] = True
+    schedule.at["Ayşe", "7 Cmt"] = True      # 1 hafta sonu nöbeti
+    schedule.at["Can", "13 Cum"] = True      # 1 gün önce nöbetli: dinlenmede
+    unwanted.at["Deniz", col] = True
+    nobetciler, uygun, nedenler = gun_uygunlari(schedule, col, days, unwanted, 1)
+    assert nobetciler == ["Ali"]
+    assert uygun == ["Ece", "Fuat", "Ayşe"]   # hafta sonu nöbeti az olan önce
+    assert ("izinli / müsait değil", ["Deniz"]) in nedenler
+    assert any(label == "dinlenmede" and names[0].startswith("Can") for label, names in nedenler)
+    assert schedule.at["Ali", col] and not schedule.at["Ece", col]   # çizelge değişmez
+
+
 def test_devreden_telafi_ayin_tum_gunlerine_bakar():
     from nobet_core import build_gun_detaylari
     from nobet_onkontrol import telafi_gunleri
