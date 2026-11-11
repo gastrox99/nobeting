@@ -153,20 +153,55 @@ def render_day_availability(gun, sutun, gun_adi, schedule, gun_detaylari, df_unw
 def telafi_gunleri(schedule, column, cikan, yedek, gun_detaylari, df_unwanted, min_bosluk,
                    person_limits=None, forbidden_pairs=None, initial_last_shift=None):
     """Yedek yazıldıktan sonra çıkan kişiye telafi olarak verilebilecek günler: aynı ay,
-    boşalan günden sonra, yedeğin nöbetli olduğu ve çıkanın kurallara uyduğu günler."""
-    gun = gun_detaylari[column]["day_num"]
+    boşalan günden sonra, yedeğin nöbetli olduğu ve çıkanın kurallara uyduğu günler.
+    ``column`` None ise (önceki aydan devreden telafi) ayın tüm günlerine bakılır."""
+    gun = gun_detaylari[column]["day_num"] if column is not None else 0
     return [c for c in schedule.columns
             if c in gun_detaylari and gun_detaylari[c]["day_num"] > gun and bool(schedule.at[yedek, c])
             and cikan in yedek_adaylari(schedule, c, yedek, gun_detaylari, df_unwanted, min_bosluk,
                                         person_limits, forbidden_pairs, initial_last_shift)[0]]
 
 
+def onceki_donem_anahtari(yil, ay):
+    """Bir önceki ayın "2026-10" biçiminde anahtarı."""
+    return f"{yil - 1:04d}-12" if ay == 1 else f"{yil:04d}-{ay - 1:02d}"
+
+
+def _render_devreden_telafi(schedule, gun_detaylari, df_unwanted, min_bosluk, person_limits, forbidden_pairs,
+                            initial_last_shift, assign_backup, yil, ay):
+    """Önceki aydan devreden telafiler: çıkan kişiye bu ay içinde verilebilecek günleri gösterir."""
+    kayitlar = st.session_state.get("telafi_devir") or []
+    onceki = onceki_donem_anahtari(yil, ay)
+    kilitli = bool(st.session_state.get("ay_kilitli"))
+    for kayit in [k for k in kayitlar if k["donem"] == onceki]:
+        cikan, yedek = kayit["cikan"], kayit["yedek"]
+        if cikan not in schedule.index or yedek not in schedule.index:
+            continue
+        gunler = telafi_gunleri(schedule, None, cikan, yedek, gun_detaylari, df_unwanted, min_bosluk,
+                                person_limits, forbidden_pairs, initial_last_shift)
+        st.markdown(f"**Geçen aydan devreden telafi:** {yedek} geçen ay {cikan} yerine fazla nöbet tuttu. "
+                    f"{cikan} bu ay şu günlerden birini alabilir:")
+        if not gunler:
+            st.caption("Bu ay için uygun gün yok.")
+        for c in gunler:
+            if st.button(f"{gun_detaylari[c]['day_num']}. gün {cikan}'e, {yedek} çıksın",
+                         key=f"devir_telafi_{yedek}_{cikan}_{c}", disabled=kilitli):
+                assign_backup(yedek, cikan, c)
+                st.session_state.telafi_devir = [k for k in kayitlar if k != kayit]
+                st.rerun()
+        if st.button("Telafiden vazgeç", key=f"devir_vazgec_{yedek}_{cikan}"):
+            st.session_state.telafi_devir = [k for k in kayitlar if k != kayit]
+            st.rerun()
+
+
 def render_backup_suggestion(isimler, sutunlar, gun_detaylari, schedule, df_unwanted, min_bosluk,
-                             person_limits, forbidden_pairs, initial_last_shift, assign_backup):
+                             person_limits, forbidden_pairs, initial_last_shift, assign_backup, yil, ay):
     """Analiz altı: çıkamayan kişinin gününe yazılabilecek yedekleri sıralar; seçileni o güne yazar."""
     if not isimler:
         return
     with st.expander("🆘 Boşalan güne yedek öner", expanded=False):
+        _render_devreden_telafi(schedule, gun_detaylari, df_unwanted, min_bosluk, person_limits, forbidden_pairs,
+                                initial_last_shift, assign_backup, yil, ay)
         by_day = {gun_detaylari[c]["day_num"]: c for c in sutunlar if bool(schedule[c].any())}
         day = st.selectbox("Gün", list(by_day), key="yedek_gun")
         if day is None:
@@ -204,6 +239,11 @@ def render_backup_suggestion(isimler, sutunlar, gun_detaylari, schedule, df_unwa
                     assign_backup(yedek, cikan, c)
                     st.session_state.pop("yedek_telafi", None)
                     st.rerun()
+            if st.button(f"Telafiyi ertesi aya devret ({cikan} sonraki ay alsın)", key="yedek_devret"):
+                st.session_state.telafi_devir = (st.session_state.get("telafi_devir") or []) + [
+                    {"donem": f"{yil:04d}-{ay:02d}", "cikan": cikan, "yedek": yedek}]
+                st.session_state.pop("yedek_telafi", None)
+                st.rerun()
 
 
 def ilk_nobet_gunleri(frame):

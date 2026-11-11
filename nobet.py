@@ -2151,7 +2151,7 @@ def _assign_backup(out, backup, column):
 render_backup_suggestion(
     isimler, sutunlar, gun_detaylari, edited_df, df_unwanted, min_bosluk,
     st.session_state.get("person_limits", {}), st.session_state.get("forbidden_pairs", []),
-    prev_last_shift, _assign_backup)
+    prev_last_shift, _assign_backup, yil, ay)
 _uygun_gun = st.session_state.pop("uygun_gun", None)
 _uygun_sutun = next((c for c in sutunlar if gun_detaylari[c]["day_num"] == _uygun_gun), None)
 if _uygun_sutun is not None and _uygun_sutun in edited_df.columns:
