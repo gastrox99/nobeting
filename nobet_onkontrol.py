@@ -102,6 +102,12 @@ def yedek_adaylari(schedule, col, cikamayan, gun_detaylari, df_unwanted, min_bos
                                    person_limits, forbidden_pairs, initial_last_shift)
     uygun = next((names for label, names in nedenler if label == MISSING_DAY_FREE_LABEL), [])
     uygun = [p for p in uygun if p != cikamayan]
+    return _uygunluk_sirasi(schedule, col, gun_detaylari, uygun), [
+        (l, [n for n in names if n != cikamayan]) for l, names in nedenler if l != MISSING_DAY_FREE_LABEL]
+
+
+def _uygunluk_sirasi(schedule, col, gun_detaylari, kisiler):
+    """Kişileri o gün için en uygundan başlayarak sıralar (hafta sonu/Cuma nöbeti az olan, sonra toplamı az olan)."""
     info = gun_detaylari[col]
     ayni_tur = _is_special_day if _is_special_day(info) else (is_friday_column if is_friday_column(info) else None)
 
@@ -110,8 +116,38 @@ def yedek_adaylari(schedule, col, cikamayan, gun_detaylari, df_unwanted, min_bos
             1 for c in schedule.columns if c in gun_detaylari and ayni_tur(gun_detaylari[c]) and bool(schedule.at[person, c]))
         return (n, int(schedule.loc[person].sum()), list(schedule.index).index(person))
 
-    return sorted(uygun, key=yuk), [(l, [n for n in names if n != cikamayan]) for l, names in nedenler
-                                    if l != MISSING_DAY_FREE_LABEL]
+    return sorted(kisiler, key=yuk)
+
+
+def gun_uygunlari(schedule, col, gun_detaylari, df_unwanted, min_bosluk,
+                  person_limits=None, forbidden_pairs=None, initial_last_shift=None):
+    """Takvimde bir güne basınca: o günün nöbetçileri, o güne yazılabilecek kişiler (en uygundan başlayarak)
+    ve diğerlerinin neden uygun olmadığı. Çizelgeyi değiştirmez."""
+    nobetciler = [p for p in schedule.index if bool(schedule.at[p, col])]
+    nedenler = explain_missing_day(schedule, col, gun_detaylari, df_unwanted, min_bosluk,
+                                   person_limits, forbidden_pairs, initial_last_shift)
+    uygun = next((names for label, names in nedenler if label == MISSING_DAY_FREE_LABEL), [])
+    return (nobetciler, _uygunluk_sirasi(schedule, col, gun_detaylari, uygun),
+            [(label, names) for label, names in nedenler if label != MISSING_DAY_FREE_LABEL])
+
+
+def render_day_availability(gun, sutun, gun_adi, schedule, gun_detaylari, df_unwanted, min_bosluk,
+                            person_limits, forbidden_pairs, initial_last_shift):
+    """Takvimde güne basılınca açılan pencere: o gün kim uygun, kim neden değil (yalnız gösterir)."""
+    @st.dialog(f"{gun}. gün {gun_adi}: kim uygun?")
+    def _pencere():
+        nobetciler, uygun, nedenler = gun_uygunlari(schedule, sutun, gun_detaylari, df_unwanted, min_bosluk,
+                                                    person_limits, forbidden_pairs, initial_last_shift)
+        st.markdown("**Nöbetçi:** " + (", ".join(nobetciler) if nobetciler else "yok"))
+        if uygun:
+            st.markdown("**Yazılabilir (en uygundan başlayarak):** " + ", ".join(uygun))
+        else:
+            st.markdown("**Yazılabilir:** kimse yok")
+        for label, names in nedenler:
+            st.markdown(f"- {label}: {', '.join(names)}")
+        st.caption("Şu anki listeye ve ayarlara göre; yalnız gösterir, hiçbir şeyi değiştirmez. "
+                   "Birini yazmak için tabloyu ya da \"Boşalan güne yedek öner\"i kullanın.")
+    _pencere()
 
 
 def telafi_gunleri(schedule, column, cikan, yedek, gun_detaylari, df_unwanted, min_bosluk,
