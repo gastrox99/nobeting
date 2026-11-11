@@ -99,3 +99,80 @@ def test_telafi_gunleri_ayni_ay_icinde_sonraki_gunlerden_yedegin_nobeti():
     schedule.at["Ali", "18 Çar"] = True      # 19. günle dinlenme çakışır
     unwanted.loc["Ali", "29 Pzt"] = True      # müsait değil
     assert telafi_gunleri(schedule, "14 Cmt", "Ali", "Ece", days, unwanted, 1) == ["26 Per"]
+
+
+def test_devreden_telafi_ayin_tum_gunlerine_bakar():
+    from nobet_core import build_gun_detaylari
+    from nobet_onkontrol import telafi_gunleri
+    days = build_gun_detaylari(2026, 12, 31, [])
+    names = ["Ali", "Ece"]
+    schedule = pd.DataFrame(False, index=names, columns=list(days))
+    unwanted = pd.DataFrame(False, index=names, columns=list(days))
+    for c in ("1 Sal", "2 Çar", "9 Çar"):
+        schedule.at["Ece", c] = True
+    unwanted.loc["Ali", "9 Çar"] = True       # müsait değil
+    # Ali önceki ayın son günü nöbet tuttuysa 1. gün dinlenme kuralına takılır.
+    assert telafi_gunleri(schedule, None, "Ali", "Ece", days, unwanted, 1, initial_last_shift={"Ali": 0}) == ["2 Çar"]
+
+
+def test_onceki_donem_anahtari_yil_basinda_aralik_verir():
+    from nobet_onkontrol import onceki_donem_anahtari
+    assert onceki_donem_anahtari(2026, 11) == "2026-10"
+    assert onceki_donem_anahtari(2027, 1) == "2026-12"
+
+
+def test_devreden_telafi_ayari_dogrulanir_ve_kaydedilir():
+    from nobet_core import apply_app_settings, collect_app_settings
+    gecerli = {"donem": "2026-11", "cikan": "Ali", "yedek": "Ece"}
+    state = {}
+    apply_app_settings(state, {"carried_backups": [gecerli, {"donem": "bozuk", "cikan": "A", "yedek": "B"},
+                                                   {"donem": "2026-11", "cikan": "", "yedek": "B"}, "x"]})
+    assert state["telafi_devir"] == [gecerli]
+    assert collect_app_settings(state)["carried_backups"] == [gecerli]
+    state = {}
+    apply_app_settings(state, {"carried_backups": "bozuk"})
+    assert "telafi_devir" not in state
+
+
+def _panel_betigi(yil, ay, kayit):
+    import pandas as pd
+    import streamlit as st
+    from nobet_core import build_gun_detaylari
+    from nobet_onkontrol import render_backup_suggestion
+    days = build_gun_detaylari(yil, ay, 30, [])
+    cols = list(days)
+    names = ["Ali", "Ece"]
+    schedule = pd.DataFrame(False, index=names, columns=cols)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    for c in cols[:3]:
+        schedule.at["Ece", c] = True
+    if "ilk" not in st.session_state:
+        st.session_state.ilk = True
+        st.session_state.telafi_devir = kayit
+        st.session_state.cagrilar = []
+        if kayit == "AYNI_AY":
+            st.session_state.telafi_devir = []
+            st.session_state.yedek_telafi = ("Ali", "Ece", cols[0])
+    render_backup_suggestion(names, cols, days, schedule, unwanted, 1, {}, [], {},
+                             lambda out, backup, col: st.session_state.cagrilar.append((out, backup, col)), yil, ay)
+
+
+def test_telafi_ertesi_aya_devredilir_ve_sonraki_ayda_alinir():
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_function(_panel_betigi, args=(2026, 11, "AYNI_AY")).run()
+    assert not at.exception
+    at.button(key="yedek_devret").click().run()
+    assert at.session_state.telafi_devir == [{"donem": "2026-11", "cikan": "Ali", "yedek": "Ece"}]
+    assert "yedek_telafi" not in at.session_state
+    kayit = at.session_state.telafi_devir
+    # Aralık ayı: devreden telafi görünür, güne basınca yedek çıkar, kayıt silinir.
+    at = AppTest.from_function(_panel_betigi, args=(2026, 12, kayit)).run()
+    assert not at.exception
+    dugmeler = [b for b in at.button if b.key and b.key.startswith("devir_telafi_")]
+    assert dugmeler
+    dugmeler[0].click().run()
+    assert at.session_state.cagrilar and at.session_state.cagrilar[0][:2] == ("Ece", "Ali")
+    assert at.session_state.telafi_devir == []
+    # Ocak ayında (bir ay sonrası) kayıt gösterilmez.
+    at = AppTest.from_function(_panel_betigi, args=(2027, 1, kayit)).run()
+    assert not [b for b in at.button if b.key and b.key.startswith("devir_")]

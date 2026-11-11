@@ -1462,6 +1462,21 @@ def _period_list(value):
     return sorted({key for key in value if isinstance(key, str) and re.fullmatch(r"\d{4}-\d{2}", key)})
 
 
+def _telafi_devri(value):
+    """Ertesi aya devredilen telafileri doğrular: [{"donem": "2026-11", "cikan": "Ali", "yedek": "Ece"}]."""
+    if not isinstance(value, list):
+        return None
+    kayitlar = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        donem, cikan, yedek = item.get("donem"), item.get("cikan"), item.get("yedek")
+        if (isinstance(donem, str) and re.fullmatch(r"\d{4}-\d{2}", donem)
+                and all(isinstance(x, str) and 0 < len(x) <= 100 for x in (cikan, yedek))):
+            kayitlar.append({"donem": donem, "cikan": cikan, "yedek": yedek})
+    return kayitlar[-20:]
+
+
 def _bool(value):
     return value if isinstance(value, bool) else None
 
@@ -1521,6 +1536,7 @@ APP_SETTINGS_FIELDS = {
     "name_aliases": ("name_aliases", _aliases),
     "last_backup": ("last_backup_at", _text),
     "open_months": ("open_months", _period_list),
+    "carried_backups": ("telafi_devir", _telafi_devri),
     "personnel": ("personel_text", _text),
 }
 
@@ -1557,7 +1573,7 @@ SETTINGS_FIELD_LABELS = {
     "fixed_roles": "sabit görev yeri", "together_pairs": "birlikte çalışmak isteyen",
     "limits": "nöbet sınırları", "balance_history": "önceki aylarla dengele",
     "name_aliases": "ad değişiklikleri", "last_backup": "son yedek",
-    "open_months": "açılan aylar", "personnel": "personel listesi",
+    "open_months": "açılan aylar", "carried_backups": "devreden telafi", "personnel": "personel listesi",
 }
 
 

@@ -2151,7 +2151,7 @@ def _assign_backup(out, backup, column):
 render_backup_suggestion(
     isimler, sutunlar, gun_detaylari, edited_df, df_unwanted, min_bosluk,
     st.session_state.get("person_limits", {}), st.session_state.get("forbidden_pairs", []),
-    prev_last_shift, _assign_backup)
+    prev_last_shift, _assign_backup, yil, ay)
 if _db_ready:
     render_year_summary(current_owner, yil, isimler, st.session_state.get("holidays_by_period", {}))
 
