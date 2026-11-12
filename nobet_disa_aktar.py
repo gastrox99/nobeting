@@ -555,8 +555,10 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
                      _finance=df_stats_finance.copy(), _yil=yil):
         return convert_df_to_excel(_liste, _load, _finance, yil=_yil)
 
-    def _idare_bytes(_rows=liste_rows, _roles=list(liste_roles), _yil=yil, _ay=ay):
-        _personel = personel_oku(st.session_state.get("personel_text", ""))
+    # Personel listesi burada okunur: işlev tıklamada ayrı iş parçacığında çalışır, orada
+    # st.session_state boş görünür ve adlar soyadsız kalırdı.
+    def _idare_bytes(_rows=liste_rows, _roles=list(liste_roles), _yil=yil, _ay=ay,
+                     _personel=personel_oku(st.session_state.get("personel_text", ""))):
         _adlar = {_a for _r in _rows for _g in _roles[:2] if (_a := _r.get(_g)) not in (None, "", "-")}
         _tam = tam_adlar(_personel, _adlar)
         _tam_rows = [{**_r, **{_g: _tam[_r[_g]] for _g in _roles[:2] if _r.get(_g) in _tam}} for _r in _rows]
