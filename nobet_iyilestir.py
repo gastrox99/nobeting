@@ -468,7 +468,7 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
     solver.parameters.max_time_in_seconds = float(time_limit)
     solver.parameters.num_workers = max(1, min(4, os.cpu_count() or 1))
     solver.parameters.random_seed = 0
-    print(_cpu_bilgisi(solver.parameters.num_workers))
+    print(_cpu_bilgisi(solver.parameters.num_workers), flush=True)
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return None, before, before
