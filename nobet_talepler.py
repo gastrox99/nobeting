@@ -18,7 +18,6 @@ from nobet_core import (
 )
 from nobet_disa_aktar import app_base_url, whatsapp_url
 
-_CACHE_KEY = "team_requests_cache"
 _CACHE_SECONDS = 60
 # Onaylanıp tercihlere işlenen, ay kaydedilince onaylandı olarak işaretlenecek talepler: [(id, yıl, ay)].
 _APPROVED_KEY = "team_requests_approved"
@@ -26,11 +25,8 @@ _ALL_CACHE_KEY = "team_requests_all_cache"
 
 
 def _requests(owner):
-    _cached = st.session_state.get(_CACHE_KEY)
-    if not _cached or time.monotonic() - _cached[0] > _CACHE_SECONDS:
-        _cached = (time.monotonic(), list_team_requests(owner))
-        st.session_state[_CACHE_KEY] = _cached
-    return _cached[1]
+    """Bekleyen talepler; tüm taleplerle aynı okumadan süzülür (açılışta bir bağlantı az)."""
+    return [_r for _r in _all_requests(owner) if _r["status"] == "pending"]
 
 
 def talep_durumu(isimler, requests, yil, ay, aliases=None):
@@ -106,13 +102,13 @@ def _approve(owner, request, person, save_undo_state):
     else:
         # Tercihler zaten talep gibiymiş; kaydedilecek bir şey yok.
         decide_team_request(owner, request["id"], "approved")
-        st.session_state.pop(_CACHE_KEY, None)
+        st.session_state.pop(_ALL_CACHE_KEY, None)
     st.toast(f"{person} talebi onaylandı ({_changed} gün işlendi).", icon="✅")
 
 
 def _reject(owner, request):
     decide_team_request(owner, request["id"], "rejected")
-    st.session_state.pop(_CACHE_KEY, None)
+    st.session_state.pop(_ALL_CACHE_KEY, None)
     st.toast(f"{request['person']} talebi reddedildi.", icon="🗑️")
 
 
@@ -122,7 +118,7 @@ def finish_approved_requests(owner, yil, ay, saved):
     _approved = st.session_state.pop(_APPROVED_KEY, None)
     if not _approved:
         return
-    st.session_state.pop(_CACHE_KEY, None)
+    st.session_state.pop(_ALL_CACHE_KEY, None)
     if saved:
         for _id, _y, _m in _approved:
             if (_y, _m) == (yil, ay):
@@ -197,4 +193,4 @@ def render_team_requests(owner, yil, ay, isimler, save_undo_state):
                 + ". O aya geçince burada görünür."
             )
         st.button("🔄 Talepleri yenile", key="talep_yenile",
-                  on_click=lambda: [st.session_state.pop(_k, None) for _k in (_CACHE_KEY, _ALL_CACHE_KEY)])
+                  on_click=lambda: st.session_state.pop(_ALL_CACHE_KEY, None))
