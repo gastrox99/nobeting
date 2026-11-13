@@ -127,6 +127,7 @@ def fill_idare_sablonu(liste_rows, role_names, yil, ay, baslik=None):
     ws = wb.active
     if baslik:
         ws["B1"] = baslik
+        ws["B1"].data_type = "s"  # "=" ile başlayan başlık formül olmasın.
     _ay_adi = TR_AY_ADLARI[ay].replace("i", "İ").replace("ı", "I").upper()
     ws["A3"] = f"AY/YIL: {_ay_adi}/{yil}"
     for gun in range(1, calendar.monthrange(yil, ay)[1] + 1):
@@ -278,6 +279,7 @@ def ortak_liste_excel(liste_rows, liste_roles, uzman_adlari, yil, ay, gun_detayl
     ws.merge_cells("B1:C1")
     for _sutun, _rol in zip("DE", _roller):
         ws[f"{_sutun}1"] = str(_rol)
+        ws[f"{_sutun}1"].data_type = "s"  # "=" ile başlayan görev adı formül olmasın.
     for gun, _detay in sorted((d["day_num"], d) for d in gun_detaylari.values()):
         _satir = gun + 1
         _kayit = liste_rows[gun - 1] if gun <= len(liste_rows) else {}

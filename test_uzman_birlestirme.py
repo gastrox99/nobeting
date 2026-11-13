@@ -200,3 +200,16 @@ def test_kilitli_ayda_uzman_listesi_kaydedilmez(monkeypatch):
     at.run()
     assert at.session_state["kayitlar"] == []
     assert any("Ay kilitli" in i.value for i in at.info)
+
+
+def test_baslik_ve_gorev_adi_formul_olarak_yazilmaz():
+    # "=" ile başlayan başlık ya da görev adı Excel'de formül olarak çalışmasın.
+    ws = openpyxl.load_workbook(BytesIO(
+        fill_idare_sablonu([{"Uzman 1": "A", "Uzman 2": "B"}], ["Uzman 1", "Uzman 2"], 2026, 8, baslik="=1+1")
+    )).active
+    assert ws["B1"].value == "=1+1" and ws["B1"].data_type == "s"
+    detay = build_gun_detaylari(2026, 8, 31, [])
+    ws = openpyxl.load_workbook(BytesIO(
+        ortak_liste_excel([{"=AYB": "K", "GYB": "L"}] * 31, ["=AYB", "GYB"], {}, 2026, 8, detay)
+    )).active
+    assert ws["D1"].value == "=AYB" and ws["D1"].data_type == "s"
