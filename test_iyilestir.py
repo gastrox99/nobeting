@@ -460,3 +460,15 @@ def test_hafta_sonu_farki_sinirli_kisi_sifirken_de_tablodaki_farktir():
     assert metrics["special"] == 2
     text = n.simulation_summary(schedule, names, cols, gd, limits)
     assert "hafta sonu farkı 2" in text
+
+
+def test_kendiliginden_iyilestir_birlikte_nobet_ayri_duserse_calisir(monkeypatch):
+    # Diğer ölçüler temizken birlikte nöbet isteyenler ayrı düştüyse çözücü denenmeli.
+    import nobet_iyilestir
+    metrics = {key: 0 for key in PRIMARY_METRICS + ("missed_preference", "avoid", "together_split")}
+    metrics["together_split"] = 3
+    monkeypatch.setattr(nobet_iyilestir, "schedule_metrics", lambda *a, **k: dict(metrics))
+    monkeypatch.setattr(nobet_iyilestir, "improve_schedule", lambda *a, **k: ("yeni", None, None))
+    assert nobet_iyilestir.improve_if_needed("eski", [], [], None, {}, 1, 2) == ("yeni", True)
+    metrics["together_split"] = 0
+    assert nobet_iyilestir.improve_if_needed("eski", [], [], None, {}, 1, 2) == ("eski", False)
