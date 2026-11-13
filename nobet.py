@@ -1366,15 +1366,18 @@ def _load_previous_context(year, month):
         return _ctx
     _holiday_texts = st.session_state.get("holidays_by_period", {})
     _periods = [previous_period(year, month, _back) for _back in range(1, 13)]
+    # Sonraki ay da aynı okumada gelir (açılışta bir bağlantı az); bkz. _load_next_first_shift.
+    _next = previous_period(year, month, -1)
     try:
         _loaded_all, _prefs_all = load_auto_saved_assignments(
-            _periods, owner=current_owner, include_preferences=True,
+            _periods + [_next], owner=current_owner, include_preferences=True,
         )
     except Exception as _error:
         log_unexpected("Önceki aylar bağlamı", _error)
         # Bir dakika sonra yeniden denenir; o zamana kadar uyarı gösterilir.
         _ctx["failed_at"] = time.monotonic()
         return _ctx
+    _ctx["next_frame"] = _loaded_all.get(_next)
     _aliases = st.session_state.get("name_aliases")
     for _back, (_py, _pm) in enumerate(_periods, start=1):
         _prev = _loaded_all.get((_py, _pm))
@@ -1430,17 +1433,23 @@ if "failed_at" in _prev_ctx:
 prev_last_shift = {p: d for p, d in _prev_ctx["last_shift"].items() if p in isimler}
 
 
-def _load_next_first_shift(year, month):
-    """Sonraki ayın kayıtlı listesinde kişi başına ilk nöbet günü; kayıt yoksa ya da okunamazsa boş."""
+_NOT_LOADED = object()
+
+
+def _load_next_first_shift(year, month, _frame=_NOT_LOADED):
+    """Sonraki ayın kayıtlı listesinde kişi başına ilk nöbet günü; kayıt yoksa ya da okunamazsa boş.
+
+    ``_frame`` verilirse (önceki aylarla aynı okumadan gelen liste) yeniden okunmaz."""
     if not _db_ready:
         return {}
-    _next = previous_period(year, month, -1)
-    try:
-        _loaded, _ = load_auto_saved_assignments([_next], owner=current_owner, include_preferences=True)
-    except Exception as _error:
-        log_unexpected("Sonraki ay ilk nöbetler", _error)
-        return {}
-    _frame = _loaded.get(_next)
+    if _frame is _NOT_LOADED:
+        _next = previous_period(year, month, -1)
+        try:
+            _loaded, _ = load_auto_saved_assignments([_next], owner=current_owner, include_preferences=True)
+        except Exception as _error:
+            log_unexpected("Sonraki ay ilk nöbetler", _error)
+            return {}
+        _frame = _loaded.get(_next)
     if _frame is None or _frame.empty:
         return {}
     _frame = as_bool_frame(_frame)
@@ -1453,7 +1462,7 @@ def _load_next_first_shift(year, month):
 
 # Dönem değişince bir kez okunur (ay sonu dinlenme kontrolü için).
 if st.session_state.get("next_month_first_shift_period") != (yil, ay):
-    st.session_state.next_month_first_shift = _load_next_first_shift(yil, ay)
+    st.session_state.next_month_first_shift = _load_next_first_shift(yil, ay, _prev_ctx.pop("next_frame", _NOT_LOADED))
     st.session_state.next_month_first_shift_period = (yil, ay)
 _balance_history_on = st.session_state.get("balance_history", True)
 # Hafta sonu sınırı olanlar hafta sonu dengesine (geçmiş dahil) katılmaz.
