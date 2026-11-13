@@ -486,8 +486,8 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
 
 def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi,
                       **kwargs):
-    """Boş nöbet, toplam/hafta sonu/Cuma farkı 1'den büyük, karşılanmayan tercih (yeşil)
-    ya da kaçınılan güne yazılmış nöbet varsa bir kez ``improve_schedule`` dener. Dönen değer: (çizelge, düzeldi_mi); çözücü yoksa,
+    """Boş nöbet, toplam/hafta sonu/Cuma farkı 1'den büyük, karşılanmayan tercih (yeşil),
+    kaçınılan güne yazılmış nöbet ya da ayrı düşen "birlikte" ikili varsa bir kez ``improve_schedule`` dener. Dönen değer: (çizelge, düzeldi_mi); çözücü yoksa,
     hata verirse ya da daha iyisini bulamazsa çizelge aynen döner."""
     metric_keys = ("person_limits", "df_preferred", "history_special", "history_total", "history_holiday",
                    "together_pairs", "initial_last_shift")
@@ -503,6 +503,7 @@ def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari
             and before["friday"] <= 1
             and before["missed_preference"] == 0
             and before["avoid"] == 0
+            and before["together_split"] == 0
         ):
             return schedule, False
         improved, _, _ = improve_schedule(
