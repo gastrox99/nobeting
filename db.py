@@ -89,12 +89,14 @@ class _RunConnection(psycopg2.extensions.connection):
                 self.set_session(isolation_level="DEFAULT", readonly="DEFAULT")
                 with _run_lock:
                     entry["in_use"], entry["last_used"] = False, time.monotonic()
+                    entry["db_seconds"] += entry["last_used"] - entry["since"]
                 return
             except psycopg2.Error:
                 pass
         if shared:
             with _run_lock:
                 entry["conn"], entry["in_use"] = None, False
+                entry["db_seconds"] += time.monotonic() - entry["since"]
         super().close()
 
 
@@ -136,7 +138,11 @@ def begin_run_connection():
     global _run_closer
     with _run_lock:
         old = _run_conns.pop(threading.get_ident(), None)
-        _run_conns[threading.get_ident()] = {"conn": None, "in_use": False, "last_used": time.monotonic()}
+        _run_conns[threading.get_ident()] = {
+            "conn": None, "in_use": False, "last_used": time.monotonic(),
+            # Ölçüm (uygulama kayıtlarına yazılır): çalışma başı, veritabanında geçen süre, okuma sayısı, bağlantı açma süreleri.
+            "started": time.monotonic(), "since": 0.0, "db_seconds": 0.0, "uses": 0, "connect_ms": [],
+        }
         if _run_closer is None:
             _run_closer = threading.Thread(target=_run_closer_loop, name="db-run-closer", daemon=True)
             _run_closer.start()
@@ -144,10 +150,18 @@ def begin_run_connection():
 
 
 def end_run_connection():
-    """Sayfa çalışması bitti: paylaşılan bağlantı kapanır."""
+    """Sayfa çalışması bitti: paylaşılan bağlantı kapanır.
+
+    Ölçümü döner: {"page_seconds", "db_seconds", "uses", "connect_ms"}; çalışma başlamadıysa None."""
     with _run_lock:
         old = _run_conns.pop(threading.get_ident(), None)
     _close_quietly(old and old["conn"])
+    if old is None:
+        return None
+    return {
+        "page_seconds": time.monotonic() - old["started"], "db_seconds": old["db_seconds"],
+        "uses": old["uses"], "connect_ms": old["connect_ms"],
+    }
 
 
 def _connect():
@@ -160,12 +174,12 @@ def _connect():
     tid = threading.get_ident()
     with _run_lock:
         entry = _run_conns.get(tid)
-        if entry is not None and not entry["in_use"] and entry["conn"] is not None and not entry["conn"].closed:
-            entry["in_use"] = True
-            return entry["conn"]
         claim = entry is not None and not entry["in_use"]
         if claim:
-            entry["in_use"] = True
+            entry["in_use"], entry["since"] = True, time.monotonic()
+            entry["uses"] += 1
+            if entry["conn"] is not None and not entry["conn"].closed:
+                return entry["conn"]
     if not claim:
         return _open()
     try:
@@ -173,8 +187,10 @@ def _connect():
     except Exception:
         with _run_lock:
             entry["in_use"] = False
+            entry["db_seconds"] += time.monotonic() - entry["since"]
         raise
     with _run_lock:
+        entry["connect_ms"].append(round((time.monotonic() - entry["since"]) * 1000))
         if _run_conns.get(tid) is entry:
             entry["conn"] = conn
     # Bu arada çalışma bittiyse bağlantı listede yoktur; close() onu gerçekten kapatır.

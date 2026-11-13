@@ -137,3 +137,15 @@ def test_biten_is_parcaciginin_baglantisi_kapanir():
     while not box["conn"].closed and time.monotonic() < deadline:
         time.sleep(0.2)
     assert box["conn"].closed
+
+
+def test_calisma_sonunda_olcum_doner():
+    db.begin_run_connection()
+    for _ in range(2):
+        conn = db._connect()
+        _backend_pid(conn)
+        conn.close()
+    olcum = db.end_run_connection()
+    assert olcum["uses"] == 2 and len(olcum["connect_ms"]) == 1   # iki okuma, tek bağlantı
+    assert 0 < olcum["db_seconds"] <= olcum["page_seconds"]
+    assert db.end_run_connection() is None                         # çalışma yoksa ölçüm yok

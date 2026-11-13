@@ -2175,4 +2175,12 @@ if _db_ready:
     render_year_summary(current_owner, yil, isimler, st.session_state.get("holidays_by_period", {}))
 
 _render_version_footer()
-end_run_connection()
+_olcum = end_run_connection()
+# Oturumun ilk tam açılışı uygulama kayıtlarına yazılır (Manage app → Logs); ekranda görünmez.
+if _olcum and not st.session_state.get("acilis_olculdu"):
+    st.session_state.acilis_olculdu = True
+    print(
+        f"[nobet] Açılış ölçümü: sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
+        f"({_olcum['uses']} okuma), bağlantı açma {_olcum['connect_ms']} ms",
+        flush=True,
+    )
