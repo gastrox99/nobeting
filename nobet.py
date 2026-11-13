@@ -83,6 +83,8 @@ for _attempt in range(2):
             log_unexpected,
             prepare_schema,
             ping_db,
+            begin_run_connection,
+            end_run_connection,
             SCHEMA_VERSION,
         )
         from nobet_kalicilik import kaydi_durdur, kayit_durdu_mu, engeli_kaldir, engelleri_sifirla, otomatik_kayit_adi
@@ -211,6 +213,8 @@ def _db_init_state(schema_version):
     return {"ready": False, "error": None}
 
 _db_state = _db_init_state(SCHEMA_VERSION)
+# Bu çalışmadaki okumalar tek bağlantıyı paylaşır; sonda (ya da birkaç sn boşta kalınca) kapanır.
+begin_run_connection()
 # Başarı bayrağı yalnızca True yönünde değişir; başarısız oturum 30 sn sonra yeniden dener.
 # Şema hazırsa yeni oturum tek bir uyandırma bağlantısı açar (Neon uyuyor olabilir);
 # ulaşılamazsa bu çalışmadaki diğer okumalar atlanır, her biri ayrı ayrı beklemez.
@@ -2171,3 +2175,4 @@ if _db_ready:
     render_year_summary(current_owner, yil, isimler, st.session_state.get("holidays_by_period", {}))
 
 _render_version_footer()
+end_run_connection()
