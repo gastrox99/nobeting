@@ -69,3 +69,41 @@ def test_onceki_aylar_ve_sonraki_ay_tek_okumada_gelir():
     assert first_shift == {"Ali": 1, "Can": 3}
     # Sonraki ay önceki aylar dengesine karışmaz ve oturumda tutulmaz.
     assert ctx["months"] == 0 and "next_frame" not in ctx
+
+
+def _sirali(node, out):
+    """Sayfa ağacını ekrandaki sırayla gezer: (tür, etiket)."""
+    out.append((getattr(node, "type", ""), getattr(node, "label", None)))
+    for _key in sorted(getattr(node, "children", {}) or {}):
+        _sirali(node.children[_key], out)
+    return out
+
+
+def test_talepler_tablodan_sonra_okunur_ama_tablonun_ustunde_gorunur():
+    sira = []
+
+    def list_team_requests(owner, raise_on_error=False, include_decided=False):
+        sira.append("talepler")
+        return [_talep(1, "Can", "pending")]
+
+    def loader(periods, owner="", include_preferences=False):
+        sira.append("onceki_aylar")
+        return ({}, {}) if include_preferences else {}
+
+    at, patches = _app(
+        lambda *a, **k: (None, None, None, None, None), lambda *a, **k: True, team=TEAM,
+        list_team_requests=list_team_requests, load_auto_saved_assignments=loader,
+    )
+    try:
+        at.run()
+        assert [e.value for e in at.exception] == []
+        agac = _sirali(at.main, [])
+    finally:
+        _stop(patches)
+    assert sira == ["onceki_aylar", "talepler"]        # tablo verisinden sonra okunur
+    etiketler = [label for _type, label in agac]
+    talep = next(i for i, label in enumerate(etiketler) if label and "Talep durumu" in label)
+    istek = next(i for i, label in enumerate(etiketler) if label and "Ekip talepleri" in label)
+    sekme = next(i for i, label in enumerate(etiketler) if label and "Tablo Görünümü" in label)
+    assert istek < talep < sekme                        # ekranda yeri değişmez
+    assert any("1 ekip talebi onay bekliyor" in c.value for c in at.caption)

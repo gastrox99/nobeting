@@ -215,6 +215,7 @@ def _db_init_state(schema_version):
 _db_state = _db_init_state(SCHEMA_VERSION)
 # Bu çalışmadaki okumalar tek bağlantıyı paylaşır; sonda (ya da birkaç sn boşta kalınca) kapanır.
 begin_run_connection()
+_acilis_basi = time.monotonic()
 # Başarı bayrağı yalnızca True yönünde değişir; başarısız oturum 30 sn sonra yeniden dener.
 # Şema hazırsa yeni oturum tek bir uyandırma bağlantısı açar (Neon uyuyor olabilir);
 # ulaşılamazsa bu çalışmadaki diğer okumalar atlanır, her biri ayrı ayrı beklemez.
@@ -582,8 +583,8 @@ if month_is_locked(_bar_year, _bar_month, []):
         "🔓 Kilidi aç" if _bar_locked else "🔒 Kilitle", key="month_lock_toggle", width="stretch",
         on_click=_toggle_month_lock, args=(_bar_key, _bar_locked),
     )
-if _db_ready:
-    render_pending_badge(current_owner)
+# Talepler tablodan sonra okunur (açılışta tablo daha erken çıksın); yeri burada ayrılır.
+_badge_slot = st.empty()
 # Ekip yoksa Ayarlar açık başlar. Değer oturum boyunca sabit kalır; yoksa
 # ilk isim yazılınca panel kapanıyordu (ekip tablosu satır satır doldurulur).
 if "settings_expanded" not in st.session_state:
@@ -1004,6 +1005,8 @@ if _settings_conflict:
 # Ekip varken bölüm sayfanın altında, Yedekle tuşunun yanında çizilir.
 if not isimler:
     if _db_ready:
+        with _badge_slot.container():
+            render_pending_badge(current_owner)
         render_backup_section(current_owner, yil, ay, isimler)
     _render_version_footer()
     st.stop()
@@ -1533,9 +1536,8 @@ mesai_saatleri = personal_work_hours(
 )
 
 # Paylaşım linkinden gelen tercih/izin talepleri onay bekler (nobet_talepler.py).
-if _db_ready:
-    render_team_requests(current_owner, yil, ay, isimler, save_undo_state)
-    render_request_status(current_owner, yil, ay, isimler)
+# Yeri burada; içi tablodan sonra doldurulur (iki veritabanı okuması tabloyu bekletmesin).
+_talep_slot = st.empty()
 
 tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"])
 
@@ -1545,6 +1547,13 @@ tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görün�
 with tab_grid:
     render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                     person_colors, conflict_cells, _queue_assignment_warnings)
+_tablo_sn = time.monotonic() - _acilis_basi
+if _db_ready:
+    with _badge_slot.container():
+        render_pending_badge(current_owner)
+    with _talep_slot.container():
+        render_team_requests(current_owner, yil, ay, isimler, save_undo_state)
+        render_request_status(current_owner, yil, ay, isimler)
 
 # ═══════════════════════════════════════════════════════
 # TAB 2: TAKVİM GÖRÜNÜMü (nobet_takvim.py)
@@ -2180,7 +2189,7 @@ _olcum = end_run_connection()
 if _olcum and not st.session_state.get("acilis_olculdu"):
     st.session_state.acilis_olculdu = True
     print(
-        f"[nobet] Açılış ölçümü: sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
+        f"[nobet] Açılış ölçümü: tablo {_tablo_sn:.1f} sn, sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
         f"({_olcum['uses']} okuma), bağlantı açma {_olcum['connect_ms']} ms",
         flush=True,
     )

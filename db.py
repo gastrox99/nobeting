@@ -198,12 +198,13 @@ def _connect():
 
 
 def ping_db():
-    """Uyandırma bağlantısı: veritabanına şu an ulaşılabiliyorsa True."""
+    """Uyandırma bağlantısı: veritabanına şu an ulaşılabiliyorsa True.
+
+    Bağlantının açılması (parola doğrulaması veritabanında yapılır) ulaşıldığını
+    gösterir; ayrıca sorgu gönderilmez (açılışta bir gidiş-dönüş az)."""
     conn = None
     try:
         conn = _connect()
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1")
         return True
     except _DB_ERRORS as e:
         _log_error("Ping", e)
