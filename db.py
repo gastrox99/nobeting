@@ -8,6 +8,7 @@ import json
 import re
 import hashlib
 import inspect
+import threading
 import time
 import traceback
 from datetime import date, datetime, timedelta, timezone
@@ -54,18 +55,130 @@ def is_database_configured():
 CONNECT_RETRY_DELAY = 1.0
 
 
-def _connect():
-    """Yeni bağlantı açar; bağlantı hatasında (OperationalError) bir kez yeniden dener.
-
-    Havuz yok: her çağrı kendi bağlantısını açar ve çağıran kapatır (Neon uyuyunca
-    açık kalan bağlantı bozuluyordu).
-    """
+def _open(**kwargs):
+    """Yeni bağlantı açar; bağlantı hatasında (OperationalError) bir kez yeniden dener."""
     try:
-        return psycopg2.connect(_database_url(), connect_timeout=10)
+        return psycopg2.connect(_database_url(), connect_timeout=10, **kwargs)
     except psycopg2.OperationalError as exc:
         _log_error("Connect (yeniden deneniyor)", exc)
         time.sleep(CONNECT_RETRY_DELAY)
-        return psycopg2.connect(_database_url(), connect_timeout=10)
+        return psycopg2.connect(_database_url(), connect_timeout=10, **kwargs)
+
+
+# --- Bir sayfa çalışması içinde tek bağlantı (havuz değil) ---
+# Canlıda her yeni bağlantı ~1 sn sürüyor (şifreleme + parola, uzak bölge). Sayfa
+# çalışması begin_run_connection() ile başlarsa o iş parçacığındaki okumalar aynı
+# bağlantıyı kullanır; end_run_connection() ya da RUN_CONNECTION_IDLE_SECONDS boşta
+# kalınca kapanır. Çalışmalar arasında açık bağlantı kalmaz (Neon uyuyunca açık
+# kalan bağlantı bozuluyordu). Hata veren bağlantı atılır, sonraki okuma yenisini açar.
+RUN_CONNECTION_IDLE_SECONDS = 5
+_run_lock = threading.Lock()
+_run_conns = {}  # iş parçacığı -> {"conn", "in_use", "last_used"}
+_run_closer = None
+
+
+class _RunConnection(psycopg2.extensions.connection):
+    def close(self):
+        with _run_lock:
+            entry = _run_conns.get(threading.get_ident())
+            shared = entry is not None and entry["conn"] is self
+        if shared and not self.closed:
+            try:
+                # Okuma işlemi açık kalmasın; load_schedule'ın oturum ayarı sonrakine geçmesin.
+                self.rollback()
+                self.set_session(isolation_level="DEFAULT", readonly="DEFAULT")
+                with _run_lock:
+                    entry["in_use"], entry["last_used"] = False, time.monotonic()
+                return
+            except psycopg2.Error:
+                pass
+        if shared:
+            with _run_lock:
+                entry["conn"], entry["in_use"] = None, False
+        super().close()
+
+
+def _close_quietly(conn):
+    if conn is not None:
+        try:
+            psycopg2.extensions.connection.close(conn)
+        except Exception:  # kapanırken hata: bağlantı zaten kullanılmıyor
+            pass
+
+
+def _run_closer_loop():
+    """Boşta kalan bağlantıyı kapatır; iş parçacığı bitmiş çalışmayı listeden çıkarır."""
+    global _run_closer
+    while True:
+        time.sleep(1)
+        now = time.monotonic()
+        conns = []
+        with _run_lock:
+            alive = {_t.ident for _t in threading.enumerate()}
+            for _tid, _e in list(_run_conns.items()):
+                if _e["in_use"] and _tid in alive:
+                    continue
+                if _tid not in alive or now - _e["last_used"] > RUN_CONNECTION_IDLE_SECONDS:
+                    conns.append(_e["conn"])
+                    _e["conn"] = None
+                if _tid not in alive:
+                    del _run_conns[_tid]
+            if not _run_conns:
+                _run_closer = None
+        for conn in conns:
+            _close_quietly(conn)
+        if _run_closer is None:
+            return
+
+
+def begin_run_connection():
+    """Bu iş parçacığındaki okumalar bundan sonra tek bağlantıyı paylaşır."""
+    global _run_closer
+    with _run_lock:
+        old = _run_conns.pop(threading.get_ident(), None)
+        _run_conns[threading.get_ident()] = {"conn": None, "in_use": False, "last_used": time.monotonic()}
+        if _run_closer is None:
+            _run_closer = threading.Thread(target=_run_closer_loop, name="db-run-closer", daemon=True)
+            _run_closer.start()
+    _close_quietly(old and old["conn"])
+
+
+def end_run_connection():
+    """Sayfa çalışması bitti: paylaşılan bağlantı kapanır."""
+    with _run_lock:
+        old = _run_conns.pop(threading.get_ident(), None)
+    _close_quietly(old and old["conn"])
+
+
+def _connect():
+    """Bağlantı verir; çağıran işi bitince ``close()`` der.
+
+    Havuz yok. Sayfa çalışması begin_run_connection() dediyse aynı çalışmadaki
+    okumalar tek bağlantıyı paylaşır (``close()`` onu açık bırakır); iç içe
+    çağrı ya da paylaşım yoksa her çağrı kendi bağlantısını açar.
+    """
+    tid = threading.get_ident()
+    with _run_lock:
+        entry = _run_conns.get(tid)
+        if entry is not None and not entry["in_use"] and entry["conn"] is not None and not entry["conn"].closed:
+            entry["in_use"] = True
+            return entry["conn"]
+        claim = entry is not None and not entry["in_use"]
+        if claim:
+            entry["in_use"] = True
+    if not claim:
+        return _open()
+    try:
+        conn = _open(connection_factory=_RunConnection)
+    except Exception:
+        with _run_lock:
+            entry["in_use"] = False
+        raise
+    with _run_lock:
+        if _run_conns.get(tid) is entry:
+            entry["conn"] = conn
+    # Bu arada çalışma bittiyse bağlantı listede yoktur; close() onu gerçekten kapatır.
+    return conn
 
 
 def ping_db():
