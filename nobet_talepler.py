@@ -22,6 +22,8 @@ _CACHE_SECONDS = 60
 # Onaylanıp tercihlere işlenen, ay kaydedilince onaylandı olarak işaretlenecek talepler: [(id, yıl, ay)].
 _APPROVED_KEY = "team_requests_approved"
 _ALL_CACHE_KEY = "team_requests_all_cache"
+# Liste kapalı açılır (tablo ilk ekranda kalsın); kullanıcı açıp onay/ret yaptıysa açık kalır.
+_OPEN_KEY = "team_requests_open"
 
 
 def _requests(owner):
@@ -87,6 +89,7 @@ def render_request_status(owner, yil, ay, isimler):
 
 
 def _approve(owner, request, person, save_undo_state):
+    st.session_state[_OPEN_KEY] = True
     save_undo_state()
     st.session_state.pref_df, _changed = apply_team_request(
         st.session_state.pref_df, person, request["days"]
@@ -107,6 +110,7 @@ def _approve(owner, request, person, save_undo_state):
 
 
 def _reject(owner, request):
+    st.session_state[_OPEN_KEY] = True
     decide_team_request(owner, request["id"], "rejected")
     st.session_state.pop(_ALL_CACHE_KEY, None)
     st.toast(f"{request['person']} talebi reddedildi.", icon="🗑️")
@@ -152,7 +156,7 @@ def render_team_requests(owner, yil, ay, isimler, save_undo_state):
     for _r in _all:
         if (_r["year"], _r["month"]) != (yil, ay):
             _others[(_r["year"], _r["month"])] = _others.get((_r["year"], _r["month"]), 0) + 1
-    with st.expander(f"📥 Ekip talepleri ({len(_all)})", expanded=bool(_here)):
+    with st.expander(f"📥 Ekip talepleri ({len(_all)})", expanded=bool(st.session_state.get(_OPEN_KEY))):
         # Ay kaydedilemiyorsa (başka yerde değişmiş ya da okunamamış) onaylanan
         # talep yalnızca bu sekmede kalıp silinirdi; onay o zaman kapalı.
         _blocked = st.session_state.get("autosave_blocked_period") == (yil, ay) or bool(st.session_state.get("ay_kilitli"))
@@ -166,7 +170,7 @@ def render_team_requests(owner, yil, ay, isimler, save_undo_state):
                 for _label, _text in team_request_summary(_r["days"])
             )
             _when = _r["created_tr"].strftime("%d.%m %H:%M") if _r.get("created_tr") else ""
-            _cols = st.columns([6, 1, 1], vertical_alignment="center")
+            _cols = st.columns([5, 2, 2], vertical_alignment="center")
             with _cols[0]:
                 st.markdown(
                     f"<div><b>{escape_html(_person)}</b> "

@@ -194,7 +194,7 @@ from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_yil import render_year_summary
 from nobet_onkontrol import (
-    ay_sonu_cakismalari, ilk_nobet_gunleri, paylasim_kontrolleri, render_backup_suggestion, render_day_availability,
+    ay_sonu_cakismalari, dinlenme_uyarilari, ilk_nobet_gunleri, paylasim_kontrolleri, render_backup_suggestion, render_day_availability,
     render_precheck, render_why_not,
 )
 from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
@@ -1813,6 +1813,7 @@ edited_df = st.session_state.schedule_bool.copy(deep=True)
 
 # --- HATA KONTROL ---
 violations = []
+rest_violation_days = {}
 conflict_msg = []
 forbidden_msg = []
 max_person_msg = []
@@ -1831,7 +1832,7 @@ for col in sutunlar:
             conflict_msg.append(f"❌ **{k}**: {gun_no}. gün izinli ya da müsait değil.")
         
         if (gun_no - last_shift_check[k]) <= min_bosluk:
-            violations.append(f"⚠️ **{k}**: {gun_no}. gün dinlenme kuralına uymuyor.")
+            rest_violation_days.setdefault(k, []).append(gun_no)
         last_shift_check[k] = gun_no
     
     # Check for forbidden pairs
@@ -1842,6 +1843,7 @@ for col in sutunlar:
                 if pair in st.session_state.forbidden_pairs:
                     forbidden_msg.append(f"🚫 **{gun_no}. Gün**: {nobetciler[i]} ve {nobetciler[j]} birlikte çalışamaz!")
 
+violations += dinlenme_uyarilari(rest_violation_days)
 violations += ay_sonu_cakismalari(
     {p: d for p, d in last_shift_check.items() if p in st.session_state.next_month_first_shift},
     st.session_state.next_month_first_shift, gun_sayisi, min_bosluk,

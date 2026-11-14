@@ -264,3 +264,12 @@ def ay_sonu_cakismalari(last_days, next_first, days_in_month, min_bosluk):
         if last > 0 and first is not None and (days_in_month - last) + first <= min_bosluk:
             messages.append(f"⚠️ **{person}**: {last}. gün nöbeti ile sonraki ayın {first}. günü dinlenme kuralına uymuyor.")
     return messages
+
+
+def dinlenme_uyarilari(ihlaller):
+    """{kişi: [gün, ...]} için kişi başına tek uyarı satırı (16 benzer kutu yerine)."""
+    return [
+        f"⚠️ **{person}**: {', '.join(str(d) for d in days)}. "
+        f"{'günler' if len(days) > 1 else 'gün'} dinlenme kuralına uymuyor."
+        for person, days in ihlaller.items()
+    ]

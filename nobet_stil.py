@@ -220,6 +220,24 @@ GLOBAL_CSS = """
     .st-key-bottom-actions :is(.stButton, [data-testid="stPopover"]) button p { font-size: 11px; }
 }
 
+/* Ekip talepleri: her talep telefonda tek satır (ad + özet solda, ✅ ❌ sağda). */
+@media (max-width: 768px) {
+    [data-testid="stHorizontalBlock"]:has([class*="st-key-talep_onay_"]) {
+        flex-wrap: nowrap !important;
+        gap: 4px !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([class*="st-key-talep_onay_"]) > :is([data-testid="column"],[data-testid="stColumn"]) {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        width: auto !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([class*="st-key-talep_onay_"]) > :is([data-testid="column"],[data-testid="stColumn"]):first-child {
+        flex-grow: 2.2 !important;
+    }
+    [class*="st-key-talep_onay_"] button, [class*="st-key-talep_ret_"] button { padding: 4px 2px !important; }
+    [class*="st-key-talep_onay_"] button p, [class*="st-key-talep_ret_"] button p { font-size: 13px; white-space: nowrap; }
+}
+
 /* Hızlı giriş: Kişi · Günler · Tür · Uygula telefonda da tek satır. */
 :is([data-testid="stExpander"], .st-key-ayarlar-panel) .st-key-quick-entry [data-testid="stHorizontalBlock"] {
     flex-wrap: nowrap !important;

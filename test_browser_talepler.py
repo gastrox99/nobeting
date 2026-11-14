@@ -64,6 +64,8 @@ def test_talep_onaylanir_ve_reddedilir(app_url):  # noqa: F811
             try:
                 _wait_idle(page)
                 expect(page.get_by_text("📥 Ekip talepleri (2)")).to_be_visible()
+                expect(page.get_by_text("Tercih: 3 · İzin: 5-6")).not_to_be_visible()  # liste kapalı açılır
+                page.get_by_text("📥 Ekip talepleri (2)").click()
                 expect(page.get_by_text("Tercih: 3 · İzin: 5-6")).to_be_visible()
                 expect(page.get_by_text("🔔 2 ekip talebi onay bekliyor")).to_be_visible()
                 page.get_by_role("button", name="✅ Onayla").first.click()
@@ -113,6 +115,7 @@ def test_kaydedilemeyen_onayda_talep_kaybolmaz(app_url):  # noqa: F811
             try:
                 _wait_idle(page)
                 expect(page.get_by_text("📥 Ekip talepleri (1)")).to_be_visible()
+                page.get_by_text("📥 Ekip talepleri (1)").click()
                 # Sayfa açıkken ay başka yerde kaydedilir; onay kaydı çakışmaya düşer.
                 _with_db(lambda db: _bump_schedule(db, year, month))
                 page.get_by_role("button", name="✅ Onayla").click()
