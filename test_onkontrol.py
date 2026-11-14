@@ -196,3 +196,13 @@ def test_telafi_ertesi_aya_devredilir_ve_sonraki_ayda_alinir():
     # Ocak ayında (bir ay sonrası) kayıt gösterilmez.
     at = AppTest.from_function(_panel_betigi, args=(2027, 1, kayit)).run()
     assert not [b for b in at.button if b.key and b.key.startswith("devir_")]
+
+
+def test_dinlenme_uyarilari_kisi_basina_tek_satir():
+    from nobet_onkontrol import dinlenme_uyarilari
+
+    assert dinlenme_uyarilari({"FARUK": [8, 9, 20, 25], "ORCAN": [13]}) == [
+        "⚠️ **FARUK**: 8, 9, 20, 25. günler dinlenme kuralına uymuyor.",
+        "⚠️ **ORCAN**: 13. gün dinlenme kuralına uymuyor.",
+    ]
+    assert dinlenme_uyarilari({}) == []
