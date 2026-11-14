@@ -7,11 +7,19 @@ oturumdaki sürüm güncellenmiyor, sonraki kayıt kendi kaydını "başka yerde
 değişmiş" sanıyordu.
 """
 
+import os
+import socket
+import subprocess
+import sys
 import time
+from urllib.error import URLError
+from urllib.request import urlopen
+
+import pytest
 
 # TEST_DATABASE_URL yoksa test_browser_yedek içe aktarılırken bu dosya da atlanır.
 from test_browser_yedek import _cell, _open_app, _toggle, app_url  # noqa: F401  (fixture)
-from test_browser_nobet import _day_button, _no_exception, _wait_idle
+from test_browser_nobet import APP_DIR, _day_button, _no_exception, _wait_idle
 
 TEAM = "Hızlı Ali, Hızlı Ayşe, Hızlı Can"
 
@@ -163,5 +171,127 @@ def test_kaydedilmemis_tercihler_yenilemede_kaybolmaz(app_url):  # noqa: F811
             text = page.locator("body").inner_text()
             assert "başka bir yerde" not in text and "kaydedilemedi" not in text
             _no_exception(page)
+        finally:
+            browser.close()
+
+
+def _start_slow_db_proxy(target_url, one_way_ms):
+    """Veritabanına giden her pakete gecikme ekleyen yerel aracı; yeni adresi döner.
+
+    Canlıda veritabanı uzakta (Frankfurt); kayıt yaklaşık bir saniye sürüyor.
+    Yereldeki anlık veritabanında hızlı dokunuş kaydın ortasına denk gelmiyordu.
+    """
+    import asyncio
+    import threading
+    from urllib.parse import urlsplit
+
+    target = urlsplit(target_url)
+    delay = one_way_ms / 1000
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    async def pipe(reader, writer):
+        queue = asyncio.Queue()
+
+        async def read():
+            while True:
+                data = await reader.read(65536)
+                await queue.put((time.monotonic() + delay, data))
+                if not data:
+                    return
+
+        async def write():
+            while True:
+                due, data = await queue.get()
+                await asyncio.sleep(max(0, due - time.monotonic()))
+                if not data:
+                    writer.close()
+                    return
+                writer.write(data)
+                await writer.drain()
+
+        await asyncio.gather(read(), write(), return_exceptions=True)
+
+    async def handle(client_reader, client_writer):
+        server_reader, server_writer = await asyncio.open_connection(target.hostname, target.port or 5432)
+        await asyncio.gather(pipe(client_reader, server_writer), pipe(server_reader, client_writer),
+                             return_exceptions=True)
+
+    loop = asyncio.new_event_loop()
+    ready = threading.Event()
+
+    def run():
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(asyncio.start_server(handle, "127.0.0.1", port))
+        ready.set()
+        loop.run_forever()
+
+    threading.Thread(target=run, daemon=True).start()
+    ready.wait(5)
+    return target._replace(netloc=f"{target.netloc.rsplit('@', 1)[0]}@127.0.0.1:{port}").geturl()
+
+
+@pytest.fixture(scope="module")
+def slow_db_app_url():
+    from test_browser_yedek import TEST_DB, _clear_anonymous_data
+    _clear_anonymous_data()
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    env = {**os.environ, "DATABASE_URL": _start_slow_db_proxy(TEST_DB, 75), "GIRISSIZ_KULLANIM": "1"}
+    server = subprocess.Popen(
+        [sys.executable, "-m", "streamlit", "run", "nobet.py", "--server.port", str(port),
+         "--server.address", "127.0.0.1", "--server.headless", "true", "--browser.gatherUsageStats", "false"],
+        cwd=APP_DIR, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                with urlopen(f"{url}/_stcore/health", timeout=1):
+                    break
+            except (URLError, TimeoutError, ConnectionError):
+                time.sleep(0.2)
+        else:
+            raise TimeoutError("Streamlit did not become ready")
+        yield url
+    finally:
+        server.terminate()
+        server.wait(timeout=10)
+        _clear_anonymous_data()
+
+
+def test_kayit_surerken_dokunmak_cakisma_uyarisi_vermez(slow_db_app_url):
+    """Kayıt sürerken gelen dokunuş yeni bir çalıştırma başlatır; ikisi aynı sürümle yazıp çakışmamalı.
+
+    Streamlit'in "hızlı yeniden çalıştırma" ayarı açıkken yeni dokunuş, önceki
+    çalıştırma veritabanına yazarken ikinci bir çalıştırmayı hemen başlatıyordu.
+    İkincisi ilkinin henüz güncellemediği sürümle yazıp kendi kaydını "başka bir
+    yerde değiştirilmiş" sanıyordu (uyarıdaki iki oturum numarası aynıydı).
+    """
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, slow_db_app_url, "Yarış Ali, Yarış Ayşe, Yarış Can")
+        try:
+            _wait_idle(page)
+            _toggle(page, "Yarış Ayşe", 5, "✓")
+            for day in range(3):
+                _day_button(page, "Yarış Ali", day).click(no_wait_after=True)
+                time.sleep(0.3)  # ilk kayıt veritabanında sürerken
+                _day_button(page, "Yarış Can", day).click(no_wait_after=True)
+                _wait_idle(page, 1.0)
+                text = page.locator("body").inner_text()
+                assert "başka bir yerde" not in text, f"{day}. turda sahte çakışma"
+            assert "kaydedilemedi" not in text
+            _no_exception(page)
+            page.reload()
+            _wait_idle(page)
+            page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
+            _wait_idle(page, 1.0)
+            # Hepsi kaydedilmiş olmalı (ardışık günler kural işaretiyle görünebilir).
+            for person in ("Yarış Ali", "Yarış Can"):
+                assert "·" not in [_cell(page, person, day) for day in range(3)]
         finally:
             browser.close()

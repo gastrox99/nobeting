@@ -6,6 +6,13 @@ maxUploadSize = 20
 # static/ klasörü /app/static/ altında sunulur (Ana Ekran simgesi).
 enableStaticServing = true
 
+[runner]
+# Yeni dokunuş, önceki çalıştırma bitmeden ikinci bir çalıştırma başlatmasın.
+# Açıkken (varsayılan) önceki çalıştırma veritabanına yazarken yenisi aynı eski
+# sürümle yazıyor, uygulama kendi kaydını "başka bir yerde değiştirilmiş" sanıp
+# kaydı durduruyordu. Kapalıyken yeni dokunuş, önceki kayıt bitince işlenir.
+fastReruns = false
+
 # Görünüm: Streamlit'in kırmızı ana rengi sayfadaki "İzin/hata" kırmızısıyla
 # karışıyordu. Açık ve koyu tema ayrı tanımlanır; telefon/bilgisayar hangi
 # temadaysa uygulama ona uyar.
