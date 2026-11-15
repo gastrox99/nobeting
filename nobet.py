@@ -1536,10 +1536,12 @@ mesai_saatleri = personal_work_hours(
 
 # Paylaşım linkinden gelen tercih/izin talepleri onay bekler (nobet_talepler.py).
 # Yeri burada; içi tablodan sonra doldurulur (iki veritabanı okuması tabloyu bekletmesin).
-_talep_slot = st.empty()
-if _db_ready:
-    # Talepler dolunca tablo aşağı kaymasın: yer önceden ayrılır (talep durumu satırı ≈ 56 px).
-    _talep_slot.markdown('<div style="height:56px"></div>', unsafe_allow_html=True)
+# Kapsayıcı tabloyla birlikte çizilir ve yer ayırır; talepler dolunca tablo aşağı kaymasın
+# (talep durumu satırı ≈ 56 px). İçerik sonradan aynı kapsayıcıya eklenir, yer değiştirmez.
+_talep_yer = bool(_db_ready and isimler)
+_talep_slot = st.container(key="talep-yer") if _talep_yer else st.empty()
+if _talep_yer:
+    _talep_slot.markdown('<div></div>', unsafe_allow_html=True)  # boş kapsayıcı çizilmez
 
 tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"])
 
@@ -1553,7 +1555,7 @@ _tablo_sn = time.monotonic() - _acilis_basi
 if _db_ready:
     with _badge_slot.container():
         render_pending_badge(current_owner)
-    with _talep_slot.container():
+    with (_talep_slot if _talep_yer else _talep_slot.container()):
         render_team_requests(current_owner, yil, ay, isimler, save_undo_state)
         render_request_status(current_owner, yil, ay, isimler)
 

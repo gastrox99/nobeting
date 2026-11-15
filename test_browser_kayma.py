@@ -16,7 +16,8 @@ from test_browser_nobet import _no_exception, _wait_idle  # noqa: E402
 from test_browser_talepler import _clear_requests, _with_db  # noqa: E402
 from test_browser_yedek import _open_app, app_url  # noqa: E402,F401  (modül fikstürü)
 
-_TABLO_Y = "(document.querySelector('[role=\"tablist\"]')||{getBoundingClientRect:()=>({top:-1})}).getBoundingClientRect().top"
+# Tablo üst çizgisinin talep kapsayıcısının üstünden uzaklığı: talepler dolarken değişmemeli.
+_TABLO_Y = "(()=>{const c=document.querySelector('.st-key-talep-yer'),t=document.querySelector('[role=tablist]');return c&&t&&getComputedStyle(c).minHeight==='56px'?t.getBoundingClientRect().top-c.getBoundingClientRect().top:-1})()"
 
 
 def test_talepler_yuklenince_tablo_kaymaz(app_url):  # noqa: F811
@@ -28,14 +29,16 @@ def test_talepler_yuklenince_tablo_kaymaz(app_url):  # noqa: F811
             browser, page = _open_app(p, app_url, "Kayma Ali, Kayma Ayşe")
             try:
                 _wait_idle(page)
+                # GitHub'daki yavaş makineyi taklit et: ara durumlar uzar, kayma yakalanır.
+                page.context.new_cdp_session(page).send("Emulation.setCPUThrottlingRate", {"rate": 6})
                 page.reload()
-                page.evaluate("window.__y=[];(function f(){const y=" + _TABLO_Y + ";if(y>0)window.__y.push([y,[...document.querySelectorAll('summary')].some(e=>e.textContent.includes('Talep durumu'))]);requestAnimationFrame(f)})()")
+                page.evaluate("window.__y=[];(function f(){const y=" + _TABLO_Y + ";if(y>=0)window.__y.push([y,[...document.querySelectorAll('summary')].some(e=>e.textContent.includes('Talep durumu'))]);requestAnimationFrame(f)})()")
                 page.get_by_text("📋 Talep durumu").wait_for()
                 _wait_idle(page)
                 ys = page.evaluate("window.__y")
-                i = next(k for k, (_, var) in enumerate(ys) if var)
-                assert i > 0, "talep durumu tablodan önce geldi; ölçülemedi"
-                assert abs(ys[i][0] - ys[i - 1][0]) <= 6, (ys[i - 1][0], ys[i][0])
+                assert any(v for _, v in ys), "talep durumu hiç görünmedi"
+                sonra = [y for y, _ in ys]
+                assert max(sonra) - min(sonra) <= 6, (min(sonra), max(sonra))
             finally:
                 browser.close()
     finally:

@@ -197,6 +197,8 @@ GLOBAL_CSS = """
    telefonda dördü tek satırda, eşit genişlik ve aynı yükseklikte. */
 .st-key-bottom-actions :is(.stButton, [data-testid="stPopover"]) button p { white-space: nowrap; }
 .st-key-kayit-notu:has(.kayit-tercih) { min-height: 112px; }
+.st-key-talep-yer { min-height: 56px; }
+.st-key-talep-yer > [data-testid="stElementContainer"]:first-child { position: absolute; height: 0; overflow: hidden; }
 /* Tarayıcı kaydı bileşenleri görünmez; yer ve boşluk kaplamasın. */
 .st-key-kayit-notu [data-testid="stElementContainer"]:has(iframe) { position: absolute; height: 0; overflow: hidden; }
 @media (max-width: 768px) {
