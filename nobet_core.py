@@ -2728,6 +2728,12 @@ def simulation_summary(schedule, people, columns, gun_detaylari, person_limits=N
     return "Bu ay: " + ", ".join(parts) + "."
 
 
+def simulation_toast(summary, auto_improved):
+    """Simülasyon sonrası tek bildirim metni (İyileştir devreye girdiyse aynı bildirimde söylenir)."""
+    head = "En adil sonuç seçildi (✨ İyileştir düzeltti). " if auto_improved else "En adil sonuç seçildi. "
+    return head + summary
+
+
 def shared_updated_text(moment):
     """Son güncelleme zamanı: "17 Ekim 2026, 14:30" (bilinmiyorsa boş)."""
     if not isinstance(moment, datetime):

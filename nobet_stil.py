@@ -196,6 +196,9 @@ GLOBAL_CSS = """
 /* Alttaki Dışa aktar · Paylaş · Tercihler · Yedekle: yazılar kırılmaz;
    telefonda dördü tek satırda, eşit genişlik ve aynı yükseklikte. */
 .st-key-bottom-actions :is(.stButton, [data-testid="stPopover"]) button p { white-space: nowrap; }
+.st-key-kayit-notu:has(.kayit-tercih) { min-height: 112px; }
+/* Tarayıcı kaydı bileşenleri görünmez; yer ve boşluk kaplamasın. */
+.st-key-kayit-notu [data-testid="stElementContainer"]:has(iframe) { position: absolute; height: 0; overflow: hidden; }
 @media (max-width: 768px) {
     .st-key-bottom-actions [data-testid="stHorizontalBlock"] {
         flex-wrap: nowrap !important;
@@ -382,7 +385,7 @@ def ui_colors(_dark_theme):
         "weekend_text": "#93c5fd" if _dark_theme else "#1d4ed8",
         "holiday_text": "#fca5a5" if _dark_theme else "#c62828",
         "today_text": "#fcd34d" if _dark_theme else "#b45309",
-        "weekend_bg": "rgba(59,130,246,0.18)" if _dark_theme else "#dbeafe",
+        "weekend_bg": "rgba(59,130,246,0.28)" if _dark_theme else "#dbeafe",
         "holiday_bg": "rgba(239,68,68,0.18)" if _dark_theme else "#fee2e2",
         "today_bg": "rgba(245,158,11,0.22)" if _dark_theme else "rgba(254,243,199,0.75)",
         "legend_text": "#d1d5db" if _dark_theme else "#374151",
