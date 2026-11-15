@@ -85,8 +85,11 @@ class _RunConnection(psycopg2.extensions.connection):
         if shared and not self.closed:
             try:
                 # Okuma işlemi açık kalmasın; load_schedule'ın oturum ayarı sonrakine geçmesin.
+                # İşlem yoksa rollback ağa gitmez; ayar değişmediyse set_session çağrılmaz.
                 self.rollback()
-                self.set_session(isolation_level="DEFAULT", readonly="DEFAULT")
+                if self.isolation_level is not None or self.readonly is not None:
+                    self.set_session(isolation_level="DEFAULT", readonly="DEFAULT")
+                self.autocommit = True
                 with _run_lock:
                     entry["in_use"], entry["last_used"] = False, time.monotonic()
                     entry["db_seconds"] += entry["last_used"] - entry["since"]
@@ -184,6 +187,9 @@ def _connect():
         return _open()
     try:
         conn = _open(connection_factory=_RunConnection)
+        # Okuma tek tur gitsin (BEGIN/ROLLBACK yok). Yazmalar ``with conn:`` ile
+        # yine tek işlemde: psycopg2 2.9'dan beri autocommit'te de BEGIN/COMMIT gönderir.
+        conn.autocommit = True
     except Exception:
         with _run_lock:
             entry["in_use"] = False
@@ -861,6 +867,8 @@ def load_schedule(name, year, month, raise_on_error=False, owner="", include_pre
         conn = _connect()
         if version_out is not None:
             # Sürüm ve içerik aynı anlık görüntüden okunsun (arada yazılan kayıt karışmasın).
+            # Paylaşılan bağlantı autocommit'tedir; bu okuma için işlem açılır, close() geri alır.
+            conn.autocommit = False
             conn.set_session(isolation_level=psycopg2.extensions.ISOLATION_LEVEL_REPEATABLE_READ, readonly=True)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Get schedule

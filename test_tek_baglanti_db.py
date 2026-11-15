@@ -149,3 +149,95 @@ def test_calisma_sonunda_olcum_doner():
     assert olcum["uses"] == 2 and len(olcum["connect_ms"]) == 1   # iki okuma, tek bağlantı
     assert 0 < olcum["db_seconds"] <= olcum["page_seconds"]
     assert db.end_run_connection() is None                         # çalışma yoksa ölçüm yok
+
+
+# --- Okuma tek ağ turu (14 Kasım 2026, K1) ---
+# Paylaşılan bağlantıda her okuma BEGIN + SELECT + ROLLBACK diye üç tur gidiyordu
+# (canlıda tur ~145 ms). Okuma işlem açmamalı; yazma yine tek işlemde kalmalı.
+
+def _status(conn):
+    return conn.info.transaction_status
+
+
+def test_paylasilan_baglantida_okuma_islem_acmaz():
+    db.begin_run_connection()
+    conn = db._connect()
+    _backend_pid(conn)
+    # İşlem açılmadıysa BEGIN gitmemiş, close() da ROLLBACK göndermez: okuma tek tur.
+    assert _status(conn) == psycopg2.extensions.TRANSACTION_STATUS_IDLE
+    conn.close()
+
+
+def _uzman_sahibi():
+    import uuid
+    return f"tek-tur-{uuid.uuid4().hex[:10]}@example.com"
+
+
+def _sil(owner):
+    conn = psycopg2.connect(TEST_DB)
+    with conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM schedules WHERE owner = %s", (owner,))
+    conn.close()
+
+
+def test_surumlu_okuma_tek_anlik_goruntuden_ve_sonraki_okuma_yine_tek_tur(monkeypatch):
+    import pandas as pd
+    assert db.init_db(), db.get_last_error()
+    owner = _uzman_sahibi()
+    frame = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=["1 Per"])
+    try:
+        assert db.save_schedule("Otomatik_2026_10", 2026, 10, ["Ali", "Ayşe"], frame, owner=owner, expected_version=db.FORCE)
+        seen = {}
+        real = db._schedule_content_version
+
+        def spy(cur, schedule_id):
+            with cur.connection.cursor() as probe:
+                probe.execute("SELECT current_setting('transaction_isolation'), current_setting('transaction_read_only')")
+                seen["session"] = probe.fetchone()
+            seen["status"] = _status(cur.connection)
+            return real(cur, schedule_id)
+
+        monkeypatch.setattr(db, "_schedule_content_version", spy)
+        db.begin_run_connection()
+        box = {}
+        team, *_ = db.load_schedule("Otomatik_2026_10", 2026, 10, owner=owner, version_out=box, raise_on_error=True)
+        assert team == ["Ali", "Ayşe"] and box["version"].startswith("h:")
+        # Sürüm ve içerik aynı anlık görüntüden: tek işlem, tekrarlanabilir okuma.
+        assert seen["session"] == ("repeatable read", "on")
+        assert seen["status"] == psycopg2.extensions.TRANSACTION_STATUS_INTRANS
+        conn = db._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT current_setting('transaction_isolation'), current_setting('transaction_read_only')")
+                assert cur.fetchone() == ("read committed", "off")   # oturum ayarı taşınmadı
+            assert _status(conn) == psycopg2.extensions.TRANSACTION_STATUS_IDLE
+        finally:
+            conn.close()
+    finally:
+        _sil(owner)
+
+
+def test_paylasilan_baglantida_yarida_kalan_kayit_hicbir_sey_yazmaz(monkeypatch):
+    import pandas as pd
+    assert db.init_db(), db.get_last_error()
+    owner = _uzman_sahibi()
+    frame = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=["1 Per"])
+    frame.at["Ali", "1 Per"] = True
+    try:
+        assert db.save_schedule("Otomatik_2026_10", 2026, 10, ["Ali", "Ayşe"], frame, owner=owner, expected_version=db.FORCE)
+        db.begin_run_connection()
+
+        def boom(*a, **k):                       # eski satırlar silindikten sonra hata
+            raise psycopg2.OperationalError("yarıda koptu")
+
+        monkeypatch.setattr(db, "execute_values", boom)
+        other = frame.copy()
+        other.at["Ali", "1 Per"], other.at["Ayşe", "1 Per"] = False, True
+        assert db.save_schedule("Otomatik_2026_10", 2026, 10, ["Ali", "Ayşe"], other, owner=owner, expected_version=db.FORCE) is False
+        monkeypatch.undo()
+        monkeypatch.setenv("DATABASE_URL", TEST_DB)
+        db.end_run_connection()
+        _, saved, *_ = db.load_schedule("Otomatik_2026_10", 2026, 10, owner=owner)
+        assert list(saved.index[saved["1 Per"]]) == ["Ali"]      # eski kayıt olduğu gibi
+    finally:
+        _sil(owner)
