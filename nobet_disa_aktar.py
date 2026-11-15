@@ -15,6 +15,7 @@ from urllib.parse import quote
 from io import BytesIO
 
 import matplotlib.pyplot as plt
+from matplotlib.transforms import Bbox
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
@@ -41,12 +42,15 @@ from nobet_core import (
 EXCEL_AVAILABLE = importlib.util.find_spec("xlsxwriter") is not None
 
 
-def convert_df_to_png(df):
+def convert_df_to_png(df, baslik=None):
+    """Tabloyu resme çevirir; resim tabloya (ve varsa başlığa) kırpılır."""
     fig, ax = plt.subplots(figsize=(8, len(df) * 0.4 + 1))
     try:
         ax.axis('off')
-        table = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
+        table = ax.table(cellText=df.values, colLabels=df.columns, loc='upper center', cellLoc='center')
         table.auto_set_font_size(False); table.set_fontsize(10); table.scale(1.2, 1.2)
+        if baslik:
+            ax.set_title(baslik, fontsize=14, fontweight='bold', pad=8)
 
         if "Tarih" in df.columns:
             idx = df.columns.get_loc("Tarih")
@@ -61,8 +65,15 @@ def convert_df_to_png(df):
             table[0, j].set_facecolor("#dddddd")
             table[0, j].set_text_props(weight='bold')
 
+        # bbox_inches='tight' tabloyu hesaba katmadığı için tuvalde ~%40 boşluk kalıyordu.
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        extents = [table.get_window_extent(renderer)]
+        if baslik:
+            extents.append(ax.title.get_window_extent(renderer))
+        crop = Bbox.union(extents).transformed(fig.dpi_scale_trans.inverted()).padded(0.15)
         buf = BytesIO()
-        fig.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+        fig.savefig(buf, format='png', bbox_inches=crop, dpi=150)
         return buf.getvalue()
     finally:
         plt.close(fig)
@@ -551,7 +562,7 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
     # işaretlemesinde matplotlib ile yeniden çiziliyordu). Varsayılan argümanlar
     # o anki tabloları sabitler; on_click="ignore" indirmede sayfayı yeniden çizmez.
     def _png_bytes(_liste=df_liste.copy()):
-        return convert_df_to_png(_liste)
+        return convert_df_to_png(_liste, f"{TR_AY_ADLARI[ay]} {yil} Nöbet Listesi")
 
     def _excel_bytes(_liste=df_liste.copy(), _load=df_stats_load.copy(),
                      _finance=df_stats_finance.copy(), _yil=yil):

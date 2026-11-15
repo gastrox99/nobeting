@@ -1162,7 +1162,7 @@ class TestPreferenceGridAccessibility(unittest.TestCase):
         self.assertNotIn("sim_pending_confirm", self.app_source)
         self.assertIn('st.session_state.run_simulation = True', self.app_source)
         self.assertNotIn("100 Simülasyon yapıldı", self.app_source)
-        self.assertIn('st.toast("En adil sonuç seçildi. " + simulation_summary(', self.app_source)
+        self.assertIn('st.toast(simulation_toast(simulation_summary(', self.app_source)
 
 
 # ------------------------------------------------------------------------------

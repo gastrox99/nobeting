@@ -176,6 +176,7 @@ for _attempt in range(2):
             take_back_people,
             drop_unknown_people_from_rows,
             simulation_summary,
+            simulation_toast,
         )
         _load_ui_modules()
         break
@@ -1286,12 +1287,10 @@ for _stale in [k for k in list(st.session_state.person_preferences.keys()) if k 
     del st.session_state.person_preferences[_stale]
 
 if st.session_state.pop("simulation_success_pending", False):
-    st.toast("En adil sonuç seçildi. " + simulation_summary(
+    st.toast(simulation_toast(simulation_summary(
         st.session_state.schedule_bool, isimler, sutunlar, gun_detaylari,
         st.session_state.get("person_limits", {}),
-    ), icon="🧠")
-    if st.session_state.pop("auto_improved_pending", False):
-        st.toast("Eksik ya da toplam farkı vardı; ✨ İyileştir çözücüsü düzeltti.", icon="✨")
+    ), st.session_state.pop("auto_improved_pending", False)), icon="🧠")
 
 
 def _queue_assignment_warnings(cells):
@@ -1537,7 +1536,12 @@ mesai_saatleri = personal_work_hours(
 
 # Paylaşım linkinden gelen tercih/izin talepleri onay bekler (nobet_talepler.py).
 # Yeri burada; içi tablodan sonra doldurulur (iki veritabanı okuması tabloyu bekletmesin).
-_talep_slot = st.empty()
+# Kapsayıcı tabloyla birlikte çizilir ve yer ayırır; talepler dolunca tablo aşağı kaymasın
+# (talep durumu satırı ≈ 56 px). İçerik sonradan aynı kapsayıcıya eklenir, yer değiştirmez.
+_talep_yer = bool(_db_ready and isimler)
+_talep_slot = st.container(key="talep-yer") if _talep_yer else st.empty()
+if _talep_yer:
+    _talep_slot.markdown('<div></div>', unsafe_allow_html=True)  # boş kapsayıcı çizilmez
 
 tab_grid, tab_cal = st.tabs(["🗂️ Tablo Görünümü", "📅 Takvim Görünümü"])
 
@@ -1551,7 +1555,7 @@ _tablo_sn = time.monotonic() - _acilis_basi
 if _db_ready:
     with _badge_slot.container():
         render_pending_badge(current_owner)
-    with _talep_slot.container():
+    with (_talep_slot if _talep_yer else _talep_slot.container()):
         render_team_requests(current_owner, yil, ay, isimler, save_undo_state)
         render_request_status(current_owner, yil, ay, isimler)
 
@@ -1992,6 +1996,13 @@ _defer_save = (
     and not st.session_state.get("snapshot_requested")
     and _core_fp == st.session_state.get("last_saved_core_fingerprint")
 )
+# Tercih modunda not (ve Kaydet düğmesi) çıkıp kaybolunca altındaki düğmeler kaymasın: yer hep ayrılır.
+# Kapsayıcı her modda aynı yerde durur (yapı değişmesin); yer yalnız tercih modunda ayrılır.
+_kayit_notu = st.container(key="kayit-notu")
+_kayit_notu.markdown(
+    '<div class="kayit-tercih"></div>' if st.session_state.get("edit_mode") == "tercih" else "<div></div>",
+    unsafe_allow_html=True,
+)
 if st.session_state.pop("autosave_baseline_pending", False):
     st.session_state.last_saved_fingerprint = _persist_fp
     st.session_state.last_saved_core_fingerprint = _core_fp
@@ -2000,15 +2011,16 @@ elif (
     and _persist_fp != st.session_state.get("last_saved_fingerprint")
     and _defer_save
 ):
-    st.caption("📝 Tercih değişiklikleri henüz kaydedilmedi; mod değişince ya da Simülasyon'da kaydedilir.")
-    st.button("💾 Tercihleri Kaydet", key="save_preferences_button",
-              on_click=lambda: st.session_state.update(save_preferences_now=True))
-    # Sayfa kaydetmeden yenilenir ya da kapanırsa kaybolmasın: tarayıcıda da tut.
-    _pending_payload = pending_prefs_payload(
-        current_owner, yil, ay, _version_box("schedule_version").get("version"), st.session_state.pref_df,
-    )
-    if local_storage.getItem(PENDING_PREFS_KEY) != _pending_payload:
-        local_storage.setItem(PENDING_PREFS_KEY, _pending_payload, key="pending_prefs_set")
+    with _kayit_notu:
+        st.caption("📝 Tercih değişiklikleri henüz kaydedilmedi; mod değişince ya da Simülasyon'da kaydedilir.")
+        st.button("💾 Tercihleri Kaydet", key="save_preferences_button",
+                  on_click=lambda: st.session_state.update(save_preferences_now=True))
+        # Sayfa kaydetmeden yenilenir ya da kapanırsa kaybolmasın: tarayıcıda da tut.
+        _pending_payload = pending_prefs_payload(
+            current_owner, yil, ay, _version_box("schedule_version").get("version"), st.session_state.pref_df,
+        )
+        if local_storage.getItem(PENDING_PREFS_KEY) != _pending_payload:
+            local_storage.setItem(PENDING_PREFS_KEY, _pending_payload, key="pending_prefs_set")
 elif (
     not kayit_durdu_mu(st.session_state, (yil, ay))
     and _persist_fp != st.session_state.get("last_saved_fingerprint")
