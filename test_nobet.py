@@ -1835,7 +1835,9 @@ class TestBackup(unittest.TestCase):
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)), \
                 patch.object(db, "execute_values", side_effect=lambda _c, _sql, rows, **_k: inserted.extend(rows)):
             self.assertTrue(db.restore_owner_data(backup, owner="ali@gmail.com"))
-        upsert_sql, upsert_params = cursor.executed[0]
+        # Önce açık aylar okunur (kilitli aylar geri yüklenmez).
+        self.assertIn("FROM app_settings", cursor.executed[0][0])
+        upsert_sql, upsert_params = cursor.executed[1]
         self.assertIn("ON CONFLICT (owner, name, year, month)", upsert_sql)
         self.assertEqual(upsert_params[7], "ali@gmail.com")
         self.assertEqual(len(inserted), 4)
@@ -1854,7 +1856,7 @@ class TestBackup(unittest.TestCase):
         self.assertIn("export_owner_data(owner=current_owner)", source)
         # Veritabanı hatası kullanıcıya ham mesajla gösterilmez.
         self.assertIn("Yedek hazırlanamadı", source)
-        self.assertIn("restore_owner_data(parsed, owner=current_owner)", source)
+        self.assertIn("restore_owner_data(parsed, owner=current_owner, skipped_out=_skipped)", source)
         # Geri yüklemeden sonra eski ekran durumu yedeğin üzerine yazılmasın.
         self.assertIn("st.session_state.clear()", source)
 
