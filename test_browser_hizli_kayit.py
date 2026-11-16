@@ -57,6 +57,41 @@ def test_hizli_tiklamada_kayit_cakismasi_cikmaz(app_url):  # noqa: F811
             browser.close()
 
 
+
+def test_art_arda_dokunuslarin_hepsi_islenir(app_url):  # noqa: F811
+    """Önceki çizim bitmeden gelen dokunuşlar tek çalıştırmada birleşir; hepsi işlenmeli.
+
+    Eskiden ilk basılan düğme işlenip sayfa hemen baştan çiziliyor, aynı
+    çalıştırmadaki diğer dokunuşlar sessizce kayboluyordu.
+    """
+    from playwright.sync_api import sync_playwright
+    team = "Dokunuş Ali, Dokunuş Ayşe, Dokunuş Can"
+    days = [0, 2, 4, 6, 8]
+    with sync_playwright() as playwright:
+        browser, page = _open_app(playwright, app_url, team)
+        try:
+            _wait_idle(page)
+            for _ in range(2):
+                for day in days:
+                    _day_button(page, "Dokunuş Ayşe", day).click(no_wait_after=True)
+                    time.sleep(0.25)
+                _wait_idle(page)
+                _no_exception(page)
+                expected = "✓" if _ == 0 else "·"
+                assert [_cell(page, "Dokunuş Ayşe", day) for day in days] == [expected] * len(days)
+            # Son hâl veritabanına da aynen yazılmış olmalı.
+            for day in days:
+                _day_button(page, "Dokunuş Ayşe", day).click(no_wait_after=True)
+                time.sleep(0.25)
+            _wait_idle(page)
+            page.reload()
+            _wait_idle(page)
+            page.get_by_text("✏️ Nöbet Ata/Kaldır", exact=True).click()
+            _wait_idle(page, 1.0)
+            assert [_cell(page, "Dokunuş Ayşe", day) for day in days] == ["✓"] * len(days)
+        finally:
+            browser.close()
+
 def _saved_preferences():
     """Girişsiz kullanıcının en son kaydedilen tercih tablosu (kişi -> gün -> kod)."""
     import json

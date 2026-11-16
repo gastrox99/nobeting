@@ -260,6 +260,9 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
         _short_names = short_display_names(isimler)
         _special_cols = [c for c in sutunlar if gun_detaylari[c]['weekend'] or gun_detaylari[c]['holiday']]
         _locked_now = active_locks(st.session_state.get("locked_cells"), st.session_state.schedule_bool)
+        # Önceki çizim sürerken gelen dokunuşlar tek çalıştırmada birleşir: hepsini
+        # işleyip sonda bir kez yeniden çiz (ilkinde durmak diğerlerini kaybettiriyordu).
+        _tapped = False
         for person in isimler:
             row_cols = grid_container.columns([2] + [1] * len(sutunlar), gap=None)
             with row_cols[0]:
@@ -320,7 +323,9 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                                 [] if _now_on else [(person, col)],
                             )
                             queue_assignment_warnings([(person, col)])
-                        st.rerun()
+                        _tapped = True
+        if _tapped:
+            st.rerun()
 
     legend_container = st.container(key="preference-legend", border=False)
     _soft_style = {
