@@ -530,3 +530,20 @@ def test_bos_nobet_dolmuyorsa_oncelikli_dengeler_kotulesmez():
         assert after["unfilled"] == before["unfilled"]
         for name in PRIMARY_METRICS:
             assert after[name] <= before[name], name
+
+
+def test_tercih_hafta_sonundan_hafta_sonu_cumadan_once_gelir():
+    """Kullanıcı kararı (16 Kas): tercihler > hafta sonu dengesi > Cuma dengesi.
+
+    Bir kaçınılan günü (ya da karşılanmayan tercihi, ayrı düşen birlikte
+    ikiliyi) düzeltmek için hafta sonu farkı 1 artarsa çözücü bunu seçmeli;
+    hafta sonunu düzeltmek için de Cuma farkı 1 artabilir.
+    """
+    base = {name: 0 for name in PRIMARY_METRICS} | {
+        "together_split": 1, "consecutive_weekends": 0, "alt_chain": 0, "avoid": 1, "pair_repeat": 0,
+        "missed_preference": 1, "long_gap": 0, "spread": 0,
+    }
+    for pref in ("avoid", "missed_preference", "together_split"):
+        traded = dict(base, **{pref: 0, "special": 1})
+        assert weighted_score(traded) < weighted_score(base), pref
+    assert weighted_score(dict(base, special=0, friday=1)) < weighted_score(dict(base, special=1))
