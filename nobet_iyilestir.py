@@ -58,6 +58,8 @@ WEIGHTS = {
     "long_gap": 15,
     "spread": 1,
 }
+# Boş nöbet doldurulurken "kötüleşemez" sınırından çıkan öncelikli dengeler.
+_FILL_RELAXED = ("special", "holiday", "friday", "total_history")
 # Geçmiş aylardan gelen farklar kesirli olabilir (ör. 2/9); çözücü yalnız tam
 # sayı kabul ettiği için bu ölçüler 100 ile çarpılıp kuruşa yuvarlanır.
 SCALE = 100
@@ -255,7 +257,8 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
 
     Dönen değer (yeni_çizelge, önceki_ölçüler, yeni_ölçüler). Daha iyisi
     bulunamazsa yeni_çizelge None olur. Öncelikli ölçülerin hiçbiri
-    mevcut listeden kötüleşmez.
+    mevcut listeden kötüleşmez; boş nöbet dolarsa toplam farkı en fazla 1'e
+    çıkabilir, hafta sonu/tatil/Cuma/geçmiş farkları ağırlıkla korunur.
     """
     from ortools.sat.python import cp_model
 
@@ -453,10 +456,23 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
                 chain_terms.append(triple)
     expr["alt_chain"] = sum(chain_terms)
 
-    # Öncelikli dengeler mevcut listeden kötü olamaz.
+    # Öncelikli dengeler mevcut listeden kötü olamaz. Tek istisna: boş nöbet
+    # dolarsa toplam farkı 1'e çıkabilir (kural "en fazla 1") ve alttaki dengeler
+    # yalnız ağırlıklarıyla korunur; yoksa boş gün dolu bırakılıyordu.
+    fills = model.NewBoolVar("fills")
+    if before["unfilled"]:
+        model.Add(expr["unfilled"] <= before["unfilled"] - 1).OnlyEnforceIf(fills)
+    else:
+        model.Add(fills == 0)
     for name in PRIMARY_METRICS:
         limit = int(round(SCALE * before[name])) if name in SCALED_METRICS else before[name]
-        model.Add(expr[name] <= limit)
+        if name == "total":
+            model.Add(expr[name] <= max(limit, 1)).OnlyEnforceIf(fills)
+            model.Add(expr[name] <= limit).OnlyEnforceIf(fills.Not())
+        elif name in _FILL_RELAXED:
+            model.Add(expr[name] <= limit).OnlyEnforceIf(fills.Not())
+        else:
+            model.Add(expr[name] <= limit)
     model.Minimize(sum(
         (WEIGHTS[name] // SCALE if name in SCALED_METRICS else WEIGHTS[name]) * expr[name] for name in WEIGHTS
     ))
@@ -478,7 +494,10 @@ def improve_schedule(current, people, columns, df_unwanted_bool, gun_detaylari, 
         if solver.Value(var):
             improved.at[p, c] = True
     after = schedule_metrics(improved, people, columns, gun_detaylari, kisi_sayisi, min_bosluk, **metric_args)
-    worse = any(after[name] > before[name] for name in PRIMARY_METRICS)
+    if after["unfilled"] < before["unfilled"]:
+        worse = (after["min_short"] > before["min_short"] or after["total"] > max(before["total"], 1))
+    else:
+        worse = any(after[name] > before[name] for name in PRIMARY_METRICS)
     if worse or weighted_score(after) >= weighted_score(before):
         return None, before, before
     return improved, before, after
