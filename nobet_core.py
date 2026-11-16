@@ -2871,7 +2871,8 @@ def add_overflow_roles(rows, role_names, schedule, columns):
 BACKUP_FORMAT = "nobeting-yedek"
 BACKUP_VERSION = 1
 BACKUP_MAX_BYTES = 20 * 1024 * 1024
-# Ayarlar sözlüğü gerçekte birkaç KB; büyük içerik reddedilir.
+# Ayarlar sözlüğü ve her ayın kendi ayarları (kilitli nöbetler, saklı kişiler)
+# gerçekte birkaç KB; büyük içerik reddedilir.
 _BACKUP_MAX_SETTINGS_BYTES = 200 * 1024
 _BACKUP_MAX_SCHEDULES = 1200
 _BACKUP_MAX_PEOPLE = 300
@@ -3006,6 +3007,10 @@ def parse_backup(raw):
             continue
         if sched_settings is not None and not isinstance(sched_settings, dict):
             errors.append(f"{label} ({name} {month}/{year}): ay ayarları geçersiz.")
+            continue
+        if (sched_settings is not None
+                and len(json.dumps(sched_settings, ensure_ascii=False)) > _BACKUP_MAX_SETTINGS_BYTES):
+            errors.append(f"{label} ({name} {month}/{year}): ay ayarları çok büyük.")
             continue
         if rows is not None and not _valid_backup_rows(rows):
             errors.append(f"{label} ({name} {month}/{year}): görev listesi geçersiz.")
