@@ -70,6 +70,20 @@ def test_onay_yalnizca_yazili_gunleri_degistirir():
     assert apply_team_request(pref, "Yok", {"tercih": [1]})[1] == 0
 
 
+
+def test_guncellenen_onayli_talebin_eski_gunleri_kaldirilir():
+    """Onaylı "izin 1-2" "izin 3" olarak güncellenip onaylanınca 1-2 izinli kalmamalı."""
+    pref = pd.DataFrame(0, index=["Ali"], columns=["1 Paz", "2 Pzt", "3 Sal", "4 Çar"])
+    pref.loc["Ali"] = [3, 3, 0, 2]  # 1-2 eski onaydan izin; 4'ü yönetici elle "kaçın" yaptı
+    days = {"izin": [3], "onceki": {"izin": [1, 2], "kacin": [4]}}
+    result, changed = apply_team_request(pref, "Ali", days)
+    # 4 hâlâ eski talepteki değerde (kaçın): o da kalkar; elle değiştirilen olsaydı kalırdı.
+    assert result.loc["Ali"].tolist() == [0, 0, 3, 0]
+    assert changed == 4
+    pref.loc["Ali"] = [1, 3, 0, 0]  # 1'i yönetici sonradan "tercih" yaptı: dokunulmaz
+    result, _ = apply_team_request(pref, "Ali", {"izin": [2, 3], "onceki": {"izin": [1, 2]}})
+    assert result.loc["Ali"].tolist() == [1, 3, 3, 0]
+
 def _istek(person, year=2026, month=10):
     return {"id": 1, "year": year, "month": month, "person": person, "days": {}, "status": "pending"}
 

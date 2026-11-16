@@ -129,3 +129,42 @@ def test_kaydedilemeyen_onayda_talep_kaybolmaz(app_url):  # noqa: F811
                 browser.close()
     finally:
         _with_db(_clear_requests)
+
+
+def test_ekran_cizildikten_sonra_guncellenen_talep_eski_haliyle_onaylanmaz(app_url):  # noqa: F811
+    today = now_tr().date()
+    year, month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+    _with_db(_clear_requests)
+    _with_db(lambda db: db.submit_team_request("", year, month, ALI, {"izin": [10, 11, 12]}))
+    try:
+        with sync_playwright() as p:
+            browser, page = _open_app(p, app_url, f"{ALI}, {AYSE}")
+            try:
+                _wait_idle(page)
+                page.get_by_text("📥 Ekip talepleri (1)").click()
+                expect(page.get_by_text("İzin: 10-12")).to_be_visible()
+                # Ekran açıkken üye talebini günceller; Onayla eski hâli taşıyor.
+                _with_db(lambda db: db.submit_team_request("", year, month, ALI, {"izin": [20, 21, 22]}))
+                page.get_by_role("button", name="✅ Onayla").click()
+                _wait_idle(page)
+                _no_exception(page)
+                expect(page.get_by_text("İzin: 20-22")).to_be_visible()
+                requests = _with_db(lambda db: db.list_team_requests(""))
+                assert [(r["person"], r["days"]) for r in requests] == [(ALI, {"izin": [20, 21, 22]})]
+                pref = _with_db(lambda db: _saved_pref(db, year, month, ALI)) or {}
+                assert pref.get(10, 0) == 0  # eski günler işlenmedi
+                # Yeni hâl onaylanır.
+                page.get_by_role("button", name="✅ Onayla").click()
+                _wait_idle(page)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    pref = _with_db(lambda db: _saved_pref(db, year, month, ALI)) or {}
+                    if pref.get(20) == 3:
+                        break
+                    time.sleep(0.5)
+                assert (pref.get(10, 0), pref.get(20)) == (0, 3)
+                assert _with_db(lambda db: db.list_team_requests("")) == []
+            finally:
+                browser.close()
+    finally:
+        _with_db(_clear_requests)
