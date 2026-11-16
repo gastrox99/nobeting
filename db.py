@@ -1325,7 +1325,16 @@ def submit_team_request(owner, year, month, person, days_by_kind):
                         INSERT INTO team_requests (owner, year, month, person, days_json)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (owner, year, month, person) DO UPDATE
-                            SET days_json = EXCLUDED.days_json, created_at = CURRENT_TIMESTAMP,
+                            -- Onaylı talep güncellenirse onaylı günler "onceki" altında
+                            -- saklanır: yeni hâl onaylanınca eski günler tercihlerden kalkar.
+                            SET days_json = CASE
+                                    WHEN team_requests.status = 'approved' THEN (EXCLUDED.days_json::jsonb
+                                        || jsonb_build_object('onceki', team_requests.days_json::jsonb - 'onceki'))::text
+                                    WHEN team_requests.status = 'pending' AND team_requests.days_json::jsonb ? 'onceki'
+                                        THEN (EXCLUDED.days_json::jsonb
+                                        || jsonb_build_object('onceki', team_requests.days_json::jsonb -> 'onceki'))::text
+                                    ELSE EXCLUDED.days_json END,
+                                created_at = CURRENT_TIMESTAMP,
                                 status = 'pending', decided_at = NULL
                     ''', (owner, year, month, person, json.dumps(days_by_kind)))
             return "ok"
@@ -1384,8 +1393,13 @@ def list_team_requests(owner, raise_on_error=False, include_decided=False):
 TEAM_REQUEST_STATUSES = ("approved", "rejected")
 
 
-def decide_team_request(owner, request_id, status):
-    """Talebi onaylandı/reddedildi olarak işaretler (ekip üyesi linkte görür)."""
+def decide_team_request(owner, request_id, status, days=None):
+    """Talebi onaylandı/reddedildi olarak işaretler (ekip üyesi linkte görür).
+
+    ``days`` verilirse yalnız talep hâlâ bekliyor ve içeriği ``days`` ise yazılır
+    (ekran çizildikten sonra üye talebini güncellediyse eski hâl onaylanmasın);
+    yazılmadıysa False döner.
+    """
     if status not in TEAM_REQUEST_STATUSES:
         raise ValueError(f"Geçersiz talep durumu: {status}")
     conn = None
@@ -1393,11 +1407,17 @@ def decide_team_request(owner, request_id, status):
         conn = _connect()
         with conn:
             with conn.cursor() as cur:
+                if days is None:
+                    cur.execute('''
+                        UPDATE team_requests SET status = %s, decided_at = CURRENT_TIMESTAMP
+                        WHERE owner = %s AND id = %s
+                    ''', (status, owner, request_id))
+                    return True
                 cur.execute('''
                     UPDATE team_requests SET status = %s, decided_at = CURRENT_TIMESTAMP
-                    WHERE owner = %s AND id = %s
-                ''', (status, owner, request_id))
-        return True
+                    WHERE owner = %s AND id = %s AND status = 'pending' AND days_json::jsonb = %s::jsonb
+                ''', (status, owner, request_id, json.dumps(days)))
+                return cur.rowcount == 1
     except Exception as e:
         _log_error("Decide team request", e)
         return False

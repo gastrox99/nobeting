@@ -88,8 +88,20 @@ def render_request_status(owner, yil, ay, isimler):
         )
 
 
+def _changed_since_shown(owner, request):
+    """Talep ekran çizildikten sonra güncellendi ya da karara bağlandıysa True (liste yenilenir)."""
+    st.session_state.pop(_ALL_CACHE_KEY, None)
+    _now = next((_r for _r in _all_requests(owner) if _r["id"] == request["id"]), None)
+    if _now is not None and _now["status"] == "pending" and _now["days"] == request["days"]:
+        return False
+    st.toast(f"{request['person']} talebini az önce değiştirdi; listedeki yeni hâline bakın.", icon="⚠️")
+    return True
+
+
 def _approve(owner, request, person, save_undo_state):
     st.session_state[_OPEN_KEY] = True
+    if _changed_since_shown(owner, request):
+        return
     save_undo_state()
     st.session_state.pref_df, _changed = apply_team_request(
         st.session_state.pref_df, person, request["days"]
@@ -100,18 +112,20 @@ def _approve(owner, request, person, save_undo_state):
         # bir değişiklik yüzünden durursa talep kaybolmaz, yeniden onaylanabilir.
         st.session_state.save_preferences_now = True
         st.session_state.setdefault(_APPROVED_KEY, []).append(
-            (request["id"], request["year"], request["month"])
+            (request["id"], request["year"], request["month"], request["days"])
         )
     else:
         # Tercihler zaten talep gibiymiş; kaydedilecek bir şey yok.
-        decide_team_request(owner, request["id"], "approved")
+        decide_team_request(owner, request["id"], "approved", days=request["days"])
         st.session_state.pop(_ALL_CACHE_KEY, None)
     st.toast(f"{person} talebi onaylandı ({_changed} gün işlendi).", icon="✅")
 
 
 def _reject(owner, request):
     st.session_state[_OPEN_KEY] = True
-    decide_team_request(owner, request["id"], "rejected")
+    if not decide_team_request(owner, request["id"], "rejected", days=request["days"]):
+        _changed_since_shown(owner, request)
+        return
     st.session_state.pop(_ALL_CACHE_KEY, None)
     st.toast(f"{request['person']} talebi reddedildi.", icon="🗑️")
 
@@ -124,9 +138,10 @@ def finish_approved_requests(owner, yil, ay, saved):
         return
     st.session_state.pop(_ALL_CACHE_KEY, None)
     if saved:
-        for _id, _y, _m in _approved:
-            if (_y, _m) == (yil, ay):
-                decide_team_request(owner, _id, "approved")
+        for _id, _y, _m, _days in _approved:
+            if (_y, _m) == (yil, ay) and not decide_team_request(owner, _id, "approved", days=_days):
+                # Üye tam bu arada talebini değiştirdi: yeni hâli listede yeniden onaya düşer.
+                st.toast("Bir talep onaylanırken güncellendi; listedeki yeni hâline bakın.", icon="⚠️")
     else:
         # Liste bu çalışmada talep gizlenerek çizildi; yeniden çiz ki görünsün.
         st.rerun()
@@ -134,7 +149,7 @@ def finish_approved_requests(owner, yil, ay, saved):
 
 def pending_count(owner):
     """Onay bekleyen (bu oturumda onaylananlar hariç) talep sayısı."""
-    _approved_ids = {_id for _id, _, _ in st.session_state.get(_APPROVED_KEY) or []}
+    _approved_ids = {_id for _id, *_ in st.session_state.get(_APPROVED_KEY) or []}
     return len([_r for _r in _requests(owner) if _r["id"] not in _approved_ids])
 
 
@@ -147,7 +162,7 @@ def render_pending_badge(owner):
 
 def render_team_requests(owner, yil, ay, isimler, save_undo_state):
     # Onaylanıp kaydı beklenenler listede ikinci kez görünmesin.
-    _approved_ids = {_id for _id, _, _ in st.session_state.get(_APPROVED_KEY) or []}
+    _approved_ids = {_id for _id, *_ in st.session_state.get(_APPROVED_KEY) or []}
     _all = [_r for _r in _requests(owner) if _r["id"] not in _approved_ids]
     if not _all:
         return
@@ -178,6 +193,9 @@ def render_team_requests(owner, yil, ay, isimler, save_undo_state):
                     f"<div style='font-size:14px;'>{_lines}</div>",
                     unsafe_allow_html=True,
                 )
+                if _r["days"].get("onceki"):
+                    _old = " · ".join(f"{_label}: {_text}" for _label, _text in team_request_summary(_r["days"]["onceki"]))
+                    st.caption(f"Önceki onaylı talebin yerine geçer ({_old}); onaylanınca yeni talepte olmayan eski günler kaldırılır.")
                 if not _known:
                     st.caption("Bu isim ekipte yok; yalnızca reddedilebilir.")
                 elif st.session_state.get("ay_kilitli"):

@@ -2519,6 +2519,8 @@ def apply_team_request(pref_df, person, days_by_kind):
     """Talebi tercih tablosuna yazar: (yeni tablo, değişen hücre sayısı).
 
     Yalnızca talepte yazılı günler değişir; kişinin diğer günleri olduğu gibi kalır.
+    Talep önceden onaylanmış bir talebin yerine geçiyorsa (``onceki``) yeni talepte
+    olmayan eski günler, hâlâ eski talepteki değerdeyse boşaltılır.
     """
     result = pref_df.copy()
     if person not in result.index:
@@ -2530,6 +2532,14 @@ def apply_team_request(pref_df, person, days_by_kind):
         except (ValueError, IndexError):
             continue
     changed = 0
+    _new_days = {int(day) for key, _, _ in TALEP_TURLERI for day in days_by_kind.get(key) or []}
+    _previous = days_by_kind.get("onceki") or {}
+    for key, _, value in TALEP_TURLERI:
+        for day in _previous.get(key) or []:
+            column = columns.get(int(day))
+            if column is not None and int(day) not in _new_days and int(result.at[person, column]) == value:
+                result.at[person, column] = 0
+                changed += 1
     for key, _, value in TALEP_TURLERI:
         for day in days_by_kind.get(key) or []:
             column = columns.get(int(day))

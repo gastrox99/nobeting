@@ -119,7 +119,7 @@ def test_onaylanan_ve_reddedilen_talep_durumu_saklanir(owner):
     # Yeni talep yeniden onaya düşer.
     assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [7]}) == "ok"
     pending = [(r["person"], r["month"], r["days"]) for r in db.list_team_requests(owner)]
-    assert ("Ali", 11, {"izin": [7]}) in pending
+    assert ("Ali", 11, {"izin": [7], "onceki": {"tercih": [3]}}) in pending
 
 
 def test_karara_baglanan_talep_siniri_doldurmaz(owner, monkeypatch):
@@ -214,3 +214,39 @@ def test_kisa_surede_cok_talep_yazilamaz(owner, monkeypatch):
     assert db.submit_team_request(owner, 2026, 11, "Can", {"tercih": [3]}) == "wait"
     _talebi_eskit(owner, 11 * 60)
     assert db.submit_team_request(owner, 2026, 11, "Can", {"tercih": [3]}) == "ok"
+
+
+def test_ekranda_gorulen_talep_degistiyse_karar_yazilmaz(owner):
+    """Üye talebini güncellerken yönetici eski hâli onaylarsa/reddederse karar yazılmaz."""
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [10, 11, 12]}) == "ok"
+    shown = db.list_team_requests(owner)[0]
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [20, 21, 22]}) == "ok"
+    for status in ("approved", "rejected"):
+        assert not db.decide_team_request(owner, shown["id"], status, days=shown["days"])
+    now = db.list_team_requests(owner)[0]
+    assert now["status"] == "pending" and now["days"] == {"izin": [20, 21, 22]}
+    assert db.decide_team_request(owner, now["id"], "approved", days=now["days"])
+    assert db.list_team_requests(owner) == []
+
+
+def test_onaylanmis_talep_guncellenince_onceki_gunler_saklanir(owner):
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [10, 11, 12]}) == "ok"
+    first = db.list_team_requests(owner)[0]
+    assert db.decide_team_request(owner, first["id"], "approved", days=first["days"])
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"izin": [20, 21, 22]}) == "ok"
+    again = db.list_team_requests(owner)[0]
+    assert again["days"] == {"izin": [20, 21, 22], "onceki": {"izin": [10, 11, 12]}}
+    # Onaydan önce bir kez daha değişirse onaylı hâl yine korunur.
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"kacin": [25]}) == "ok"
+    assert db.list_team_requests(owner)[0]["days"] == {"kacin": [25], "onceki": {"izin": [10, 11, 12]}}
+    # Onaylanınca bir sonraki güncellemede yalnız son onaylanan hâl "önceki" olur.
+    third = db.list_team_requests(owner)[0]
+    assert db.decide_team_request(owner, third["id"], "approved", days=third["days"])
+    assert db.submit_team_request(owner, 2026, 11, "Ali", {"tercih": [3]}) == "ok"
+    assert db.list_team_requests(owner)[0]["days"] == {"tercih": [3], "onceki": {"kacin": [25]}}
+    # Reddedilen talebin günleri işlenmediği için "önceki" sayılmaz.
+    assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"izin": [5]}) == "ok"
+    ayse = [r for r in db.list_team_requests(owner) if r["person"] == "Ayşe"][0]
+    assert db.decide_team_request(owner, ayse["id"], "rejected", days=ayse["days"])
+    assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"izin": [6]}) == "ok"
+    assert [r for r in db.list_team_requests(owner) if r["person"] == "Ayşe"][0]["days"] == {"izin": [6]}
