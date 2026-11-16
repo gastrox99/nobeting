@@ -132,7 +132,8 @@ def official_holidays(yil, ay):
     return sorted(found.items())
 
 
-# Arifeler yarım gün (öğleden sonra tatil): zorunlu mesaide 4 saat sayılır.
+# Arifeler yarım gün (13.00'ten sonra tatil): zorunlu mesaide 08.00-13.00 arası 5 saat sayılır.
+ARIFE_MESAI_SAATI = 5
 TR_FIXED_HALF_DAYS = {(10, 28): "Cumhuriyet Bayramı arifesi"}
 
 
@@ -147,7 +148,7 @@ def official_half_days(yil, ay):
 
 
 def required_work_hours(gun_detaylari, half_days=()):
-    """Zorunlu mesai: hafta içi iş günü 8 saat, iş gününe düşen arife 4 saat.
+    """Zorunlu mesai: hafta içi iş günü 8 saat, iş gününe düşen arife 5 saat.
 
     ``half_days``: [(gün, ad), ...]. Hafta sonuna ya da tatil olarak
     işaretlenmiş güne düşen arife zaten sayılmaz. Dönen değer
@@ -159,7 +160,7 @@ def required_work_hours(gun_detaylari, half_days=()):
         if detail["weekend"] or detail["holiday"]:
             continue
         if detail["day_num"] in half:
-            hours += 4
+            hours += ARIFE_MESAI_SAATI
             counted.append((detail["day_num"], half[detail["day_num"]]))
         else:
             hours += 8
@@ -169,7 +170,7 @@ def required_work_hours(gun_detaylari, half_days=()):
 def personal_work_hours(gun_detaylari, half_days, preferences, people):
     """Kişi başına zorunlu mesai: İzin (3) işaretli iş günü mesaiden düşer.
 
-    İzinli iş günü 8 saat, izinli arife 4 saat düşer; hafta sonu ve tatil
+    İzinli iş günü 8 saat, izinli arife 5 saat düşer; hafta sonu ve tatil
     zaten mesaide sayılmadığı için düşmez. Müsait Değil (4) mesaiyi
     değiştirmez. Dönen değer {kişi: saat}.
     """
@@ -178,7 +179,7 @@ def personal_work_hours(gun_detaylari, half_days, preferences, people):
     for column, detail in gun_detaylari.items():
         if detail["weekend"] or detail["holiday"]:
             continue
-        work_hours[column] = 4 if detail["day_num"] in half else 8
+        work_hours[column] = ARIFE_MESAI_SAATI if detail["day_num"] in half else 8
     total = sum(work_hours.values())
     result = {}
     for person in people:

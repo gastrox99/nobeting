@@ -8,6 +8,7 @@ from nobet_core import (
     katsayi_uyarisi, most_paired, preference_summary, tr_sayi,
 )
 from nobet_durum import save_undo_state
+from nobet_gunler import ARIFE_MESAI_SAATI
 
 
 # Açık ve koyu temada okunur yarı saydam zeminler.
@@ -144,7 +145,7 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
         if arife_gunleri:
             _mesai_text += ", " + ", ".join(
                 f"{_day} {TR_AY_ADLARI[ay]} {_name}" for _day, _name in arife_gunleri
-            ) + " yarım gün (4 saat)"
+            ) + f" yarım gün ({ARIFE_MESAI_SAATI} saat)"
         st.caption(_mesai_text + ". İzin işaretli iş günleri kişinin mesaisinden düşer; "
                    "Müsait Değil düşmez.")
         st.dataframe(
