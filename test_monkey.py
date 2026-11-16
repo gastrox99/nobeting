@@ -238,6 +238,11 @@ def set_team(page, names):
             box.fill(name)
             box.press("Tab")
             wait_idle(page)
+            # Satıra başka ad yazılınca "Aynı kişi mi?" diye sorulur: yeni kişi.
+            new_person = page.locator(".st-key-ad-degisikligi-sorusu").get_by_role("button", name="Yeni kişi")
+            if new_person.count():
+                new_person.first.click()
+                wait_idle(page)
     while team_box(page, len(names) + 1).count() and team_box(page, len(names) + 1).input_value():
         box = team_box(page, len(names) + 1)
         box.fill("")

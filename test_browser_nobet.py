@@ -185,7 +185,7 @@ def _team_values(page):
     return [v for v in values if v]
 
 
-def _set_team(page, team):
+def _set_team(page, team, rename_answer="Yeni kişi"):
     """Ekip tablosunu verilen listeye getirir: boşsa virgüllü liste son satıra
     yapıştırılır, doluysa satırlar tek tek düzeltilir, fazla satırlar silinir."""
     names = [n.strip() for n in team.split(",") if n.strip()]
@@ -202,10 +202,19 @@ def _set_team(page, team):
             box.fill(name)
             box.press("Tab")
             _wait_idle(page, 1.5)
+            _answer_rename(page, rename_answer)
     while _team_box(page, len(names) + 1).count() and _team_box(page, len(names) + 1).input_value():
         box = _team_box(page, len(names) + 1)
         box.fill("")
         box.press("Tab")
+        _wait_idle(page, 1.5)
+
+
+def _answer_rename(page, answer):
+    """Satıra başka ad yazılınca çıkan "Aynı kişi mi?" sorusunu (varsa) cevaplar."""
+    button = page.locator(".st-key-ad-degisikligi-sorusu").get_by_role("button", name=answer)
+    if button.count():
+        button.first.click()
         _wait_idle(page, 1.5)
 
 
@@ -279,7 +288,7 @@ def test_isim_duzeltilince_nobetler_korunur(app_url):
             first.click()
             first.get_by_text("✓").wait_for()
             _wait_idle(page)
-            _set_team(page, "Rename Ali Can, Rename Ayşe")
+            _set_team(page, "Rename Ali Can, Rename Ayşe", rename_answer="Aynı kişi")
             _wait_idle(page)
             _no_exception(page)
             assert _day_button(page, "Rename Ali Can", 0).inner_text() == "✓"
@@ -566,6 +575,8 @@ def test_yasak_ikili_capraz_tablodan_ve_limit_ekip_tablosundan_girilir(app_url):
             # İsim değiştirmek limitleri ve yasak ikiliyi de taşır.
             _team_box(page, 1).fill("Ayar Alican")
             _team_box(page, 1).press("Tab")
+            _wait_idle(page, 1.5)
+            page.get_by_role("button", name="Aynı kişi (adı düzeltildi)").click()
             _wait_idle(page, 1.5)
             expect(_pair_checkbox(page, "Ayar Alican", "Ayar Ayşe")[0]).to_be_checked()
             page.get_by_role("button", name="⚡ Simülasyon").click()

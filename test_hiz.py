@@ -349,6 +349,7 @@ def test_ayarlar_kapali_iken_degerler_korunur_ve_hesaplar_suruyor(uygulama):
     at.checkbox(key="w_yasak::Ali::Can").check().run()
     # İkinci kişinin adı düzeltilir (kutudan gelen değer).
     at.text_input(key="w_ekip_ad_1").input("Ayşegül").run()
+    at.button(key="ad_ayni_kisi").click().run()  # "Aynı kişi mi?" sorusu
     assert at.session_state["isimler_text"] == "Ali, Ayşegül, Can, Deniz"
     _ac_kapa(at)
     for _ in range(3):
@@ -556,6 +557,7 @@ def test_ad_degisikligiyle_tasinan_ikili_kaldirilinca_geri_gelmez(uygulama, ayni
     if not ayni_calismada:
         at.run()
     _ac_kapa(at)
+    at.button(key="ad_ayni_kisi").click().run()  # "Aynı kişi mi?" sorusu
     _ac_kapa(at)
     assert at.session_state["forbidden_pairs_text"] == "Alp-Can"
     assert at.checkbox(key="w_yasak::Alp::Can").value is True
@@ -623,3 +625,59 @@ def test_kesilen_kapanma_tekrarlaninca_yasak_ikili_silinmez(uygulama):
             del at.session_state[k]
     at.run()
     assert at.session_state["forbidden_pairs_text"] == "Ali-Can"
+
+
+# --- Ad değişikliği mi, yeni kişi mi (S1) ------------------------------------------
+
+def _satira_yeni_ad_yaz(at, satir, ad):
+    at.run()
+    _ac_kapa(at)
+    at.text_input(key=f"w_ekip_ad_{satir}").input(ad).run()
+    assert [e.value for e in at.exception] == []
+
+
+def test_satira_yeni_ad_yazilinca_sorulur_ve_cevaba_kadar_ekip_degismez(uygulama):
+    at = uygulama()
+    _satira_yeni_ad_yaz(at, 1, "Fatma")
+    # Sormadan ad düzeltmesi sayılmaz: Ayşe'nin geçmişi Fatma'ya geçmez.
+    assert not at.session_state["name_aliases"] if "name_aliases" in at.session_state else True
+    assert at.session_state["isimler_text"] == "Ali, Ayşe, Can, Deniz"
+    assert any("Aynı kişi mi" in w.value for w in at.warning)
+    assert at.text_input(key="w_ekip_ad_1").value == "Ayşe"
+    at.run()
+    assert at.session_state["isimler_text"] == "Ali, Ayşe, Can, Deniz"
+    assert any("Aynı kişi mi" in w.value for w in at.warning)
+
+
+def test_yeni_kisi_cevabinda_gecmis_devredilmez(uygulama):
+    at = uygulama()
+    _satira_yeni_ad_yaz(at, 1, "Fatma")
+    at.button(key="ad_yeni_kisi").click().run()
+    assert [e.value for e in at.exception] == []
+    assert at.session_state["isimler_text"] == "Ali, Fatma, Can, Deniz"
+    assert not (at.session_state["name_aliases"] if "name_aliases" in at.session_state else {})
+    assert "Ayşe" not in at.session_state["schedule_bool"].index
+    assert not any("Aynı kişi mi" in w.value for w in at.warning)
+    at.run()
+    assert at.session_state["isimler_text"] == "Ali, Fatma, Can, Deniz"
+    assert not (at.session_state["name_aliases"] if "name_aliases" in at.session_state else {})
+
+
+def test_ayni_kisi_cevabinda_ad_duzeltmesi_uygulanir(uygulama):
+    at = uygulama()
+    _satira_yeni_ad_yaz(at, 1, "Ayşegül")
+    at.button(key="ad_ayni_kisi").click().run()
+    assert [e.value for e in at.exception] == []
+    assert at.session_state["isimler_text"] == "Ali, Ayşegül, Can, Deniz"
+    assert at.session_state["name_aliases"] == {"Ayşe": "Ayşegül"}
+    assert "Ayşegül" in at.session_state["schedule_bool"].index
+    assert not any("Aynı kişi mi" in w.value for w in at.warning)
+
+
+def test_vazgecince_eski_ad_kalir(uygulama):
+    at = uygulama()
+    _satira_yeni_ad_yaz(at, 1, "Fatma")
+    at.button(key="ad_vazgec").click().run()
+    assert at.session_state["isimler_text"] == "Ali, Ayşe, Can, Deniz"
+    assert at.text_input(key="w_ekip_ad_1").value == "Ayşe"
+    assert not any("Aynı kişi mi" in w.value for w in at.warning)
