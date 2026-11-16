@@ -269,7 +269,9 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                 p_lim = _person_limits.get(person, {})
                 min_l = p_lim.get('min', 0)
                 max_l = p_lim.get('max', 999)
-                badge_bg = "#dc2626" if (count < min_l or (max_l < 999 and count > max_l)) else "#16a34a"
+                out_of_limits = count < min_l or (max_l < 999 and count > max_l)
+                # Koyu tonlar beyaz yazıyla 5:1; ⚠ renk körlüğünde de sınır dışını gösterir.
+                badge_bg = "#b91c1c" if out_of_limits else "#15803d"
                 pc = person_colors.get(person, "#e2e8f0")
                 # Telefonda kısa ad ("Ayşe Y.") ve rozet alt satırda (CSS: .grid-name);
                 # rozet: toplam · hafta sonu/tatil nöbeti.
@@ -283,8 +285,8 @@ def render_grid_tab(isimler, sutunlar, gun_detaylari, yil, ay, today_date, ui,
                     f"<b class='nm-short' style='min-width:0;overflow:hidden;text-overflow:ellipsis;'>"
                     f"{escape_html(_short_names.get(person, person))}</b>"
                     f"<span class='nm-badge' style='flex-shrink:0;background:{badge_bg};color:#fff;border-radius:10px;"
-                    f"padding:1px 7px;font-size:11px;font-weight:700;'>{count}"
-                    f"<span style='font-weight:600;opacity:.85;'> · {special_count} HS</span></span>"
+                    f"padding:1px 7px;font-size:11px;font-weight:700;'>{count}{' ⚠' if out_of_limits else ''}"
+                    f"<span style='font-weight:600;'> · {special_count} HS</span></span>"
                     f"</div>",
                     unsafe_allow_html=True
                 )

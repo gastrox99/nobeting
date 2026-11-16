@@ -20,7 +20,8 @@ fastReruns = false
 baseRadius = "0.6rem"
 
 [theme.light]
-primaryColor = "#0d9488"
+# Beyaz düğme yazısı bu zeminde 5,5:1 (eski #0d9488 3,7:1 idi, güneşte silik).
+primaryColor = "#0f766e"
 
 [theme.dark]
 primaryColor = "#14b8a6"

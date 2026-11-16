@@ -185,7 +185,7 @@ for _attempt in range(2):
             print(f"[nobet] Yenilemeden sonra da içe aktarılamadı (sürüm {code_version()})", flush=True)
             raise
         _fresh_modules(force=True)
-from nobet_stil import GLOBAL_CSS, ui_colors
+from nobet_stil import GLOBAL_CSS, contrast_css, ui_colors
 from nobet_durum import apply_renames, render_recent_errors, save_undo_state
 from nobet_paylasim import render_shared_view
 from nobet_disa_aktar import render_excel_import, render_toolbar
@@ -238,6 +238,10 @@ st.html(
 
 # --- SALT OKUNUR PAYLAŞIM SAYFASI (?paylas=...) ---
 # Ekip arkadaşları giriş yapmadan yalnızca listeyi görür (nobet_paylasim.py).
+try:
+    st.html(contrast_css(st.context.theme.type == "dark"))
+except Exception:
+    pass
 _share_token = st.query_params.get("paylas")
 if _share_token:
     render_shared_view(_share_token, _db_ready)
