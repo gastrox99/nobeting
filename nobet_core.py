@@ -2946,7 +2946,8 @@ def parse_backup(raw):
         return None, ["Dosya çok büyük (en fazla 20 MB)."]
     try:
         data = json.loads(raw.decode("utf-8-sig") if isinstance(raw, (bytes, bytearray)) else raw)
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        # RecursionError: binlerce kat iç içe yazılmış dosya.
         return None, ["Dosya bir Nöbet yedeği değil (JSON okunamadı)."]
     if not isinstance(data, dict) or data.get("format") != BACKUP_FORMAT:
         return None, ["Dosya bir Nöbet yedeği değil."]
@@ -3005,7 +3006,7 @@ def parse_backup(raw):
         if preferences is not None and not _valid_backup_preferences(preferences):
             errors.append(f"{label} ({name} {month}/{year}): tercihler geçersiz.")
             continue
-        if sched_settings is not None and not isinstance(sched_settings, dict):
+        if sched_settings is not None and not _valid_backup_month_settings(sched_settings):
             errors.append(f"{label} ({name} {month}/{year}): ay ayarları geçersiz.")
             continue
         if (sched_settings is not None
@@ -3046,6 +3047,25 @@ def _valid_backup_preferences(preferences):
             if value is not None and (not isinstance(value, (int, float)) or not 0 <= value <= MAX_PREF_CODE):
                 return False
     return True
+
+
+def _valid_backup_month_settings(settings):
+    """Ay ayarları uygulamanın yazdığı biçimde olmalı:
+    {"locked": [[kişi, gün], ...], "hidden": {kişi: {"shifts": [...], "prefs": {...}}}}.
+
+    Liste ya da sözlük olması gereken yerde başka bir değer ("locked": 5 gibi)
+    geri yüklendikten sonra o ay her açılışta program hatası veriyordu.
+    Bilinmeyen başka alanlar (eski sürümlerden kalan) reddedilmez.
+    """
+    if not isinstance(settings, dict) or not isinstance(settings.get("locked") or [], list):
+        return False
+    hidden = settings.get("hidden") or {}
+    return isinstance(hidden, dict) and all(
+        isinstance(data, dict)
+        and isinstance(data.get("shifts", []), list)
+        and isinstance(data.get("prefs", {}), dict)
+        for data in hidden.values()
+    )
 
 
 def _valid_backup_rows(rows):
