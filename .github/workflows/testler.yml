@@ -1,7 +1,7 @@
 name: Testler
 
 # main'e her gönderimde tüm testleri gerçek Streamlit ve Chromium ile çalıştırır.
-# PR'larda tarayıcı testleri (test_browser_*.py) yalnızca arayüz dosyaları
+# PR'larda tarayıcı testleri (test_browser_*.py) yalnızca arayüz, db.py veya conftest.py
 # değiştiyse çalışır; diğer testler her zaman çalışır.
 on:
   push:
@@ -48,9 +48,9 @@ jobs:
           degisen=$(git diff --name-only HEAD^1 HEAD)
           echo "$degisen"
           # Arayüz dosyaları: nobet.py, nobet_*.py (nobet_core.py hariç), tarayıcı testleri,
-          # .streamlit/, paketler ve bu iş akışı.
+          # veri kaydetme (db.py), test ortamı (conftest.py), .streamlit/, paketler ve bu iş akışı.
           if echo "$degisen" | grep -v '^nobet_core\.py$' \
-             | grep -Eq '^(nobet\.py|nobet_.*\.py|test_browser_.*\.py|\.streamlit/.*|requirements\.txt|\.github/workflows/testler\.yml)$'; then
+             | grep -Eq '^(nobet\.py|nobet_.*\.py|db\.py|conftest\.py|test_browser_.*\.py|\.streamlit/.*|requirements\.txt|\.github/workflows/testler\.yml)$'; then
             echo "gerekli=true" >> "$GITHUB_OUTPUT"
           else
             echo "gerekli=false" >> "$GITHUB_OUTPUT"
