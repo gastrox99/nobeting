@@ -217,12 +217,22 @@ _db_state = _db_init_state(SCHEMA_VERSION)
 # Bu çalışmadaki okumalar tek bağlantıyı paylaşır; sonda (ya da birkaç sn boşta kalınca) kapanır.
 begin_run_connection()
 _acilis_basi = time.monotonic()
-# Başarı bayrağı yalnızca True yönünde değişir; başarısız oturum 30 sn sonra yeniden dener.
-# Şema hazırsa yeni oturum tek bir uyandırma bağlantısı açar (Neon uyuyor olabilir);
-# ulaşılamazsa bu çalışmadaki diğer okumalar atlanır, her biri ayrı ayrı beklemez.
-_db_ready = prepare_schema(
-    _db_state, st.session_state, SCHEMA_VERSION, init_fn=init_db, error_fn=get_last_error, ping_fn=ping_db,
-)
+
+
+def _prepare_db():
+    """Veritabanını hazırlar; bu oturum kullanabiliyorsa True.
+
+    Girişten (ya da paylaşım bağlantısı geldikten) sonra çağrılır: sayfanın en
+    başında çağrılırken giriş yapmamış her ziyaret de bağlantı açıp uyuyan
+    veritabanını uyandırıyordu.
+    """
+    # Başarı bayrağı yalnızca True yönünde değişir; başarısız oturum 30 sn sonra yeniden dener.
+    # Şema hazırsa yeni oturum tek bir uyandırma bağlantısı açar (Neon uyuyor olabilir);
+    # ulaşılamazsa bu çalışmadaki diğer okumalar atlanır, her biri ayrı ayrı beklemez.
+    return prepare_schema(
+        _db_state, st.session_state, SCHEMA_VERSION, init_fn=init_db, error_fn=get_last_error, ping_fn=ping_db,
+    )
+
 
 # Sayfa Ayarları
 _APP_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "ikon-64.png")
@@ -244,7 +254,7 @@ except Exception:
     pass
 _share_token = st.query_params.get("paylas")
 if _share_token:
-    render_shared_view(_share_token, _db_ready)
+    render_shared_view(_share_token, _prepare_db())
     _render_version_footer()
     st.stop()
 
@@ -299,6 +309,7 @@ if AUTH_ENABLED:
         st.error("Google hesabınızın e-posta adresi alınamadı. Çıkış yapıp tekrar deneyin.")
         st.button("Çıkış yap", on_click=st.logout)
         st.stop()
+    _db_ready = _prepare_db()
     # Girişten önce kaydedilmiş veriyi yönetici hesabına bir kez aktar.
     if (
         "legacy_claim_done" not in st.session_state
@@ -308,6 +319,7 @@ if AUTH_ENABLED:
         st.session_state.legacy_claim_done = claim_legacy_data(current_owner)
 else:
     current_owner = ""
+    _db_ready = _prepare_db()
 
 # Bağlantı hatasının nedeni (sunucu adı içerebilir) yalnızca giriş yapmış
 # kullanıcıya gösterilir; paylaşım ve giriş sayfalarında görünmez.

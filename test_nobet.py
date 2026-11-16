@@ -3149,7 +3149,7 @@ class TestDatabaseConnectionDiagnostics(unittest.TestCase):
         source = _app_source()
         self.assertNotIn("def _init_db_once", source)
         self.assertIn("_db_state = _db_init_state(SCHEMA_VERSION)", source)
-        self.assertIn("_db_ready = prepare_schema(\n    _db_state, st.session_state, SCHEMA_VERSION,", source)
+        self.assertIn("return prepare_schema(\n        _db_state, st.session_state, SCHEMA_VERSION,", source)
         # Başarısızlık kalıcı değil: aynı oturum bir süre sonra yeniden dener.
         shared, session, calls = {"ready": False, "error": None}, {}, []
         fail = lambda: calls.append(1) or False  # noqa: E731
