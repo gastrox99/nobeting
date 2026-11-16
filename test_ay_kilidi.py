@@ -72,3 +72,30 @@ def test_kilit_gelmemis_aya_dokunmaz(owner, monkeypatch):
     monkeypatch.setattr(db, "_today", lambda: date(2026, 11, 5))
     assert _save(owner, 2026, 10) is True  # Ekim'in 5 günlük süresi dolmadı
     assert _save(owner, 2026, 12) is True
+
+
+@needs_db
+def test_geri_yukleme_kilitli_aya_yazmaz_ve_atlanani_bildirir(owner, monkeypatch):
+    from nobet_core import backup_to_bytes, build_backup, parse_backup
+    monkeypatch.setattr(db, "_today", lambda: date(2026, 10, 2))  # Eylül henüz açık
+    assert _save(owner, 2026, 9) is True
+    assert _save(owner, 2026, 10) is True
+    backup, errors = parse_backup(backup_to_bytes(build_backup(*db.export_owner_data(owner=owner))))
+    assert errors == []
+    frame = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=["1 Per"])
+    frame.at["Ayşe", "1 Per"] = True
+    for month in (9, 10):
+        assert db.save_schedule(f"Otomatik_2026_{month:02d}", 2026, month, ["Ali", "Ayşe"], frame,
+                                owner=owner, expected_version=db.FORCE)
+    monkeypatch.setattr(db, "_today", lambda: date(2026, 11, 2))  # Eylül kilitlendi, Ekim değil
+    skipped = []
+    assert db.restore_owner_data(backup, owner=owner, skipped_out=skipped)
+    assert skipped == [(2026, 9)]
+    assert _assigned(owner, 2026, 9) == ["Ayşe"]  # kilitli ay değişmedi
+    assert _assigned(owner, 2026, 10) == ["Ali"]  # açık ay geri yüklendi
+    # Kilit açılınca aynı yedek o ayı da yükler.
+    assert db.save_app_settings({"open_months": ["2026-09"]}, owner=owner, expected_version=db.FORCE)
+    skipped = []
+    backup["settings"] = None
+    assert db.restore_owner_data(backup, owner=owner, skipped_out=skipped)
+    assert skipped == [] and _assigned(owner, 2026, 9) == ["Ali"]

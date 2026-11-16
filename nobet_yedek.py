@@ -133,8 +133,9 @@ def restore_backup(parsed, summary, current_owner):
         log_unexpected("Geri yükleme öncesi kopya", _error)
         st.error("❌ Mevcut hâlin kopyası alınamadığı için geri yükleme yapılmadı. Tekrar deneyin.")
         return
+    _skipped = []
     try:
-        restore_owner_data(parsed, owner=current_owner)
+        restore_owner_data(parsed, owner=current_owner, skipped_out=_skipped)
     except Exception as _error:
         log_unexpected("Geri yükleme", _error)
         st.error("❌ Geri yükleme başarısız oldu; hiçbir kayıt değişmedi. Tekrar deneyin.")
@@ -144,6 +145,7 @@ def restore_backup(parsed, summary, current_owner):
     _kept_backup_at = st.session_state.get("last_backup_at")
     st.session_state.clear()
     st.session_state.backup_restored_notice = summary
+    st.session_state.backup_restored_skipped = sorted(set(_skipped))
     st.session_state.backup_restored_last_at = _kept_backup_at
     st.rerun()
 
@@ -160,6 +162,7 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
                 excel_import()
         return
     _restored_notice = st.session_state.pop("backup_restored_notice", None)
+    _restored_skipped = st.session_state.pop("backup_restored_skipped", None)
     # Yedekteki "son indirme" tarihi, bu yedeği indirmeden önceki tarihtir.
     _kept_backup_at = st.session_state.pop("backup_restored_last_at", None)
     if _kept_backup_at and _kept_backup_at > str(st.session_state.get("last_backup_at") or ""):
@@ -175,6 +178,12 @@ def render_backup_section(current_owner, yil, ay, isimler, db_ready=True, excel_
                 f"✅ Yedek geri yüklendi: {_restored_notice}. "
                 "Önceki hâl Yedek bölümünde \"Son geri yüklemeden önceki hâl\" olarak saklandı."
             )
+            if _restored_skipped:
+                st.warning(
+                    "🔒 Kilitli olduğu için geri yüklenmeyen aylar: "
+                    + ", ".join(f"{TR_AY_ADLARI[_m]} {_y}" for _y, _m in _restored_skipped)
+                    + ". Bunları da yüklemek için o aya geçip üstteki 🔓 Kilidi aç düğmesine basın, sonra yedeği yeniden yükleyin."
+                )
         _snapshot_notice = st.session_state.pop("snapshot_notice", None)
         if _snapshot_notice:
             # Bölüm Yedekle tuşunun hemen altında; ayrıca bildirim gerekmez.

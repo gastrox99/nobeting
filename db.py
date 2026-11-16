@@ -1517,19 +1517,25 @@ def export_owner_data(owner=""):
     return (settings if isinstance(settings, dict) else None), schedules
 
 
-def restore_owner_data(backup, owner=""):
+def restore_owner_data(backup, owner="", skipped_out=None):
     """Doğrulanmış yedeği (nobet_core.parse_backup) kullanıcının verisine yazar.
 
     Yedekteki aylar mevcut kayıtların üzerine yazılır, yedekte olmayan aylara
-    dokunulmaz. Hepsi tek işlemde yazılır: bir hata olursa hiçbir şey
-    değişmez. Hata olursa yukarı iletilir.
+    dokunulmaz. Kilitli geçmiş aylar (``month_is_locked``) yazılmaz; ``skipped_out``
+    listesine (yıl, ay) olarak eklenir. Hepsi tek işlemde yazılır: bir hata olursa
+    hiçbir şey değişmez. Hata olursa yukarı iletilir.
     """
     conn = None
     try:
         conn = _connect()
         with conn:
             with conn.cursor() as cur:
+                _open = _open_months(cur, owner)
                 for item in backup.get("schedules") or []:
+                    if month_is_locked(item["year"], item["month"], _open):
+                        if skipped_out is not None:
+                            skipped_out.append((item["year"], item["month"]))
+                        continue
                     cur.execute('''
                         INSERT INTO schedules (name, year, month, team_members, pref_json, settings_json, rows_liste_json, owner, updated_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
