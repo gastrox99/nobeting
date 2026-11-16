@@ -617,6 +617,17 @@ def _ayar_kutusu(widget, key, closed_value, *args, **kwargs):
     return closed_value
 
 
+def _answer_rename(same):
+    """Ad değişikliği sorusunun cevabı: True aynı kişi, False yeni kişi, None vazgeç."""
+    pending = st.session_state.pop("pending_rename", None)
+    if same is None or not pending or st.session_state.get("isimler_text", "") != pending["base"]:
+        return
+    st.session_state.isimler_text, st.session_state.limits_text = pending["team"]
+    if not same:
+        # Bilinen isme geçiş ad değişikliği sayılmaz: ekleme + çıkarma olarak işlenir.
+        st.session_state.setdefault("seen_team_names", set()).update(pending["renames"].values())
+
+
 # st.expander kapalıyken de içini her çalışmada çizer (14 kişide ~360 öğe, her
 # tıklamada ~160 ms). Bu yüzden başlık bir düğme; açık/kapalı oturumda saklanır
 # ve kapalıyken yalnızca hesaplar yapılır, kutular çizilmez.
@@ -636,6 +647,7 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
         set_col1 = set_col2 = contextlib.nullcontext()
     
     with set_col1:
+        _team_before = (st.session_state.get("isimler_text", ""), st.session_state.get("limits_text", ""))
         # Ekip tablosu (isim + limitler) ayarlardaki metinleri düzenler (nobet_ekip.py).
         if settings_expanded or _settings_closing:
             render_team_table(draw=settings_expanded)
@@ -657,6 +669,40 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
             known=_seen_names | set(st.session_state.get("hidden_people") or {}),
             aliases=st.session_state.get("name_aliases"),
         )
+        # Tabloda bir satırın adı değişti: ad düzeltmesi mi, ayrılanın yerine gelen
+        # yeni kişi mi? Sormadan ad düzeltmesi sayılınca yeni kişi ayrılanın geçmişini
+        # alıyordu. Cevaba kadar ekip eski hâlinde kalır (önceki ada dönüş sorulmaz).
+        _aliases_now = st.session_state.get("name_aliases") or {}
+        if (
+            _renames
+            and st.session_state.get("isimler_text", "") != _team_before[0]
+            and any(_aliases_now.get(_new) != _old for _old, _new in _renames.items())
+        ):
+            st.session_state.pending_rename = {
+                "renames": _renames,
+                "base": _team_before[0],
+                "team": (st.session_state.get("isimler_text", ""), st.session_state.get("limits_text", "")),
+            }
+            st.session_state.isimler_text, st.session_state.limits_text = _team_before
+            st.rerun()
+        _pending_rename = st.session_state.get("pending_rename")
+        if _pending_rename and _pending_rename["base"] != isimler_input:
+            # Ekip başka yoldan değişti (yükleme, geri yükleme): soru geçersiz.
+            st.session_state.pop("pending_rename", None)
+        elif _pending_rename:
+            _pairs = ", ".join(f"**{_old}** yerine **{_new}**" for _old, _new in _pending_rename["renames"].items())
+            _olds = ", ".join(_pending_rename["renames"])
+            _news = ", ".join(_pending_rename["renames"].values())
+            with st.container(border=True, key="ad-degisikligi-sorusu"):
+                st.warning(f"✏️ Ekip tablosunda {_pairs} yazdınız. Aynı kişi mi?")
+                _q1, _q2, _q3 = st.columns(3)
+                _q1.button("Aynı kişi (adı düzeltildi)", key="ad_ayni_kisi", on_click=_answer_rename,
+                           args=(True,), width="stretch")
+                _q2.button(f"Yeni kişi ({_olds} ayrıldı)", key="ad_yeni_kisi", on_click=_answer_rename,
+                           args=(False,), width="stretch")
+                _q3.button("Vazgeç", key="ad_vazgec", on_click=_answer_rename, args=(None,), width="stretch")
+                st.caption(f"Aynı kişi: nöbetleri, izinleri ve geçmiş ayları {_news} adıyla sürer. "
+                           f"Yeni kişi: {_news} sıfırdan başlar; {_olds} listeden çıkar, geçmişi kendinde kalır.")
         if _renames:
             apply_renames(_renames)
             for _pairs_key in ("forbidden_pairs_text", "together_pairs_text"):
