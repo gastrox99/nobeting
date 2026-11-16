@@ -244,7 +244,8 @@ def _render_list(_owner, _year, _month, _person):
     )
     # Geçmiş günler soluk, bugün vurgulu; hafta sonu mavi, resmi tatil kırmızı zeminli.
     _row_styles = {
-        "past": "color: rgba(128,128,128,.55);",
+        # Soluk ama okunur (4,8:1); eskisi beyaz zeminde 2:1 idi.
+        "past": "color: #6b7280;",
         "today": "font-weight: 700; background-color: rgba(255,200,0,.18);",
         "future": "",
     }

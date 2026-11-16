@@ -394,6 +394,17 @@ GLOBAL_CSS = """
 """
 
 
+def contrast_css(dark_theme):
+    """Temaya göre okunurluk düzeltmeleri (WCAG 4,5:1).
+
+    Koyu temada turkuaz ana düğmenin beyaz yazısı 2,5:1 kalıyordu: yazı koyu yapılır.
+    Açık temada gri açıklama yazıları 3,7:1 idi: bir ton koyulaştırılır.
+    """
+    if dark_theme:
+        return '<style>[data-testid="stBaseButton-primary"] { color: #042f2e !important; }</style>'
+    return '<style>[data-testid="stCaptionContainer"] { color: #5c5f67; }</style>'
+
+
 def ui_colors(_dark_theme):
     """Tablo, takvim ve kişi kartı renkleri; karanlık modda açık renkli yazılar."""
     return {
