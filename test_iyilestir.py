@@ -487,3 +487,46 @@ def test_kendiliginden_iyilestir_birlikte_nobet_ayri_duserse_calisir(monkeypatch
     assert nobet_iyilestir.improve_if_needed("eski", [], [], None, {}, 1, 2) == ("yeni", True)
     metrics["together_split"] = 0
     assert nobet_iyilestir.improve_if_needed("eski", [], [], None, {}, 1, 2) == ("eski", False)
+
+
+def test_bos_nobet_toplam_farki_sifirken_de_doldurulur():
+    """Simülasyon herkese eşit verip bir günü boş bırakırsa İyileştir o günü doldurmalı.
+
+    Doldurmak toplam farkını 0'dan 1'e çıkarır (kural "en fazla 1"); eskiden
+    "öncelikli dengeler kötüleşemez" sınırı bunu engelliyor, gün boş kalıyordu.
+    """
+    gd_all, cols_all, _ = _month()
+    want = (2, 3, 4, 5, 9, 10, 11, 12, 16)  # hafta içi, Cuma yok
+    cols = [c for c in cols_all if gd_all[c]["day_num"] in want]
+    gd = {c: gd_all[c] for c in cols}
+    names = ["A", "B", "C", "D"]
+    current = pd.DataFrame(False, index=names, columns=cols)
+    for p, own in zip(names, ((2, 9), (3, 10), (4, 11), (5, 12))):
+        for c in cols:
+            current.at[p, c] = gd[c]["day_num"] in own
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    improved, before, after = improve_schedule(current, names, cols, unwanted, gd, 1, 1, time_limit=3)
+    assert (before["unfilled"], before["total"]) == (1, 0)
+    assert improved is not None
+    assert (after["unfilled"], after["total"]) == (0, 1)
+    _check_rules(improved, names, cols, gd, unwanted, 1, 1, set(), {}, set())
+
+
+def test_bos_nobet_dolmuyorsa_oncelikli_dengeler_kotulesmez():
+    """Boş gün doldurulamıyorsa eski kural aynen geçerli: hiçbir öncelikli denge kötüleşmez."""
+    gd, cols, names = _month(team=4)
+    rng = random.Random(5)
+    unwanted = pd.DataFrame(False, index=names, columns=cols)
+    for c in cols[10:12]:
+        unwanted[c] = True  # iki gün herkes izinli: bu günler dolamaz
+    for p in names:
+        for c in rng.sample(cols, 4):
+            unwanted.at[p, c] = True
+    random.seed(5)
+    current, _ = n.run_scheduling_core(names, cols, unwanted, gd, 1, 1, set(), {}, None, simulation_count=20)
+    improved, before, after = improve_schedule(current, names, cols, unwanted, gd, 1, 1, time_limit=3)
+    assert before["unfilled"] >= 2
+    if improved is not None:
+        assert after["unfilled"] == before["unfilled"]
+        for name in PRIMARY_METRICS:
+            assert after[name] <= before[name], name
