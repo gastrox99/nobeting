@@ -1302,13 +1302,10 @@ if _schedule_corrupt and _schedule_corrupt.get("period") == (yil, ay):
         _accept_corrupt_schedule,
     )
 
-if 'inputs' not in st.session_state: st.session_state.inputs = {i: "" for i in isimler}
 if 'cached_rows_liste' not in st.session_state: st.session_state.cached_rows_liste = None
 if 'cached_role_schedule' not in st.session_state: st.session_state.cached_role_schedule = None
 if 'cached_analysis_key' not in st.session_state: st.session_state.cached_analysis_key = None
 if 'cached_analysis_tables' not in st.session_state: st.session_state.cached_analysis_tables = None
-if 'cached_ayb_counts' not in st.session_state: st.session_state.cached_ayb_counts = None
-if 'last_edited_hash' not in st.session_state: st.session_state.last_edited_hash = None
 if 'should_regenerate_assignments' not in st.session_state: st.session_state.should_regenerate_assignments = False
 if 'forbidden_pairs_text' not in st.session_state: st.session_state.forbidden_pairs_text = ""
 if 'forbidden_pairs' not in st.session_state: st.session_state.forbidden_pairs = set()
@@ -1317,24 +1314,11 @@ if 'together_pairs' not in st.session_state: st.session_state.together_pairs = s
 if 'locked_cells' not in st.session_state: st.session_state.locked_cells = set()
 if 'undo_history' not in st.session_state: st.session_state.undo_history = []
 if 'redo_history' not in st.session_state: st.session_state.redo_history = []
-if 'last_auto_save' not in st.session_state: st.session_state.last_auto_save = time.time()
 if 'auto_save_failed' not in st.session_state: st.session_state.auto_save_failed = False
 if 'persistence_error' not in st.session_state: st.session_state.persistence_error = None
 if 'reset_pending' not in st.session_state: st.session_state.reset_pending = False
 if 'simulation_success_pending' not in st.session_state: st.session_state.simulation_success_pending = False
 if 'incomplete_simulation' not in st.session_state: st.session_state.incomplete_simulation = None
-if 'preferences' not in st.session_state: st.session_state.preferences = {}
-if 'person_preferences' not in st.session_state: st.session_state.person_preferences = {}
-for i in isimler:
-    if i not in st.session_state.person_preferences:
-        st.session_state.person_preferences[i] = {}
-for i in isimler: 
-    if i not in st.session_state.inputs: st.session_state.inputs[i] = ""
-# Ekipten çıkarılan üyelerin eski verilerini temizle
-for _stale in [k for k in list(st.session_state.inputs.keys()) if k not in isimler]:
-    del st.session_state.inputs[_stale]
-for _stale in [k for k in list(st.session_state.person_preferences.keys()) if k not in isimler]:
-    del st.session_state.person_preferences[_stale]
 
 if st.session_state.pop("simulation_success_pending", False):
     st.toast(simulation_toast(simulation_summary(
@@ -1862,7 +1846,6 @@ if _incomplete is not None:
 # Grid buttons update schedule_bool and trigger a rerun. Taking this snapshot
 # after those interactions prevents analysis from reading a cached list of
 # assignments instead of the schedule currently being edited.
-# REMOVED: Redundant Müsaitlik editor as requested
 edited_df = st.session_state.schedule_bool.copy(deep=True)
 
 # --- HATA KONTROL ---
@@ -1971,14 +1954,13 @@ if (st.session_state.should_regenerate_assignments
         or st.session_state.cached_rows_liste is None
         or st.session_state.get('cached_key') != _cache_key):
     # Sabit görev yeri olan kişi kendi görevine yerleşir (Ayarlar > Görev İsimleri).
-    rows_liste, first_role_counts = distribute_roles(
+    rows_liste, _ = distribute_roles(
         [gun_detaylari[col]['full_date'] for col in sutunlar],
         [edited_df.index[edited_df[col]].tolist() for col in sutunlar],
         role_names,
         _fixed_roles,
     )
     st.session_state.cached_rows_liste = rows_liste
-    st.session_state.cached_first_role_counts = first_role_counts
     st.session_state.cached_role_names = role_names
     st.session_state.cached_key = _cache_key
     st.session_state.cached_role_schedule = edited_df.copy(deep=True)
@@ -2013,11 +1995,6 @@ else:
         # açılan eski aylar ise olduğu gibi kalır.
         rows_liste = [apply_fixed_roles(row, role_names, _fixed_roles) for row in rows_liste]
         st.session_state.cached_rows_liste = rows_liste
-
-# Display and allow manual editing of ROLES (swapping people)
-# REMOVED: Manual list editing as requested. Using autonomous redistribution instead.
-
-# Re-distribution logic moved to Analiz section as requested.
 
 # Görev sayısından fazla atanan kişiler listelerde "Ek 1", "Ek 2" sütununda görünür.
 liste_rows, liste_roles = add_overflow_roles(rows_liste, role_names, edited_df, sutunlar)
@@ -2120,7 +2097,6 @@ elif (
     elif _saved_ok:
         st.session_state.last_saved_fingerprint = _persist_fp
         st.session_state.last_saved_core_fingerprint = _core_fp
-        st.session_state.last_auto_save = time.time()
         update_persistence_feedback(st.session_state, True)
         # Yedek bölümü bu çalışmada eski dosyayla çizildi; yeniden çiz.
         if st.session_state.pop("backup_bytes", None) is not None:

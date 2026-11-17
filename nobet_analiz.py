@@ -83,7 +83,7 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                 save_undo_state()
                 rows_liste_to_redist = st.session_state.cached_rows_liste
                 # Sabit görev yeri olanlar kendi görevinde kalır, diğerleri eşitlenir.
-                new_rows_liste, first_role_counts_to_redist = distribute_roles(
+                new_rows_liste, _ = distribute_roles(
                     [row["Tarih"] for row in rows_liste_to_redist],
                     [[row.get(rn, "-") for rn in role_names if row.get(rn, "-") in isimler]
                      for row in rows_liste_to_redist],
@@ -91,7 +91,6 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                     active_fixed_roles(st.session_state.get("fixed_roles"), isimler, role_names),
                 )
                 st.session_state.cached_rows_liste = new_rows_liste
-                st.session_state.cached_first_role_counts = first_role_counts_to_redist
                 # Nöbetçiler değişmez; çizelge yeniden kurulmaz (görev sayısından
                 # fazla atanmış kişiler sessizce siliniyordu).
                 st.session_state.should_regenerate_assignments = False
