@@ -508,7 +508,7 @@ def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari
                       **kwargs):
     """Boş nöbet, toplam/hafta sonu/Cuma farkı 1'den büyük, karşılanmayan tercih (yeşil),
     kaçınılan güne yazılmış nöbet ya da ayrı düşen "birlikte" ikili varsa bir kez ``improve_schedule`` dener. Dönen değer: (çizelge, düzeldi_mi); çözücü yoksa,
-    hata verirse ya da daha iyisini bulamazsa çizelge aynen döner."""
+    hata verirse ya da daha iyisini bulamazsa çizelge aynen döner. Hata Ayarlar > «Son hatalar»a yazılır."""
     metric_keys = ("person_limits", "df_preferred", "history_special", "history_total", "history_holiday",
                    "together_pairs", "initial_last_shift")
     try:
@@ -529,7 +529,10 @@ def improve_if_needed(schedule, people, columns, df_unwanted_bool, gun_detaylari
         improved, _, _ = improve_schedule(
             schedule, people, columns, df_unwanted_bool, gun_detaylari, min_bosluk, kisi_sayisi, **kwargs,
         )
-    except Exception:
+    except Exception as exc:
+        # Liste bozulmaz, ama hata sessizce yutulmasın (eskiden hiçbir yerde görünmüyordu).
+        from db import log_unexpected
+        log_unexpected("Otomatik İyileştir", exc)
         return schedule, False
     if improved is None:
         return schedule, False
