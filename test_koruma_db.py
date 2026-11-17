@@ -604,6 +604,31 @@ def test_sema_hazirligi_sonra_basarili_olunca_ayarlar_yuklenir(monkeypatch):
     assert team == TEAM and trouble == [] and version == "h:ayar"
 
 
+def test_baglanti_hatasinda_yeniden_dene_dugmesi_beklemeden_dener():
+    inits = [False, True]
+
+    def load_settings(owner="", raise_on_error=False, version_out=None, corrupt_out=None):
+        if version_out is not None:
+            version_out["version"] = "h:ayar"
+        return {"team": TEAM}
+
+    at, patches = _app(lambda *a, **k: True, load_app_settings=load_settings, team=None,
+                       init_db=lambda: inits.pop(0), get_last_error=lambda: "uyku")
+    try:
+        at.run()
+        assert not (at.session_state["isimler_text"] if "isimler_text" in at.session_state else "")
+        dugme = [b for b in at.button if b.key == "db_yeniden_dene"]
+        assert len(dugme) == 1
+        # 30 sn beklemeden: düğme kapıyı kaldırır, bağlantı yeniden denenir.
+        dugme[0].click().run()
+        team = at.session_state["isimler_text"]
+        trouble = _trouble(at)
+        kalan = [b for b in at.button if b.key == "db_yeniden_dene"]
+    finally:
+        _stop(patches)
+    assert team == TEAM and trouble == [] and kalan == []
+
+
 def test_baglanti_yokken_degisen_ayarlarin_uzerine_yuklenmez(monkeypatch):
     inits = [False, True]
 

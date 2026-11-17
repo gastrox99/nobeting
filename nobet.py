@@ -321,6 +321,12 @@ else:
     current_owner = ""
     _db_ready = _prepare_db()
 
+def _db_yeniden_dene():
+    """Düğmeye basılınca 30 sn bekleme kapısı kaldırılır; sayfa yeniden çalışınca bağlantı denenir."""
+    st.session_state.pop("_db_init_attempted", None)
+    st.session_state.pop("_db_wake_attempted", None)
+
+
 # Bağlantı hatasının nedeni (sunucu adı içerebilir) yalnızca giriş yapmış
 # kullanıcıya gösterilir; paylaşım ve giriş sayfalarında görünmez.
 if not _db_ready and st.session_state.get("_db_unreachable"):
@@ -329,12 +335,14 @@ if not _db_ready and st.session_state.get("_db_unreachable"):
         "çizelge yüklenmedi; bu sırada yapılan değişiklikler kaydedilmez. Biraz sonra "
         "sayfayı yenileyin."
     )
+    st.button("🔄 Yeniden dene", key="db_yeniden_dene", on_click=_db_yeniden_dene)
 elif not _db_ready:
     _db_reason = f" Sebep: {_db_state['error']}" if _db_state.get("error") else ""
     st.warning(
         "⚠️ Veritabanına bağlanılamadı. Kaydet/Yükle ve otomatik kayıt "
         f"özellikleri şu an çalışmayabilir.{_db_reason}"
     )
+    st.button("🔄 Yeniden dene", key="db_yeniden_dene", on_click=_db_yeniden_dene)
 
 def _version_box(key):
     """Kaydın son bilinen sürümünü tutan, oturumda saklı değiştirilebilir sözlük.
