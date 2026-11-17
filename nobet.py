@@ -733,8 +733,13 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
         st.session_state.isimler_cache = isimler
         _seen_names.update(isimler)
         
-        # Tarayıcı deposuna yalnızca ekip listesi değiştiğinde yaz.
-        if st.session_state.get("last_stored_team_text") != isimler_input:
+        # Tarayıcı deposuna yalnızca ekip listesi değiştiğinde yaz. Girişli modda ekip
+        # veritabanındadır ve tarayıcıdan hiç okunmaz: ortak bilgisayarda adlar kalmasın
+        # diye yazılmaz, önceden yazılmış olan da silinir.
+        if AUTH_ENABLED:
+            if local_storage.getItem("nobet_team"):
+                local_storage.deleteItem("nobet_team", key="nobet_team_sil")
+        elif st.session_state.get("last_stored_team_text") != isimler_input:
             local_storage.setItem("nobet_team", isimler_input)
             st.session_state.last_stored_team_text = isimler_input
     
