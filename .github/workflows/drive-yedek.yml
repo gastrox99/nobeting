@@ -1,0 +1,27 @@
+name: Drive yedeği
+
+# Günlük otomatik yedeği (veritabanındaki en son kopya) Google Drive'a gönderir;
+# veritabanı bozulsa bile yedek Drive'da kalır. Kurulum: DRIVE_YEDEK.md
+on:
+  schedule:
+    - cron: "43 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  yedekle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install psycopg2-binary==2.9.13
+      - run: python .github/scripts/drive_yedek.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DRIVE_YEDEK_URL: ${{ secrets.DRIVE_YEDEK_URL }}
+          DRIVE_YEDEK_ANAHTAR: ${{ secrets.DRIVE_YEDEK_ANAHTAR }}
