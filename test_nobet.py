@@ -2455,9 +2455,9 @@ class TestArifeMesai(unittest.TestCase):
         self.assertEqual(official_half_days(2026, 12), [])
 
     def test_ise_dusen_arife_yarim_gun_sayilir(self):
-        # Ekim 2026: 21 iş günü, 28 Ekim Çarşamba yarım gün.
+        # Ekim 2026: 21 iş günü, 28 Ekim Çarşamba yarım gün (08.00-13.00, 5 saat).
         hours, counted = required_work_hours(self._details(2026, 10), official_half_days(2026, 10))
-        self.assertEqual(hours, 20 * 8 + 4)
+        self.assertEqual(hours, 20 * 8 + 5)
         self.assertEqual(counted, [(28, "Cumhuriyet Bayramı arifesi")])
 
     def test_tatil_yapilan_ya_da_hafta_sonuna_dusen_arife_dusulmez(self):
@@ -3868,13 +3868,13 @@ class TestIzinVeMusaitDegil(unittest.TestCase):
 
     def test_izin_is_gunu_mesaiden_duser_musait_degil_dusmez(self):
         self.prefs.at["Ali", self._col(1)] = 3   # Perşembe: 8 saat düşer
-        self.prefs.at["Ali", self._col(28)] = 3  # arife: 4 saat düşer
+        self.prefs.at["Ali", self._col(28)] = 3  # arife: 5 saat düşer
         self.prefs.at["Ali", self._col(3)] = 3   # Cumartesi: düşmez
         self.prefs.at["Ali", self._col(29)] = 3  # tatil: düşmez
         self.prefs.at["Ayşe", self._col(1)] = 4
         self.prefs.at["Ayşe", self._col(2)] = 4
         hours = personal_work_hours(self.days, self.half, self.prefs, ["Ali", "Ayşe", "Can"])
-        self.assertEqual(hours["Ali"], self.full - 12)
+        self.assertEqual(hours["Ali"], self.full - 13)
         self.assertEqual(hours["Ayşe"], self.full)
         self.assertEqual(hours["Can"], self.full)
 
