@@ -489,6 +489,25 @@ def test_kendiliginden_iyilestir_birlikte_nobet_ayri_duserse_calisir(monkeypatch
     assert nobet_iyilestir.improve_if_needed("eski", [], [], None, {}, 1, 2) == ("eski", False)
 
 
+def test_kendiliginden_iyilestir_hata_verirse_liste_korunur_hata_kaydedilir(monkeypatch):
+    # Simülasyondan sonraki otomatik deneme hata verirse liste olduğu gibi kalır;
+    # eskiden hata sessizce yutuluyordu, şimdi Ayarlar > «Son hatalar»da görünür.
+    import sys
+    import nobet_iyilestir
+    metrics = {key: 0 for key in PRIMARY_METRICS + ("missed_preference", "avoid", "together_split")}
+    metrics["unfilled"] = 1
+    monkeypatch.setattr(nobet_iyilestir, "schedule_metrics", lambda *a, **k: dict(metrics))
+
+    def _bozuk(*args, **kwargs):
+        raise RuntimeError("çözücü düştü")
+
+    monkeypatch.setattr(nobet_iyilestir, "improve_schedule", _bozuk)
+    kayitlar = []
+    monkeypatch.setattr(sys.modules["db"], "log_unexpected", lambda action, exc: kayitlar.append((action, str(exc))))
+    assert nobet_iyilestir.improve_if_needed("eski", [], [], None, {}, 1, 2) == ("eski", False)
+    assert kayitlar == [("Otomatik İyileştir", "çözücü düştü")]
+
+
 def test_bos_nobet_toplam_farki_sifirken_de_doldurulur():
     """Simülasyon herkese eşit verip bir günü boş bırakırsa İyileştir o günü doldurmalı.
 
