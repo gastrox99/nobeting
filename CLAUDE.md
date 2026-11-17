@@ -47,6 +47,9 @@ gözlemlerinden uyarlanmıştır (kaynak: github.com/multica-ai/andrej-karpathy-
 - Kendi değişikliğinin kullanılmaz bıraktığı import/değişken/fonksiyonu temizle;
   önceden var olanlara dokunma.
 - Ölçüt: değişen her satır doğrudan kullanıcının isteğine bağlanabilmeli.
+- `nobet.py` toplu bölünmez. Tek istisna (kullanıcı kararı, Kasım 2026): bir düzeltme
+  ya da özellik `nobet.py`'nin bir bölümünü gerçekten değiştiriyorsa, o bölüm aynı işte
+  kendi `nobet_*.py` dosyasına alınır; sonra maymun testi önerilir.
 
 ## 4. Hedefe dayalı çalışma
 
