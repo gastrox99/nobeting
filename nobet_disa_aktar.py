@@ -41,6 +41,28 @@ from nobet_core import (
 # Excel export
 EXCEL_AVAILABLE = importlib.util.find_spec("xlsxwriter") is not None
 
+# Excel dosyası sıkıştırılmış bir pakettir: 2 MB'tan küçük bir dosya okunurken
+# gigabaytlara büyüyüp sunucu belleğini doldurabiliyordu. Okumadan önce içindeki
+# parçaların açılmış toplam boyutuna da bakılır (uygulamanın kendi Excel'i birkaç KB).
+EXCEL_ACILMIS_SINIR = 20 * 1024 * 1024
+
+
+def excel_cok_buyuk(dosya):
+    """Yüklenen Excel sıkıştırılmış ya da açılmış hâliyle sınırı aşıyorsa True.
+
+    Yalnız paketin dizinine bakar, içeriği açmaz. Excel olmayan dosya burada
+    reddedilmez; "okunamadı" uyarısını okuma adımı verir.
+    """
+    if dosya.size > EXCEL_IMPORT_MAX_BYTES:
+        return True
+    try:
+        with zipfile.ZipFile(dosya) as paket:
+            return sum(parca.file_size for parca in paket.infolist()) > EXCEL_ACILMIS_SINIR
+    except zipfile.BadZipFile:
+        return False
+    finally:
+        dosya.seek(0)
+
 
 def convert_df_to_png(df, baslik=None):
     """Tabloyu resme çevirir; resim tabloya (ve varsa başlığa) kırpılır."""
@@ -439,7 +461,7 @@ def _uzman_listesini_kaydet(owner, yil, ay, dosya, gunler):
 
 def _yuklenen_uzman_gunleri(dosya, yil, ay, gun_detaylari):
     """Yüklenen dosyanın ``{gün: (ad1, ad2)}`` günleri; okunamazsa uyarı yazar, None döner."""
-    if dosya.size > EXCEL_IMPORT_MAX_BYTES:
+    if excel_cok_buyuk(dosya):
         st.error("Dosya çok büyük (en fazla 2 MB).")
         return None
     try:
@@ -711,7 +733,7 @@ def render_excel_import(yil, ay, gun_detaylari, isimler, sutunlar, role_names, s
         st.session_state.excel_import_done = _upload_id
         _msgs = []
         _imp = None
-        if _uploaded.size > EXCEL_IMPORT_MAX_BYTES:
+        if excel_cok_buyuk(_uploaded):
             # Uygulamanın kendi Excel'i birkaç KB; büyük dosya sunucuyu yorar.
             _msgs.append(("error", "Dosya çok büyük (en fazla 2 MB). Uygulamadan indirilen Excel'i yükleyin."))
         else:
