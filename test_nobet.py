@@ -2749,12 +2749,22 @@ class TestGoogleLoginSupport(unittest.TestCase):
         self.assertEqual(load_cursor.executed[0][1][0], "ali@gmail.com")
 
     def test_eski_veri_kullaniciya_aktarilir(self):
-        cursor = _FakeDbCursor()
+        cursor = _FakeDbCursor(schedule_row=(True,))   # aktarılacak veri var
         with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)):
             self.assertTrue(db.claim_legacy_data("ali@gmail.com"))
-        self.assertIn("WHERE legacy.owner = ''", cursor.executed[0][0])
-        self.assertEqual(cursor.executed[1][1], ("user:ali@gmail.com",))
+        writes = cursor.executed[1:]                   # ilki "aktarılacak var mı" denetimi
+        self.assertIn("WHERE legacy.owner = ''", writes[0][0])
+        self.assertEqual(writes[1][1], ("user:ali@gmail.com",))
         self.assertFalse(db.claim_legacy_data(""))
+
+    def test_aktarilacak_eski_veri_yoksa_yazilmaz(self):
+        # Yönetici her açılışta buradan geçer; boşuna yazma işlemi canlıda ~0,6 sn sürüyordu.
+        cursor = _FakeDbCursor(schedule_row=(False,))
+        with patch.object(db.psycopg2, "connect", return_value=_FakeDbConnection(cursor)):
+            self.assertTrue(db.claim_legacy_data("ali@gmail.com"))
+        self.assertEqual(len(cursor.executed), 1)
+        self.assertTrue(cursor.executed[0][0].lstrip().startswith("SELECT"))
+        self.assertEqual(cursor.executed[0][1], ("ali@gmail.com", "user:ali@gmail.com"))
 
     def test_uygulama_tum_kayitlari_kullaniciya_baglar(self):
         source = _app_source()
