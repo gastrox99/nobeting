@@ -92,15 +92,31 @@ class _RunConnection(psycopg2.extensions.connection):
                 self.autocommit = True
                 with _run_lock:
                     entry["in_use"], entry["last_used"] = False, time.monotonic()
-                    entry["db_seconds"] += entry["last_used"] - entry["since"]
+                    _count_use(entry, entry["last_used"])
                 return
             except psycopg2.Error:
                 pass
         if shared:
             with _run_lock:
                 entry["conn"], entry["in_use"] = None, False
-                entry["db_seconds"] += time.monotonic() - entry["since"]
+                _count_use(entry, time.monotonic())
         super().close()
+
+
+def _count_use(entry, now):
+    """Biten okumanın süresini ölçüme ekler (_run_lock tutulurken çağrılır)."""
+    entry["db_seconds"] += now - entry["since"]
+    entry["reads"].append((entry["name"], round((now - entry["since"]) * 1000)))
+
+
+def _caller_name():
+    """_connect'i çağıran db fonksiyonunun adı; iç yardımcılar (_rows gibi) atlanır."""
+    frame = inspect.currentframe().f_back.f_back
+    for _ in range(4):
+        if frame.f_back is None or not frame.f_code.co_name.startswith("_"):
+            break
+        frame = frame.f_back
+    return frame.f_code.co_name
 
 
 def _close_quietly(conn):
@@ -145,6 +161,7 @@ def begin_run_connection():
             "conn": None, "in_use": False, "last_used": time.monotonic(),
             # Ölçüm (uygulama kayıtlarına yazılır): çalışma başı, veritabanında geçen süre, okuma sayısı, bağlantı açma süreleri.
             "started": time.monotonic(), "since": 0.0, "db_seconds": 0.0, "uses": 0, "connect_ms": [],
+            "name": "", "reads": [],  # okuma başına (fonksiyon adı, ms)
         }
         if _run_closer is None:
             _run_closer = threading.Thread(target=_run_closer_loop, name="db-run-closer", daemon=True)
@@ -155,7 +172,7 @@ def begin_run_connection():
 def end_run_connection():
     """Sayfa çalışması bitti: paylaşılan bağlantı kapanır.
 
-    Ölçümü döner: {"page_seconds", "db_seconds", "uses", "connect_ms"}; çalışma başlamadıysa None."""
+    Ölçümü döner: {"page_seconds", "db_seconds", "uses", "connect_ms", "reads"}; çalışma başlamadıysa None."""
     with _run_lock:
         old = _run_conns.pop(threading.get_ident(), None)
     _close_quietly(old and old["conn"])
@@ -163,7 +180,7 @@ def end_run_connection():
         return None
     return {
         "page_seconds": time.monotonic() - old["started"], "db_seconds": old["db_seconds"],
-        "uses": old["uses"], "connect_ms": old["connect_ms"],
+        "uses": old["uses"], "connect_ms": old["connect_ms"], "reads": old["reads"],
     }
 
 
@@ -181,6 +198,7 @@ def _connect():
         if claim:
             entry["in_use"], entry["since"] = True, time.monotonic()
             entry["uses"] += 1
+            entry["name"] = _caller_name()
             if entry["conn"] is not None and not entry["conn"].closed:
                 return entry["conn"]
     if not claim:
@@ -193,7 +211,7 @@ def _connect():
     except Exception:
         with _run_lock:
             entry["in_use"] = False
-            entry["db_seconds"] += time.monotonic() - entry["since"]
+            _count_use(entry, time.monotonic())
         raise
     with _run_lock:
         entry["connect_ms"].append(round((time.monotonic() - entry["since"]) * 1000))
@@ -1142,6 +1160,25 @@ def claim_legacy_data(owner):
     conn = None
     try:
         conn = _connect()
+        # Yönetici her açılışta buradan geçer ve çoğu zaman aktarılacak bir şey yoktur:
+        # tek okumayla bakılır, yazma işlemi (canlıda ~0,6 sn) yalnız gerekirse açılır.
+        with conn.cursor() as cur:
+            cur.execute('''
+                SELECT EXISTS (
+                    SELECT 1 FROM schedules AS legacy
+                    WHERE legacy.owner = ''
+                      AND NOT EXISTS (
+                          SELECT 1 FROM schedules AS mine
+                          WHERE mine.owner = %s AND mine.name = legacy.name
+                            AND mine.year = legacy.year AND mine.month = legacy.month
+                      )
+                ) OR (
+                    EXISTS (SELECT 1 FROM app_settings WHERE key = 'default')
+                    AND NOT EXISTS (SELECT 1 FROM app_settings WHERE key = %s)
+                )
+            ''', (owner, settings_key(owner)))
+            if not cur.fetchone()[0]:
+                return True
         with conn:
             with conn.cursor() as cur:
                 cur.execute('''

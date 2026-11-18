@@ -2255,6 +2255,7 @@ if _olcum and not st.session_state.get("acilis_olculdu"):
     st.session_state.acilis_olculdu = True
     print(
         f"[nobet] Açılış ölçümü: tablo {_tablo_sn:.1f} sn, sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
-        f"({_olcum['uses']} okuma), bağlantı açma {_olcum['connect_ms']} ms",
+        f"({_olcum['uses']} okuma), bağlantı açma {_olcum['connect_ms']} ms; okumalar (ms): "
+        + ", ".join(f"{_ad} {_ms}" for _ad, _ms in _olcum["reads"]),
         flush=True,
     )

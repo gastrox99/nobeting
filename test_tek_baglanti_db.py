@@ -147,6 +147,9 @@ def test_calisma_sonunda_olcum_doner():
         conn.close()
     olcum = db.end_run_connection()
     assert olcum["uses"] == 2 and len(olcum["connect_ms"]) == 1   # iki okuma, tek bağlantı
+    # Her okumanın adı ve süresi (ms) kayda girer: hangi okumanın yavaş olduğu görülsün.
+    assert [name for name, _ in olcum["reads"]] == ["test_calisma_sonunda_olcum_doner"] * 2
+    assert all(isinstance(ms, int) and ms >= 0 for _, ms in olcum["reads"])
     assert 0 < olcum["db_seconds"] <= olcum["page_seconds"]
     assert db.end_run_connection() is None                         # çalışma yoksa ölçüm yok
 
@@ -241,3 +244,37 @@ def test_paylasilan_baglantida_yarida_kalan_kayit_hicbir_sey_yazmaz(monkeypatch)
         assert list(saved.index[saved["1 Per"]]) == ["Ali"]      # eski kayıt olduğu gibi
     finally:
         _sil(owner)
+
+
+# --- Eski (girişsiz) veri aktarımı yalnız gerektiğinde yazar (18 Kasım 2026) ---
+
+def test_eski_veri_denetimi_aktarilacak_veriyi_kacirmaz():
+    import uuid
+
+    import pandas as pd
+    assert db.init_db(), db.get_last_error()
+    owner = _uzman_sahibi()
+    legacy_name = f"Eski_{uuid.uuid4().hex[:8]}"
+    frame = pd.DataFrame(False, index=["Ali"], columns=["1 Per"])
+    try:
+        assert db.save_schedule(legacy_name, 2099, 1, ["Ali"], frame, owner="", expected_version=db.FORCE)
+        db.begin_run_connection()
+        assert db.claim_legacy_data(owner)
+        team, *_ = db.load_schedule(legacy_name, 2099, 1, owner=owner)
+        assert team == ["Ali"]                                    # aktarıldı
+        assert db.load_schedule(legacy_name, 2099, 1, owner="")[0] is None
+        assert db.claim_legacy_data(owner)                        # ikinci kez: değişiklik yok, hata yok
+        assert db.load_schedule(legacy_name, 2099, 1, owner=owner)[0] == ["Ali"]
+    finally:
+        conn = psycopg2.connect(TEST_DB)
+        with conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM schedules WHERE name = %s", (legacy_name,))
+            cur.execute("DELETE FROM app_settings WHERE key = %s", (db.settings_key(owner),))
+        conn.close()
+        _sil(owner)
+
+
+def test_olcumde_okuma_adi_ic_yardimci_degil_disaridan_cagrilan_fonksiyondur():
+    db.begin_run_connection()
+    db.list_team_requests("olcum-test@example.com")             # _rows / _with_schema_repair içinden açar
+    assert [name for name, _ in db.end_run_connection()["reads"]] == ["list_team_requests"]
