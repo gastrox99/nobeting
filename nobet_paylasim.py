@@ -83,8 +83,13 @@ def _cached_shared_months(owner):
 
 
 @st.cache_data(ttl=10, show_spinner=False)
-def _cached_shared_rows(owner, year, month):
+def _cached_month(owner, year, month):
     return _shared_rows(owner, year, month)
+
+
+def _cached_shared_rows(owner, year, month):
+    """Ayın (satırlar, görevler) çifti; ücret hesabıyla aynı tek okumadan gelir."""
+    return _cached_month(owner, year, month)[:2]
 
 
 # Ekip listesi de 10 sn önbellekte. Parametre adı "_" ile başlamamalı: Streamlit
@@ -92,6 +97,12 @@ def _cached_shared_rows(owner, year, month):
 @st.cache_data(ttl=10, show_spinner=False)
 def _cached_team(owner):
     return _team_of(owner)
+
+
+# Ayarlar ekip listesi ve ücret hesabı için tek okumayla gelir (hata önbelleğe yazılmaz).
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_settings(owner):
+    return load_app_settings(owner=owner, raise_on_error=True) or {}
 
 
 @st.cache_data(ttl=10, show_spinner=False)
@@ -168,7 +179,7 @@ def render_shared_view(token, db_ready):
 
 def _team_of(_owner):
     # Okuma hatası yükseltilir: önbelleğe boş ekip yazılmasın (çağıran yakalar).
-    _settings = load_app_settings(owner=_owner, raise_on_error=True) or {}
+    _settings = _cached_settings(_owner)
     return list(dict.fromkeys(
         _name.strip() for _name in str(_settings.get("team") or "").split(",") if _name.strip()
     ))
@@ -467,11 +478,9 @@ def _person_pay(_owner, year, month, person, list_days):
 
     Günler çizelgeden okunur; çizelgede kişi yoksa listedeki günler (list_days) kullanılır.
     """
-    _loaded = load_schedule(otomatik_kayit_adi(year, month), year, month, owner=_owner)
-    _schedule = _loaded[1] if _loaded else None
+    _schedule, _all_prefs = _cached_month(_owner, year, month)[2:]
     _days, _prefs = list(list_days), None
     if _schedule is not None and not _schedule.empty and person in _schedule.index:
-        _schedule = as_bool_frame(_schedule)
         _days = []
         for _col in _schedule.columns:
             try:
@@ -481,14 +490,22 @@ def _person_pay(_owner, year, month, person, list_days):
             if bool(_schedule.at[person, _col]):
                 _days.append(_day)
         # Yalnız kişinin kendi tercih satırı kullanılır (İzin günleri mesaiden düşer).
-        if _loaded[2] is not None and person in _loaded[2].index:
-            _prefs = _loaded[2].loc[[person]]
-    return kisi_ucret_dokumu(_days, year, month, load_app_settings(owner=_owner) or {}, _prefs, person)
+        if _all_prefs is not None and person in _all_prefs.index:
+            _prefs = _all_prefs.loc[[person]]
+    try:
+        _settings = _cached_settings(_owner)
+    except Exception as _error:
+        log_unexpected("Paylaşım ücret ayarları", _error)
+        _settings = {}
+    return kisi_ucret_dokumu(_days, year, month, _settings, _prefs, person)
 
 
 def _shared_rows(_owner, year, month):
-    """Paylaşım sayfası için ayın satırları ve görevleri: (satırlar, görevler); yoksa (None, None)."""
-    _loaded = load_schedule(otomatik_kayit_adi(year, month), year, month, owner=_owner, include_preferences=False)
+    """Paylaşım sayfası için ayın tek okumasından: (satırlar, görevler, çizelge, tercihler); yoksa dördü de None.
+
+    Çizelge ve tercihler yalnızca kişinin ücret hesabı içindir; sayfaya başkasının satırı gelmez."""
+    _loaded = load_schedule(otomatik_kayit_adi(year, month), year, month, owner=_owner)
+    _prefs = _loaded[2] if _loaded else None
     _rows = _loaded[4] if _loaded and len(_loaded) > 4 and _loaded[4] else None
     _schedule = _loaded[1] if _loaded else None
     if _schedule is not None:
@@ -512,7 +529,7 @@ def _shared_rows(_owner, year, month):
                 _parsed = parse_schedule_import_date(_row.get("Tarih"))
                 _row_columns.append(_day_columns.get(_parsed["day"]) if _parsed else None)
             _rows, _roles = add_overflow_roles(_rows, _roles, _schedule, _row_columns)
-        return _rows, _roles
+        return _rows, _roles, _schedule, _prefs
     if _schedule is not None and not _schedule.empty:
-        return _rows_from_schedule(_schedule, year, month), ["Nöbetçiler"]
-    return None, None
+        return _rows_from_schedule(_schedule, year, month), ["Nöbetçiler"], _schedule, _prefs
+    return None, None, _schedule, _prefs
