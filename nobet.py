@@ -256,6 +256,17 @@ _share_token = st.query_params.get("paylas")
 if _share_token:
     render_shared_view(_share_token, _prepare_db())
     _render_version_footer()
+    _olcum = end_run_connection()
+    # Yeni ziyaretçide ad seçimi ikinci çalışmayı getirir; ilk iki çalışma uygulama kayıtlarına yazılır.
+    _olculen = st.session_state.get("paylasim_olculen", 0)
+    if _olcum and _olculen < 2:
+        st.session_state.paylasim_olculen = _olculen + 1
+        print(
+            f"[nobet] Paylaşım açılış ölçümü: sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
+            f"({_olcum['uses']} okuma), bağlantı açma {_olcum['connect_ms']} ms; okumalar (ms): "
+            + ", ".join(f"{_ad} {_ms}" for _ad, _ms in _olcum["reads"]),
+            flush=True,
+        )
     st.stop()
 
 # --- GOOGLE İLE GİRİŞ (isteğe bağlı) ---

@@ -410,8 +410,42 @@ def test_paylasim_ekibi_onbellekte_jeton_her_seferinde_sorulur():
     assert calls["settings"] == 1   # ekip listesi 10 sn önbellekte
 
 
+def test_paylasim_kisi_secilince_ay_ve_ayarlar_birer_kez_okunur():
+    """Liste, sıradaki nöbet ve ücret hesabı aynı ayı; ekip ve ücret aynı ayarları tek okumadan alır."""
+    import streamlit
+    from nobet_core import now_tr
+    from streamlit.testing.v1 import AppTest
+    _bugun = now_tr().date()
+    calls = {"schedule": 0, "settings": 0}
+
+    def schedule(*a, **k):
+        calls["schedule"] += 1
+        _satir = {"Tarih": f"15.{_bugun.month:02d}.{_bugun.year} Pzt", "Nöbetçi": "Ali"}
+        return ["Ali", "Ayşe"], None, None, None, [_satir]
+
+    def settings(owner="", raise_on_error=False, version_out=None, corrupt_out=None):
+        calls["settings"] += 1
+        return {"team": "Ali, Ayşe"}
+
+    streamlit.cache_data.clear()
+    streamlit.cache_resource.clear()
+    fakes = _fakes(resolve_share_token=lambda t, raise_on_error=False: ("sahip@example.com", 0, 0),
+                   load_app_settings=settings, load_schedule=schedule,
+                   list_shared_months=lambda owner: [(_bugun.year, _bugun.month, None)])
+    with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, create=True, **fakes):
+        at = AppTest.from_file(str(Path(__file__).with_name("nobet.py")), default_timeout=120)
+        at.query_params["paylas"] = "abc123"
+        at.run()
+        at.selectbox(key="paylasim_kisi").select("Ali").run()
+        assert [e.value for e in at.exception] == []
+    streamlit.cache_data.clear()
+    streamlit.cache_resource.clear()
+    assert calls == {"schedule": 1, "settings": 1}
+
+
 def test_paylasim_ekip_onbellegi_sahipleri_karistirmaz_hatayi_saklamaz():
     import nobet_paylasim
+    nobet_paylasim._cached_settings.clear()
     calls = []
     fail = {"on": True}
 
@@ -435,6 +469,7 @@ def test_paylasim_ekip_onbellegi_sahipleri_karistirmaz_hatayi_saklamaz():
             assert nobet_paylasim._cached_team("a@x") == ["Ali", "Can"]
     finally:
         nobet_paylasim._cached_team.clear()
+        nobet_paylasim._cached_settings.clear()
     assert calls == ["a@x", "a@x", "b@x"]
 
 
