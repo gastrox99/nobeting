@@ -4074,3 +4074,34 @@ class TestGoogleGirisPaketleri(unittest.TestCase):
         # Streamlit 1.66 girişi Authlib'in Starlette istemcisiyle yapar; o da
         # httpx ister. Eksikse "Google ile giriş yap" sunucu hatası verir.
         from authlib.integrations import starlette_client  # noqa: F401
+
+
+class TestEkipKalanOzeti(unittest.TestCase):
+    """Ayarlar > Ekip: sınırsız kişilere kalan nöbet / hafta sonu bilgisi."""
+
+    def test_sinirsiz_kisilere_bolunur(self):
+        from nobet_ekip import ekip_kalan_ozeti
+        # Kasım 2026: 30 gün; Cmt/Paz 8 gün (+ 29. gün tatil = 9), 2 kişi/gün.
+        limits = parse_person_limits("Ali:0-5:1\nAyşe:0-4")
+        text = ekip_kalan_ozeti(["Ali", "Ayşe", "Can", "Ece"], limits, 2026, 11, [29], 2)
+        self.assertIn("60 nöbet", text)
+        self.assertIn("18 hafta sonu", text)
+        # Nöbet: 60 - 9 = 51 → 2 sınırsız kişi, ~25,5. Hafta sonu: 18 - 1 = 17 → 3 kişi, ~5,7.
+        self.assertIn("kalan 51", text)
+        self.assertIn("~25,5", text)
+        self.assertIn("kalan 17", text)
+        self.assertIn("~5,7", text)
+
+    def test_herkesin_siniri_varsa_bolme_yok(self):
+        from nobet_ekip import ekip_kalan_ozeti
+        limits = parse_person_limits("Ali:0-5:1\nAyşe:0-4:1")
+        text = ekip_kalan_ozeti(["Ali", "Ayşe"], limits, 2026, 11, [], 1)
+        self.assertIn("herkesin sınırı var", text)
+        self.assertNotIn("~", text)
+        self.assertIn("ihtiyaçtan az", text)
+
+    def test_bos_ekip_ve_fazla_sinir(self):
+        from nobet_ekip import ekip_kalan_ozeti
+        self.assertIsNone(ekip_kalan_ozeti([], {}, 2026, 11, [], 2))
+        text = ekip_kalan_ozeti(["Ali", "Ayşe"], parse_person_limits("Ali:0-40"), 2026, 11, [], 1)
+        self.assertIn("kalan 0", text)  # sınırlar ihtiyacı aşınca negatif yazılmaz
