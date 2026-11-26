@@ -79,7 +79,7 @@ def _rows_from_schedule(schedule, year, month):
 # diye ay listesi ve ay satırları kısa süre önbellekte tutulur (jeton her seferinde sorulur).
 @st.cache_data(ttl=10, show_spinner=False)
 def _cached_shared_months(owner):
-    return list_shared_months(owner)
+    return list_shared_months(owner, with_published=True)
 
 
 @st.cache_data(ttl=10, show_spinner=False)
@@ -111,8 +111,8 @@ def _cached_person_pay(owner, year, month, person, list_days):
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def _cached_my_year(owner, year, person):
-    return _my_year(owner, year, person)
+def _cached_my_year(owner, year, person, published=None):
+    return _my_year(owner, year, person, published)
 
 
 def render_shared_view(token, db_ready):
@@ -187,16 +187,22 @@ def _team_of(_owner):
 
 def _render_list(_owner, _year, _month, _person):
     _months = _cached_shared_months(_owner)
-    _updated = {(_y, _m): _t for _y, _m, _t in _months}
+    # Yalnız liste sahibinin yayınladığı aylar görünür (liste hazırlanırken yarım nöbetler gizli kalır).
+    _updated = {(_y, _m): _t for _y, _m, _t, _pub in _months if _pub}
+    _hidden = {(_y, _m) for _y, _m, _t, _pub in _months if not _pub}
     _today = now_tr().date()
     if _person:
         _render_next_shift(_owner, _person, _updated, _today)
+    _notice = (_today.year, _today.month) in _hidden
+    if _notice:
+        st.info("Bu ayın listesi henüz yayınlanmadı.")
     if (_year, _month) == (0, 0):
         # Kalıcı bağlantı: geçmiş aylar, bu ay ve sonraki ay gösterilir (daha
         # ileri aylar taslaktır); bu ay önce açılır.
         _periods = shared_visible_months(list(_updated), _today)
         if not _periods:
-            st.info("Henüz paylaşılan bir nöbet listesi yok.")
+            if not _notice:
+                st.info("Henüz paylaşılan bir nöbet listesi yok.")
             return
         _year, _month = st.selectbox(
             "Ay:", _periods,
@@ -205,6 +211,10 @@ def _render_list(_owner, _year, _month, _person):
         )
     else:
         st.subheader(f"{TR_AY_ADLARI[_month]} {_year}")
+        if (_year, _month) in _hidden:
+            if not _notice:
+                st.info("Bu ayın listesi henüz yayınlanmadı.")
+            return
     _rows, _roles = _cached_shared_rows(_owner, _year, _month)
     if not _rows:
         st.info("Bu ay için henüz çizelge yok.")
@@ -285,7 +295,7 @@ def _render_list(_owner, _year, _month, _person):
         )
     if _person:
         _render_pay(_owner, _year, _month, _person, _rows, _roles)
-        _render_my_year(_owner, _person)
+        _render_my_year(_owner, _person, tuple(sorted(_updated)))
     st.caption("Liste, liste sahibi değişiklik yaptıkça güncellenir.")
 
 
@@ -361,11 +371,12 @@ def _render_pay(_owner, _year, _month, _person, _rows, _roles):
         )
 
 
-def _my_year(_owner, year, person):
-    """Kişinin yıl özeti ve ekip ortalaması (başkasının satırı sayfaya gelmez); veri yoksa None."""
-    _schedules, _prefs = load_auto_saved_assignments(
-        [(year, _m) for _m in range(1, 13)], owner=_owner, include_preferences=True,
-    )
+def _my_year(_owner, year, person, published=None):
+    """Kişinin yıl özeti ve ekip ortalaması (başkasının satırı sayfaya gelmez); veri yoksa None.
+
+    ``published`` verilirse yalnız o aylar sayılır (yayınlanmamış ay özete sızmasın)."""
+    _periods = [(year, _m) for _m in range(1, 13) if published is None or (year, _m) in published]
+    _schedules, _prefs = load_auto_saved_assignments(_periods, owner=_owner, include_preferences=True)
     _settings = load_app_settings(owner=_owner) or {}
     _team = _team_of(_owner)
     _table, _months = yil_ozeti(_schedules, _prefs, year, _settings.get("name_aliases"), _team, _settings.get("holidays_by_period"))
@@ -373,14 +384,14 @@ def _my_year(_owner, year, person):
     return (*_found, _months) if _found else None
 
 
-def _render_my_year(_owner, _person):
+def _render_my_year(_owner, _person, _published):
     """Kişinin kendi yıllık nöbet dağılımı, ekip ortalamasıyla yan yana."""
     _year = now_tr().year
     with st.expander(f"📆 {_year} yılım", expanded=False):
         if not st.toggle("Yıllık özetimi göster", key="paylasim_yilim"):
             return
         try:
-            _result = _cached_my_year(_owner, _year, _person)
+            _result = _cached_my_year(_owner, _year, _person, _published)
         except Exception as _error:
             log_unexpected("Paylaşım yıl özeti", _error)
             st.warning("⚠️ Yıl özeti okunamadı. Birazdan tekrar deneyin.")

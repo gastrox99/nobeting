@@ -396,7 +396,7 @@ def test_paylasim_ekibi_onbellekte_jeton_her_seferinde_sorulur():
     nobet_paylasim._cached_team.clear()
     streamlit.cache_resource.clear()
     fakes = _fakes(resolve_share_token=resolve, load_app_settings=settings,
-                   list_shared_months=lambda owner: [])
+                   list_shared_months=lambda owner, **k: [])
     with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, create=True, **fakes):
         at = AppTest.from_file(str(Path(__file__).with_name("nobet.py")), default_timeout=120)
         at.query_params["paylas"] = "abc123"
@@ -431,7 +431,7 @@ def test_paylasim_kisi_secilince_ay_ve_ayarlar_birer_kez_okunur():
     streamlit.cache_resource.clear()
     fakes = _fakes(resolve_share_token=lambda t, raise_on_error=False: ("sahip@example.com", 0, 0),
                    load_app_settings=settings, load_schedule=schedule,
-                   list_shared_months=lambda owner: [(_bugun.year, _bugun.month, None)])
+                   list_shared_months=lambda owner, **k: [(_bugun.year, _bugun.month, None, True)])
     with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, create=True, **fakes):
         at = AppTest.from_file(str(Path(__file__).with_name("nobet.py")), default_timeout=120)
         at.query_params["paylas"] = "abc123"

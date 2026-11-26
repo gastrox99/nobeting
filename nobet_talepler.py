@@ -76,7 +76,8 @@ def render_request_status(owner, yil, ay, isimler):
         # Paylaş düğmesiyle aynı önbellek: oturumda bir kez okunur.
         _share_cache = st.session_state.setdefault("share_token_cache", {})
         if "all" not in _share_cache:
-            _share_cache["all"] = get_share_link(owner, 0, 0)
+            _share_cache["published"] = set()
+            _share_cache["all"] = get_share_link(owner, 0, 0, _share_cache["published"])
         _token = _share_cache["all"]
         if not _token:
             st.caption("Hatırlatma için önce alttaki 🔗 Paylaş ile ekip bağlantısını oluşturun.")

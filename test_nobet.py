@@ -2437,7 +2437,7 @@ class TestSharedPageHelpers(unittest.TestCase):
         source = _app_source()
         share = source[source.index('with st.popover("🔗 Paylaş"'):source.index("with _snapshot_col:")]
         self.assertIn("create_share_link(current_owner, 0, 0)", share)
-        self.assertNotIn("current_owner, yil, ay", share)
+        self.assertNotIn("share_link(current_owner, yil, ay", share)
         self.assertEqual(share.count("delete_all_share_links(current_owner)"), 2)
 
 

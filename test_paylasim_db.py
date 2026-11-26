@@ -34,6 +34,7 @@ def owner():
     with conn, conn.cursor() as cur:
         cur.execute("DELETE FROM schedules WHERE owner = %s", (name,))
         cur.execute("DELETE FROM share_links WHERE owner = %s", (name,))
+        cur.execute("DELETE FROM published_months WHERE owner = %s", (name,))
         cur.execute("DELETE FROM team_requests WHERE owner = %s", (name,))
     conn.close()
 
@@ -250,3 +251,45 @@ def test_onaylanmis_talep_guncellenince_onceki_gunler_saklanir(owner):
     assert db.decide_team_request(owner, ayse["id"], "rejected", days=ayse["days"])
     assert db.submit_team_request(owner, 2026, 11, "Ayşe", {"izin": [6]}) == "ok"
     assert [r for r in db.list_team_requests(owner) if r["person"] == "Ayşe"][0]["days"] == {"izin": [6]}
+
+
+def test_yeni_ay_yayinlanmamis_baslar_yayinla_ve_kaldir(owner):
+    _save(owner, 2026, 11)
+    assert db.list_shared_months(owner, with_published=True)[0][3] is False
+    assert db.set_month_published(owner, 2026, 11, True)
+    assert db.set_month_published(owner, 2026, 11, True)      # ikinci basış zararsız
+    assert db.list_shared_months(owner, with_published=True)[0][3] is True
+    assert db.set_month_published(owner, 2026, 11, False)
+    assert db.list_shared_months(owner, with_published=True)[0][3] is False
+
+
+def test_yayin_baska_kullanici_ve_baska_ay_icin_gecerli_degil(owner):
+    _save(owner, 2026, 10)
+    _save(owner, 2026, 11)
+    db.set_month_published(owner, 2026, 10, True)
+    assert [(y, m, p) for y, m, _, p in db.list_shared_months(owner, with_published=True)] == [
+        (2026, 10, True), (2026, 11, False)]
+    assert db.list_shared_months(owner + ".baska", with_published=True) == []
+
+
+def test_baglanti_okumasi_yayinlanan_ayları_birlikte_getirir(owner):
+    token = db.create_share_link(owner, 0, 0)
+    db.set_month_published(owner, 2026, 11, True)
+    out = set()
+    assert db.get_share_link(owner, 0, 0, out) == token
+    assert out == {(2026, 11)}
+
+
+def test_tablo_ilk_kurulurken_mevcut_aylar_yayinlanmis_sayilir(owner):
+    """Eski bağlantılar bozulmasın: tablo yoksa kurulurken o güne dek kaydedilen aylar yayınlanır."""
+    _save(owner, 2026, 9)
+    conn = db._connect()
+    with conn, conn.cursor() as cur:
+        cur.execute("DROP TABLE published_months")
+    conn.close()
+    assert db.init_db(), db.get_last_error()
+    assert [(y, m, p) for y, m, _, p in db.list_shared_months(owner, with_published=True)] == [(2026, 9, True)]
+    # Sonraki init_db yayından kaldırılan ayı yeniden yayınlamaz.
+    db.set_month_published(owner, 2026, 9, False)
+    assert db.init_db(), db.get_last_error()
+    assert db.list_shared_months(owner, with_published=True)[0][3] is False
