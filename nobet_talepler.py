@@ -34,10 +34,10 @@ def _requests(owner):
 def talep_durumu(isimler, requests, yil, ay, aliases=None):
     """Ay için talep göndermiş ve göndermemiş kişiler: (gönderen, göndermeyen), ekip sırasıyla.
 
-    ``requests`` bekleyen ve karara bağlanmış tüm talepleri içerir; her biri o ay için sayılır."""
+    ``requests`` bekleyen ve karara bağlanmış tüm talepleri içerir; reddedilenler sayılmaz."""
     _sent = {
         resolve_alias(_r["person"], aliases, isimler)
-        for _r in requests if (_r["year"], _r["month"]) == (yil, ay)
+        for _r in requests if (_r["year"], _r["month"]) == (yil, ay) and _r["status"] != "rejected"
     }
     return [_p for _p in isimler if _p in _sent], [_p for _p in isimler if _p not in _sent]
 
