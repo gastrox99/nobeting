@@ -96,6 +96,14 @@ def test_talep_durumu_gonderen_ve_gondermeyeni_ekip_sirasiyla_ayirir():
     assert eksik == ["Ali", "Ayşe"]
 
 
+def test_talep_durumu_reddedilen_talep_gonderilmis_sayilmaz():
+    from nobet_talepler import talep_durumu
+    istekler = [dict(_istek("Ali"), status="rejected"), dict(_istek("Ayşe"), status="approved"), _istek("Can")]
+    gonderen, eksik = talep_durumu(["Ali", "Ayşe", "Can"], istekler, 2026, 10, {})
+    assert gonderen == ["Ayşe", "Can"]
+    assert eksik == ["Ali"]
+
+
 def test_hatirlatma_metni_ay_baglanti_ve_eksikleri_icerir():
     from nobet_talepler import hatirlatma_metni
     metin = hatirlatma_metni(["Ali", "Ayşe"], 2026, 11, "https://x.app?paylas=abc")
