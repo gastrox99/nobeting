@@ -46,10 +46,12 @@ def _team_names(text):
     return [part.strip() for part in (text or "").split(",") if part.strip()]
 
 
-def _sayi(value):
-    """Türkçe sayı yazımı: en çok bir ondalık, 2,0 yerine 2."""
-    text = f"{round(value, 1):.1f}".replace(".", ",")
-    return text[:-2] if text.endswith(",0") else text
+def _tam_dagilim(kalan, kisi):
+    """Kalanı tam sayılarla böler: 46/5 → "4 kişi 9, 1 kişi 10"; tam bölünürse "kişi başı 9"."""
+    taban, fazla = divmod(kalan, kisi)
+    if not fazla:
+        return f"kişi başı {taban}"
+    return f"{kisi - fazla} kişi {taban}, {fazla} kişi {taban + 1}" if taban else f"{fazla} kişi 1, {kisi - fazla} kişi 0"
 
 
 def ekip_kalan_ozeti(isimler, limits, yil, ay, tatil_gunleri, kisi_sayisi):
@@ -73,7 +75,7 @@ def ekip_kalan_ozeti(isimler, limits, yil, ay, tatil_gunleri, kisi_sayisi):
         sinirsiz = len(sinirlar) - len(sinirli)
         kalan = max(0, ihtiyac - sum(sinirli))
         if sinirsiz:
-            satirlar.append(f"{baslik}: sınırsız {sinirsiz} kişiye kalan {kalan} (kişi başı ~{_sayi(kalan / sinirsiz)})")
+            satirlar.append(f"{baslik}: sınırsız {sinirsiz} kişiye kalan {kalan} ({_tam_dagilim(kalan, sinirsiz)})")
         else:
             uyari = " ⚠️ ihtiyaçtan az" if sum(sinirli) < ihtiyac else ""
             satirlar.append(f"{baslik}: herkesin sınırı var (toplam {sum(sinirli)}){uyari}")

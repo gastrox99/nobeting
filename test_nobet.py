@@ -4086,11 +4086,19 @@ class TestEkipKalanOzeti(unittest.TestCase):
         text = ekip_kalan_ozeti(["Ali", "Ayşe", "Can", "Ece"], limits, 2026, 11, [29], 2)
         self.assertIn("60 nöbet", text)
         self.assertIn("18 hafta sonu", text)
-        # Nöbet: 60 - 9 = 51 → 2 sınırsız kişi, ~25,5. Hafta sonu: 18 - 1 = 17 → 3 kişi, ~5,7.
+        # Nöbet: 60 - 9 = 51 → 2 sınırsız kişi: 25 + 26. Hafta sonu: 18 - 1 = 17 → 3 kişi: 5, 6, 6.
         self.assertIn("kalan 51", text)
-        self.assertIn("~25,5", text)
+        self.assertIn("1 kişi 25, 1 kişi 26", text)
         self.assertIn("kalan 17", text)
-        self.assertIn("~5,7", text)
+        self.assertIn("1 kişi 5, 2 kişi 6", text)
+        self.assertNotIn("~", text)
+
+    def test_tam_dagilim_ornekleri(self):
+        from nobet_ekip import _tam_dagilim
+        self.assertEqual(_tam_dagilim(46, 5), "4 kişi 9, 1 kişi 10")
+        self.assertEqual(_tam_dagilim(45, 5), "kişi başı 9")
+        self.assertEqual(_tam_dagilim(0, 3), "kişi başı 0")
+        self.assertEqual(_tam_dagilim(2, 5), "2 kişi 1, 3 kişi 0")
 
     def test_herkesin_siniri_varsa_bolme_yok(self):
         from nobet_ekip import ekip_kalan_ozeti
