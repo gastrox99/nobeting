@@ -6,6 +6,9 @@ Hepsi ayarlarda saklanan metinleri (``isimler_text``, ``limits_text``,
 ``forbidden_pairs_text``, ``together_pairs_text``) düzenler; kayıt, yedek ve Excel aynı metinleri
 kullanmaya devam eder.
 """
+import calendar
+from datetime import date
+
 import streamlit as st
 
 from nobet_core import (
@@ -41,6 +44,42 @@ def _forget_boxes(prefix, *extra):
 
 def _team_names(text):
     return [part.strip() for part in (text or "").split(",") if part.strip()]
+
+
+def _sayi(value):
+    """Türkçe sayı yazımı: en çok bir ondalık, 2,0 yerine 2."""
+    text = f"{round(value, 1):.1f}".replace(".", ",")
+    return text[:-2] if text.endswith(",0") else text
+
+
+def ekip_kalan_ozeti(isimler, limits, yil, ay, tatil_gunleri, kisi_sayisi):
+    """Sınırı boş bırakılan kişilere kalan nöbet ve hafta sonu/tatil sayısının özeti.
+
+    Ayın toplam ihtiyacından sınırı yazılanların toplamı düşülür, kalan sınırsız
+    kişilere bölünür. Basit tahmin: izin ve yasak günleri hesaba katılmaz.
+    """
+    if not isimler:
+        return None
+    gun_sayisi = calendar.monthrange(yil, ay)[1]
+    ozel_gun = sum(1 for d in range(1, gun_sayisi + 1)
+                   if date(yil, ay, d).weekday() >= 5 or d in set(tatil_gunleri))
+    satirlar = []
+    for baslik, anahtar, ihtiyac in (
+        ("Nöbet", "max", gun_sayisi * kisi_sayisi),
+        ("Hafta sonu", "max_special", ozel_gun * kisi_sayisi),
+    ):
+        sinirlar = [limits.get(n, {}).get(anahtar, 999) for n in isimler]
+        sinirli = [v for v in sinirlar if v < 999]
+        sinirsiz = len(sinirlar) - len(sinirli)
+        kalan = max(0, ihtiyac - sum(sinirli))
+        if sinirsiz:
+            satirlar.append(f"{baslik}: sınırsız {sinirsiz} kişiye kalan {kalan} (kişi başı ~{_sayi(kalan / sinirsiz)})")
+        else:
+            uyari = " ⚠️ ihtiyaçtan az" if sum(sinirli) < ihtiyac else ""
+            satirlar.append(f"{baslik}: herkesin sınırı var (toplam {sum(sinirli)}){uyari}")
+    return (f"Ay ihtiyacı: {gun_sayisi * kisi_sayisi} nöbet ({gun_sayisi} gün × {kisi_sayisi} kişi), "
+            f"{ozel_gun * kisi_sayisi} hafta sonu/tatil.\n\n" + "\n\n".join(satirlar)
+            + "\n\nBasit tahmin: izin ve yasak günleri hesaba katılmadı.")
 
 
 def _write_rows(rows):

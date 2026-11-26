@@ -198,7 +198,7 @@ from nobet_onkontrol import (
     ay_sonu_cakismalari, dinlenme_uyarilari, ilk_nobet_gunleri, paylasim_kontrolleri, render_backup_suggestion, render_day_availability,
     render_precheck, render_why_not,
 )
-from nobet_ekip import render_team_table, render_pair_matrix, render_fixed_roles
+from nobet_ekip import ekip_kalan_ozeti, render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
     finish_approved_requests, pending_count, render_pending_badge, render_request_status, render_team_requests,
 )
@@ -686,6 +686,8 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
         # Ekip tablosu (isim + limitler) ayarlardaki metinleri düzenler (nobet_ekip.py).
         if settings_expanded or _settings_closing:
             render_team_table(draw=settings_expanded)
+        # Özet satırı ay, tatil ve kişi sayısı belirlendikten sonra aşağıda doldurulur.
+        _ekip_ozet_yeri = st.empty() if settings_expanded else None
         if not settings_expanded:
             # Açılınca ekip tablosu kutuları ayarlardaki metinden yeniden kurulsun
             # (kapalıyken silinen kutu durumu boş isim sanılmasın).
@@ -809,6 +811,10 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
         if settings_expanded and not religious_holidays_known(yil):
             st.caption(f"{yil} dini bayram tarihleri tanımlı değil; varsa elle ekleyin.")
         tatil_gunleri, invalid_holiday_parts = parse_holiday_days(holiday_input, gun_sayisi)
+        if _ekip_ozet_yeri is not None and isimler:
+            _ekip_ozet_yeri.caption(ekip_kalan_ozeti(
+                isimler, parse_person_limits_with_issues(st.session_state.get("limits_text", ""))[0],
+                yil, ay, tatil_gunleri, kişi_sayısı))
         if settings_expanded and invalid_holiday_parts:
             invalid_text = ", ".join(f"'{part}'" for part in invalid_holiday_parts)
             st.warning(
