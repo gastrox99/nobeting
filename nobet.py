@@ -154,7 +154,6 @@ for _attempt in range(2):
             schedule_fingerprint,
             missing_shift_coverage,
             explain_missing_day,
-            update_locked_cells,
             MISSING_DAY_FREE_LABEL,
             format_missing_day_reason,
             synchronize_changed_role_rows,
@@ -195,8 +194,8 @@ from nobet_takvim import render_calendar_tab
 from nobet_analiz import render_analysis_tab
 from nobet_yil import render_year_summary
 from nobet_onkontrol import (
-    ay_sonu_cakismalari, dinlenme_uyarilari, ilk_nobet_gunleri, paylasim_kontrolleri, render_backup_suggestion, render_day_availability,
-    render_precheck, render_why_not,
+    ay_sonu_cakismalari, dinlenme_uyarilari, ilk_nobet_gunleri, paylasim_kontrolleri, render_day_availability,
+    render_precheck,
 )
 from nobet_ekip import ekip_kalan_ozeti, render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
@@ -2239,23 +2238,7 @@ st.subheader("📊 Analiz")
 render_analysis_tab(isimler, role_names, _prev_ctx, history_special, history_total, history_holiday,
                     df_stats_load, df_stats_finance, pair_display, df_liste, liste_rows, liste_roles,
                     yil, ay, zorunlu_saat, arife_gunleri, edited_df)
-render_why_not(isimler, sutunlar, gun_detaylari, _missing_day_reasons, edited_df)
 
-
-def _assign_backup(out, backup, column):
-    """Çıkamayan kişiyi o günden alıp yedeği yazar (tabloda iki hücreye dokunmakla aynı)."""
-    save_undo_state()
-    st.session_state.schedule_bool.at[out, column] = False
-    st.session_state.schedule_bool.at[backup, column] = True
-    st.session_state.locked_cells = update_locked_cells(
-        st.session_state.get("locked_cells"), [(backup, column)], [(out, column)])
-    _queue_assignment_warnings([(backup, column)])
-
-
-render_backup_suggestion(
-    isimler, sutunlar, gun_detaylari, edited_df, df_unwanted, min_bosluk,
-    st.session_state.get("person_limits", {}), st.session_state.get("forbidden_pairs", []),
-    prev_last_shift, _assign_backup, yil, ay)
 _uygun_gun = st.session_state.pop("uygun_gun", None)
 _uygun_sutun = next((c for c in sutunlar if gun_detaylari[c]["day_num"] == _uygun_gun), None)
 if _uygun_sutun is not None and _uygun_sutun in edited_df.columns:
