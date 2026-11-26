@@ -76,6 +76,9 @@ def _seed(db):
     })
     assert db.save_app_settings(
         {"team": "Bugün Ali, Talep Ali, Ücret Ali", "title": "Tabip", "risky_unit": True}, owner=OWNER, expected_version=db.FORCE)
+    # Yayınlanmamış ay linkte görünmez; testler görünür hâli sınar.
+    for _y, _m in ((today.year, today.month), (prev_year, prev_month)):
+        assert db.set_month_published(OWNER, _y, _m, True)
     return {
         "today": today, "tomorrow_in_month": tomorrow.month == today.month,
         "previous": (prev_year, prev_month),
@@ -89,6 +92,7 @@ def _cleanup(db):
     with conn, conn.cursor() as cur:
         cur.execute("DELETE FROM schedules WHERE owner = %s", (OWNER,))
         cur.execute("DELETE FROM share_links WHERE owner = %s", (OWNER,))
+        cur.execute("DELETE FROM published_months WHERE owner = %s", (OWNER,))
         cur.execute("DELETE FROM team_requests WHERE owner = %s", (OWNER,))
         cur.execute("DELETE FROM app_settings WHERE key = %s", (db.settings_key(OWNER),))
     conn.close()

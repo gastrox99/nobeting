@@ -23,6 +23,7 @@ import streamlit as st
 
 from db import (
     MonthLocked, create_share_link, delete_all_share_links, get_share_link, load_uzman_list, log_unexpected,
+    set_month_published,
     save_uzman_list,
 )
 from nobet_onkontrol import render_share_check
@@ -647,9 +648,28 @@ def render_toolbar(df_liste, df_stats_load, df_stats_finance, liste_rows, liste_
             else:
                 # Tek kalıcı bağlantı (yıl 0, ay 0): bütün ayları gösterir.
                 if "all" not in _share_cache:
-                    _share_cache["all"] = get_share_link(current_owner, 0, 0)
+                    _share_cache["published"] = set()
+                    _share_cache["all"] = get_share_link(current_owner, 0, 0, _share_cache["published"])
                 _token = _share_cache["all"]
+                _published = _share_cache.setdefault("published", set())
                 render_share_check(share_check)
+                # Liste hazırlanırken ekip yarım nöbetleri görmesin: ay, siz yayınlayana kadar linkte gizli.
+                if (yil, ay) in _published:
+                    st.success(f"✅ {TR_AY_ADLARI[ay]} {yil} listesi yayında. Ekip linkten görür; "
+                               "sonraki değişiklikler linke canlı yansır.")
+                    if st.button("🙈 Yayından kaldır", width="stretch", key="yayindan_kaldir"):
+                        if set_month_published(current_owner, yil, ay, False):
+                            _published.discard((yil, ay))
+                            st.rerun()
+                        st.error("Yayından kaldırılamadı.")
+                else:
+                    st.warning(f"{TR_AY_ADLARI[ay]} {yil} listesi henüz yayınlanmadı; "
+                               "ekip linkte bu ayın listesini ve ücretini görmez (talep gönderebilir).")
+                    if st.button("📢 Listeyi yayınla", type="primary", width="stretch", key="listeyi_yayinla"):
+                        if set_month_published(current_owner, yil, ay, True):
+                            _published.add((yil, ay))
+                            st.rerun()
+                        st.error("Yayınlanamadı.")
                 st.caption(
                     "Ekip arkadaşlarınız bu tek bağlantıyla giriş yapmadan bütün ayların listesini görebilir; "
                     "her ay yeni bağlantı göndermeniz gerekmez. Kendi adlarını seçip nöbetlerini takvimlerine ekleyebilirler."

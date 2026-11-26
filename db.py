@@ -429,6 +429,27 @@ def init_db():
                     )
                 ''')
 
+                # Ekibe yayınlanan aylar: yayınlanmamış ayın listesi paylaşım
+                # bağlantısında görünmez. Tablo ilk kurulurken o güne dek paylaşılan
+                # aylar yayınlanmış sayılır; mevcut bağlantılar bozulmaz.
+                cur.execute("SELECT to_regclass('published_months') IS NULL")
+                _first_published = cur.fetchone()[0]
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS published_months (
+                        owner VARCHAR(320) NOT NULL DEFAULT '',
+                        year INT NOT NULL,
+                        month INT NOT NULL,
+                        published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (owner, year, month)
+                    )
+                ''')
+                if _first_published:
+                    cur.execute('''
+                        INSERT INTO published_months (owner, year, month)
+                        SELECT DISTINCT s.owner, s.year, s.month FROM schedules AS s
+                        WHERE s.name LIKE 'Otomatik\\_%'
+                    ''')
+
                 # Uygulamada saklanan yedekler: her ay için tek yedek (Yedekle
                 # tuşu) ve geri yüklemeden önceki hâlin tek kopyası (year=0).
                 cur.execute('''
@@ -1228,8 +1249,11 @@ def create_share_link(owner, year, month):
             conn.close()
 
 
-def get_share_link(owner, year, month):
-    """The month's current share token, or None."""
+def get_share_link(owner, year, month, published_out=None):
+    """The month's current share token, or None.
+
+    ``published_out`` (küme) verilirse sahibin yayınlanmış ayları (yıl, ay) aynı
+    bağlantıda ona eklenir; açılışta ayrı bir okuma gerekmez."""
     conn = None
     try:
         conn = _connect()
@@ -1239,6 +1263,9 @@ def get_share_link(owner, year, month):
                 (owner, year, month),
             )
             row = cur.fetchone()
+            if published_out is not None:
+                cur.execute('SELECT year, month FROM published_months WHERE owner = %s', (owner,))
+                published_out.update((r['year'], r['month']) for r in cur.fetchall())
         return row['token'] if row else None
     except Exception as e:
         _log_error("Get share link", e)
@@ -1265,11 +1292,38 @@ def delete_all_share_links(owner):
             conn.close()
 
 
-def list_shared_months(owner):
+def set_month_published(owner, year, month, published):
+    """Ayı ekibe yayınlar ya da yayından kaldırır; başarılıysa True."""
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            with conn.cursor() as cur:
+                if published:
+                    cur.execute('''
+                        INSERT INTO published_months (owner, year, month) VALUES (%s, %s, %s)
+                        ON CONFLICT (owner, year, month) DO NOTHING
+                    ''', (owner, year, month))
+                else:
+                    cur.execute(
+                        'DELETE FROM published_months WHERE owner = %s AND year = %s AND month = %s',
+                        (owner, year, month),
+                    )
+        return True
+    except Exception as e:
+        _log_error("Set month published", e)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_shared_months(owner, with_published=False):
     """Months the share page can show: [(year, month, updated_tr), ...] in order.
 
     Only the auto-saved month records that have at least one shift count.
     ``updated_tr`` is the last save time in Turkey time (datetime), or None.
+    ``with_published`` adds a fourth value: whether the owner published the month.
     Errors return [].
     """
     conn = None
@@ -1280,7 +1334,11 @@ def list_shared_months(owner):
             cur.execute('''
                 SELECT s.name, s.year, s.month,
                        (s.updated_at AT TIME ZONE current_setting('TimeZone'))
-                           AT TIME ZONE 'Europe/Istanbul' AS updated_tr
+                           AT TIME ZONE 'Europe/Istanbul' AS updated_tr,
+                       EXISTS (
+                           SELECT 1 FROM published_months AS p
+                           WHERE p.owner = s.owner AND p.year = s.year AND p.month = s.month
+                       ) AS published
                 FROM schedules AS s
                 WHERE s.owner = %s AND s.name LIKE 'Otomatik\\_%%'
                   AND EXISTS (
@@ -1291,7 +1349,8 @@ def list_shared_months(owner):
             ''', (owner,))
             rows = cur.fetchall()
         return [
-            (row['year'], row['month'], row['updated_tr'])
+            (row['year'], row['month'], row['updated_tr'], row['published']) if with_published
+            else (row['year'], row['month'], row['updated_tr'])
             for row in rows
             if row['name'] == otomatik_kayit_adi(row['year'], row['month'])
         ]
