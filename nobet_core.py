@@ -1532,6 +1532,7 @@ APP_SETTINGS_FIELDS = {
     "fixed_roles": ("fixed_roles", _fixed_roles),
     "together_pairs": ("together_pairs_text", _text),
     "limits": ("limits_text", _text),
+    "limits_by_period": ("limits_by_period", _period_texts),
     "balance_history": ("balance_history", _bool),
     "name_aliases": ("name_aliases", _aliases),
     "last_backup": ("last_backup_at", _text),
@@ -1571,7 +1572,7 @@ SETTINGS_FIELD_LABELS = {
     "title": "ünvan", "risky_unit": "riskli birim", "hourly_rate_source": "ücret kaynağı",
     "role_names": "görev isimleri", "forbidden_pairs": "birlikte çalışamayan",
     "fixed_roles": "sabit görev yeri", "together_pairs": "birlikte çalışmak isteyen",
-    "limits": "nöbet sınırları", "balance_history": "önceki aylarla dengele",
+    "limits": "nöbet sınırları", "limits_by_period": "aylık nöbet sınırları", "balance_history": "önceki aylarla dengele",
     "name_aliases": "ad değişiklikleri", "last_backup": "son yedek",
     "open_months": "açılan aylar", "carried_backups": "devreden telafi", "personnel": "personel listesi",
 }
