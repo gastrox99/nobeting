@@ -17,6 +17,7 @@ from nobet_core import (
     forbidden_pairs_to_text,
     parse_forbidden_pairs,
     parse_person_limits,
+    rename_in_pairs_text,
     team_settings_rows,
     team_settings_texts,
     toggle_pair_text,
@@ -42,34 +43,71 @@ def _forget_boxes(prefix, *extra):
         state.pop(key, None)
 
 
-# limits_by_period içinde aya bağlı olmayan "eski aylar için varsayılan" kaydın anahtarı.
+# *_by_period içinde aya bağlı olmayan "eski aylar için varsayılan" kaydın anahtarı.
 _ESKI_AYLAR = "0000-00"
 
+# Aya özel ayarlar: (oturum anahtarı, ayarlardaki aylık anahtar, boş değer).
+AYLIK_AYARLAR = (
+    ("limits_text", "limits_by_period", ""),
+    ("forbidden_pairs_text", "forbidden_by_period", ""),
+    ("together_pairs_text", "together_by_period", ""),
+    ("fixed_roles", "fixed_roles_by_period", {}),
+)
 
-def limits_for_period(ss, period):
-    """Kişi başı sınırlar (``limits_text``) aya özeldir; ``limits_by_period``da saklanır.
 
-    Ay değişince çıkılan ayın sınırı kendi anahtarında kalır, girilen ayın kayıtlı
-    sınırı yüklenir. Kaydı olmayan ay: ileri gidilen yeni aya o anki sınırlar
-    kopyalanır; geriye gidilen eski aya ise uygulama ilk kez bu özellikle açıldığı
-    andaki (eski tek) sınırlar gelir, böylece bu ay için yazılan sınır önceki
-    aya yansımaz. Her çalışmada çağrılır; sınır yazılınca ayın kaydı da güncellenir.
+def _kopya(value):
+    return dict(value) if isinstance(value, dict) else value
+
+
+def constraints_for_period(ss, period):
+    """Kişi başı sınırlar, yasak çiftler, birlikte çalışacaklar ve sabit görev yerleri aya özeldir.
+
+    Her biri ``*_by_period`` ayarında aya göre saklanır. Ay değişince çıkılan ayınki
+    kendi anahtarında kalır, girilen ayın kayıtlısı yüklenir. Kaydı olmayan ay:
+    ileri gidilen yeni aya o anki değerler kopyalanır; geriye gidilen eski aya ise
+    uygulama ilk kez bu özellikle açıldığı andaki (eski tek) değerler gelir, böylece
+    bu ay için yazılan kısıt önceki aya yansımaz. Her çalışmada çağrılır; kısıt
+    yazılınca ayın kaydı da güncellenir.
     """
-    by_period = ss.get("limits_by_period")
-    if not isinstance(by_period, dict):
-        by_period = ss["limits_by_period"] = {}
-    by_period.setdefault(_ESKI_AYLAR, ss.get("limits_text", ""))
     previous = ss.get("limits_period")
-    if previous is not None and previous != period:
-        by_period[previous] = ss.get("limits_text", "")
-        if period in by_period:
-            ss["limits_text"] = by_period[period]
-        elif period < previous:
-            ss["limits_text"] = by_period[_ESKI_AYLAR]
-    elif previous is None and period in by_period:
-        ss["limits_text"] = by_period[period]
+    for state_key, by_key, empty in AYLIK_AYARLAR:
+        by_period = ss.get(by_key)
+        if not isinstance(by_period, dict):
+            by_period = ss[by_key] = {}
+        current = ss.get(state_key) or _kopya(empty)
+        by_period.setdefault(_ESKI_AYLAR, _kopya(current))
+        if previous is not None and previous != period:
+            by_period[previous] = _kopya(current)
+            if period in by_period:
+                ss[state_key] = _kopya(by_period[period])
+            elif period < previous:
+                ss[state_key] = _kopya(by_period[_ESKI_AYLAR])
+        elif previous is None and period in by_period:
+            ss[state_key] = _kopya(by_period[period])
+        by_period[period] = _kopya(ss.get(state_key) or empty)
     ss["limits_period"] = period
-    by_period[period] = ss.get("limits_text", "")
+
+
+def _sinir_metninde_adlari_degistir(text, renames):
+    lines = []
+    for line in (text or "").split("\n"):
+        name, sep, rest = line.partition(":")
+        lines.append(f"{renames.get(name.strip(), name.strip())}{sep}{rest}" if sep else line)
+    return "\n".join(lines)
+
+
+def rename_in_other_periods(ss, old_team, renames, period):
+    """Ad değişikliğini diğer ayların kısıtlarına da uygular (bu ayınki zaten güncellendi)."""
+    for state_key, by_key, _empty in AYLIK_AYARLAR:
+        for key, value in (ss.get(by_key) or {}).items():
+            if key == period:
+                continue
+            if state_key == "limits_text":
+                ss[by_key][key] = _sinir_metninde_adlari_degistir(value, renames)
+            elif state_key == "fixed_roles":
+                ss[by_key][key] = {renames.get(p, p): r for p, r in value.items()}
+            else:
+                ss[by_key][key] = rename_in_pairs_text(value, old_team, renames)
 
 
 def _team_names(text):

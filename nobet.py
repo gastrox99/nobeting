@@ -200,7 +200,7 @@ from nobet_onkontrol import (
     ay_sonu_cakismalari, dinlenme_uyarilari, ilk_nobet_gunleri, paylasim_kontrolleri, render_day_availability,
     render_precheck,
 )
-from nobet_ekip import ekip_kalan_ozeti, limits_for_period, render_team_table, render_pair_matrix, render_fixed_roles
+from nobet_ekip import ekip_kalan_ozeti, constraints_for_period, rename_in_other_periods, render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
     finish_approved_requests, pending_count, render_pending_badge, render_request_status, render_team_requests,
 )
@@ -625,8 +625,8 @@ if month_is_locked(_bar_year, _bar_month, []):
         "🔓 Kilidi aç" if _bar_locked else "🔒 Kilitle", key="month_lock_toggle", width="stretch",
         on_click=_toggle_month_lock, args=(_bar_key, _bar_locked),
     )
-# Kişi başı sınırlar aya özel: ay değişince o ayın sınırı gelir (nobet_ekip.py).
-limits_for_period(st.session_state, _bar_key)
+# Sınırlar, yasak/birlikte çiftler ve sabit görev yerleri aya özel: ay değişince o ayınki gelir.
+constraints_for_period(st.session_state, _bar_key)
 # Talepler tablodan sonra okunur (açılışta tablo daha erken çıksın); yeri burada ayrılır.
 _badge_slot = st.empty()
 # Ekip yoksa Ayarlar açık başlar. Değer oturum boyunca sabit kalır; yoksa
@@ -758,6 +758,7 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
                 st.session_state.fixed_roles = {
                     _renames.get(_p, _p): _r for _p, _r in st.session_state.fixed_roles.items()
                 }
+            rename_in_other_periods(st.session_state, prev_isimler, _renames, _bar_key)
             st.toast("İsim değişikliği uygulandı: " + ", ".join(f"{a} → {b}" for a, b in _renames.items()), icon="✏️")
         st.session_state.isimler_cache = isimler
         _seen_names.update(isimler)

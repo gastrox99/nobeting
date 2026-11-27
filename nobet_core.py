@@ -1455,6 +1455,16 @@ def _period_texts(value):
     return cleaned
 
 
+def _period_fixed_roles(value):
+    """{"2026-10": {kişi: görev}, ...} biçimindeki aylık sabit görev yerlerini doğrular."""
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: _fixed_roles(roles) or {} for key, roles in value.items()
+        if isinstance(key, str) and re.fullmatch(r"\d{4}-\d{2}", key)
+    }
+
+
 def _period_list(value):
     """["2026-09", ...] biçimindeki ay listesini doğrular."""
     if not isinstance(value, list):
@@ -1530,6 +1540,9 @@ APP_SETTINGS_FIELDS = {
     "role_names": ("role_names_text", _text),
     "forbidden_pairs": ("forbidden_pairs_text", _text),
     "fixed_roles": ("fixed_roles", _fixed_roles),
+    "forbidden_by_period": ("forbidden_by_period", _period_texts),
+    "together_by_period": ("together_by_period", _period_texts),
+    "fixed_roles_by_period": ("fixed_roles_by_period", _period_fixed_roles),
     "together_pairs": ("together_pairs_text", _text),
     "limits": ("limits_text", _text),
     "limits_by_period": ("limits_by_period", _period_texts),
@@ -1572,7 +1585,9 @@ SETTINGS_FIELD_LABELS = {
     "title": "ünvan", "risky_unit": "riskli birim", "hourly_rate_source": "ücret kaynağı",
     "role_names": "görev isimleri", "forbidden_pairs": "birlikte çalışamayan",
     "fixed_roles": "sabit görev yeri", "together_pairs": "birlikte çalışmak isteyen",
-    "limits": "nöbet sınırları", "limits_by_period": "aylık nöbet sınırları", "balance_history": "önceki aylarla dengele",
+    "limits": "nöbet sınırları", "limits_by_period": "aylık nöbet sınırları",
+    "forbidden_by_period": "aylık yasak çiftler", "together_by_period": "aylık birlikte çalışacaklar",
+    "fixed_roles_by_period": "aylık sabit görev yerleri", "balance_history": "önceki aylarla dengele",
     "name_aliases": "ad değişiklikleri", "last_backup": "son yedek",
     "open_months": "açılan aylar", "carried_backups": "devreden telafi", "personnel": "personel listesi",
 }
