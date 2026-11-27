@@ -2,10 +2,11 @@
 """nobet_ucret.py - Ünvana göre nöbet saat ücreti hesapları."""
 import os
 import calendar
+from datetime import date, timedelta
 
 from nobet_gunler import (
-    build_gun_detaylari, holiday_text_for_period, official_half_days, official_holidays,
-    parse_holiday_days, personal_work_hours, required_work_hours,
+    TR_RELIGIOUS_HOLIDAYS, build_gun_detaylari, holiday_text_for_period, official_half_days,
+    official_holidays, parse_holiday_days, personal_daily_work_hours, required_work_hours,
 )
 
 
@@ -52,9 +53,15 @@ GECE_FARKI = 0.10
 RISKLI_BIRIM_ARTIRIMI = 1.50
 # Resmi ve dini bayram (tatil) günlerinde tutulan nöbet %25 fazla ödenir.
 TATIL_ARTIRIMI = 0.25
-# 08.00-08.00 tutulan 24 saatlik nöbetin 12 saati gündüz, 12 saati gece.
-NOBET_GUNDUZ_SAAT = 12
-NOBET_GECE_SAAT = 12
+# Nöbet 08.00'de başlar, 24 saat sürer; gece 20.00-08.00 (UCRET_KURALLARI.md).
+NOBET_BASLANGIC_SAATI = 8
+NOBET_SURESI = 24
+GECE_BASLANGIC, GECE_BITIS = 20, 8
+# Arifede bayram 13.00'te başlar.
+ARIFE_BAYRAM_SAATI = 13
+# Genel tatiller: zorunlu mesaiden düşer ama bayram değildir (%25 yok);
+# dini bayram gününe denk gelirse bayram sayılır.
+GENEL_TATILLER = frozenset({(1, 1), (5, 1), (7, 15)})
 _DONEM_ADI = {1: "Ocak-Haziran", 2: "Temmuz-Aralık"}
 # Ücret türleri: gündüz, gece (20-08), resmi/dini bayram gündüz ve gece.
 UCRET_TURLERI = ("gunduz", "gece", "tatil", "tatil_gece")
@@ -146,50 +153,95 @@ def saat_ucretleri(gunduz, tatil_artirimi=0.0, gece_artirimi=0.0):
     }
 
 
-def nobet_ucreti_hesapla(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler):
-    """(nöbet saati, fazla mesai saati, ücret) döner.
-
-    Yalnızca zorunlu mesaiyi aşan saatler (fazla mesai) ödenir. ``ucretler``
-    tek sayı (her saat aynı) ya da ``UCRET_TURLERI`` anahtarlı sözlüktür.
-    Bayram (tatil) nöbetleri zorunlu mesaiye girmediğinden önce onların
-    saatleri fazla mesai sayılır; kalan fazla mesai öteki nöbetlerden gelir.
-    Her nöbetin 12 saati gecedir ve gece ücreti, fazla mesaiyi aşmadan önce
-    gece saatlerine verilir: 120 saat gece, 72 saat fazla mesai varsa 72
-    saat gece ücreti, kalan fazla mesaiye gündüz ücreti.
-    """
-    saat, fm_saat, satirlar = ucret_saatleri(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler)
-    ucret = (
-        satirlar["gunduz"][2]
-        + satirlar["gece"][2]
-        + satirlar["tatil"][2]
-        + satirlar["tatil_gece"][2]
-    )
-    return saat, fm_saat, ucret
+def _dini_bayram_mi(gun):
+    for start, length, _ in TR_RELIGIOUS_HOLIDAYS.get(gun.year, []) + TR_RELIGIOUS_HOLIDAYS.get(gun.year - 1, []):
+        if 0 <= (gun - start).days < length:
+            return True
+    return False
 
 
-def ucret_saatleri(toplam_nobet, tatil_nobet, zorunlu_saat, ucretler):
-    """``nobet_ucreti_hesapla``nın dökümü: (nöbet saati, fazla mesai, satırlar).
+def _bayram_gunu_mu(gun, tatil):
+    """Tam gün bayram mı: tatil ve (genel tatil değil ya da dini bayram)."""
+    return tatil and ((gun.month, gun.day) not in GENEL_TATILLER or _dini_bayram_mi(gun))
 
-    ``satirlar``: {tür: (saat, saat ücreti, tutar)}; türler ``UCRET_TURLERI``.
+
+def haftalik_ucret_saatleri(gun_detaylari, nobet_gunleri, gunluk_mesai, ucretler, resmi_tatil_gunleri=None):
+    """Haftalık (Pzt-Paz) fazla mesai ve ücret dökümü (UCRET_KURALLARI.md, Bölüm 4).
+
+    ``nobet_gunleri``: kişinin nöbet başlattığı gün numaraları (08.00'den 24 saat).
+    ``gunluk_mesai``: {gün: zorunlu saat} (``personal_daily_work_hours``).
+    ``resmi_tatil_gunleri``: %25 alan tatil günleri; elle eklenen tatil almaz.
+    Verilmezse tüm tatiller. Bayram saat saat belirlenir: bayram günü
+    00-24, arife 13-24; bayram ertesi sabahı normaldir.
+    Her hafta fazla saat önce bayram gece, normal gece, bayram gündüz, normal
+    gündüz saatlerine yazılır; eksik haftaların açığı aynı ayın ödenecek
+    saatlerinden (normal gece, bayram gece, normal gündüz, bayram gündüz
+    sırasıyla) düşülür, sonraki aya devretmez.
+    Döner: (nöbet saati, fazla mesai saati, zorunlu mesai, satırlar);
+    ``satirlar``: {tür: (saat, saat ücreti, tutar)}, türler ``UCRET_TURLERI``.
     """
     if not isinstance(ucretler, dict):
         ucretler = dict.fromkeys(UCRET_TURLERI, ucretler)
-    saat = toplam_nobet * 24
-    fm_saat = max(0, saat - zorunlu_saat)
-    tatil_saat = min(tatil_nobet * 24, fm_saat)
-    tatil_gece = min(tatil_nobet * NOBET_GECE_SAAT, tatil_saat)
-    kalan = fm_saat - tatil_saat
-    normal_gece = min((toplam_nobet - tatil_nobet) * NOBET_GECE_SAAT, kalan)
-    saatler = {
-        "gunduz": kalan - normal_gece,
-        "gece": normal_gece,
-        "tatil": tatil_saat - tatil_gece,
-        "tatil_gece": tatil_gece,
-    }
+    gunler = {}
+    for detail in gun_detaylari.values():
+        gunler[detail["day_num"]] = (_detay_tarihi(detail), bool(detail["holiday"]))
+    ilk = min(gunler.values())[0]
+    yil, ay = ilk.year, ilk.month
+    arifeler = {gun for gun, _ in official_half_days(yil, ay)}
+    sonraki = ilk.replace(day=28) + timedelta(days=4)
+    sonraki_tatil = {gun for gun, _ in official_holidays(sonraki.year, sonraki.month)}
+
+    def bayram(gun, saat):
+        if gun.month == ay:
+            tatil = gunler[gun.day][1] and (resmi_tatil_gunleri is None or gun.day in resmi_tatil_gunleri)
+            if gun.day in arifeler and saat >= ARIFE_BAYRAM_SAATI:
+                return True
+        else:
+            tatil = gun.day in sonraki_tatil
+        return _bayram_gunu_mu(gun, tatil)
+
+    haftalar = {}
+    for gun_no, (gun, _) in gunler.items():
+        hafta = haftalar.setdefault(gun.isocalendar()[:2], dict.fromkeys(("R", "A") + UCRET_TURLERI, 0))
+        hafta["R"] += gunluk_mesai.get(gun_no, 0)
+    for gun_no in set(nobet_gunleri):
+        baslangic = gunler[gun_no][0]
+        hafta = haftalar[baslangic.isocalendar()[:2]]
+        hafta["A"] += NOBET_SURESI
+        for i in range(NOBET_SURESI):
+            t = NOBET_BASLANGIC_SAATI + i
+            gun, saat = baslangic + timedelta(days=t // 24), t % 24
+            gece = saat >= GECE_BASLANGIC or saat < GECE_BITIS
+            b = bayram(gun, saat)
+            hafta[("tatil_gece" if b else "gece") if gece else ("tatil" if b else "gunduz")] += 1
+
+    odenecek = dict.fromkeys(UCRET_TURLERI, 0)
+    acik = 0
+    for hafta in haftalar.values():
+        fark = hafta["A"] - hafta["R"]
+        if fark <= 0:
+            acik -= fark
+            continue
+        for tur in ("tatil_gece", "gece", "tatil", "gunduz"):
+            pay = min(fark, hafta[tur])
+            odenecek[tur] += pay
+            fark -= pay
+    for tur in ("gece", "tatil_gece", "gunduz", "tatil"):
+        dusulen = min(acik, odenecek[tur])
+        odenecek[tur] -= dusulen
+        acik -= dusulen
+
     satirlar = {
-        tur: (saatler[tur], ucretler[tur], saatler[tur] * ucretler[tur]) for tur in UCRET_TURLERI
+        tur: (odenecek[tur], ucretler[tur], odenecek[tur] * ucretler[tur]) for tur in UCRET_TURLERI
     }
-    return saat, fm_saat, satirlar
+    zorunlu = sum(hafta["R"] for hafta in haftalar.values())
+    return len(set(nobet_gunleri)) * NOBET_SURESI, sum(odenecek.values()), zorunlu, satirlar
+
+
+def _detay_tarihi(detail):
+    """``build_gun_detaylari`` satırının tarihi ("01.10.2026 Per" -> date)."""
+    gun, ay, yil = detail["full_date"].split()[0].split(".")
+    return date(int(yil), int(ay), int(gun))
 
 
 def ayarlardaki_saat_ucretleri(settings, yil, ay):
@@ -254,12 +306,13 @@ def kisi_ucret_dokumu(nobet_gunleri, yil, ay, settings, preferences=None, person
     gun_detaylari = build_gun_detaylari(yil, ay, gun_sayisi, tatil_gunleri)
     yarim_gunler = official_half_days(yil, ay)
     zorunlu, _ = required_work_hours(gun_detaylari, yarim_gunler)
-    mesai = personal_work_hours(gun_detaylari, yarim_gunler, preferences, [person]).get(person, zorunlu)
-    resmi = {gun for gun, _ in official_holidays(yil, ay)}
+    gunluk = personal_daily_work_hours(gun_detaylari, yarim_gunler, preferences, [person])[person]
+    resmi = frozenset(gun for gun, _ in official_holidays(yil, ay))
     tatiller = set(tatil_gunleri)
     gunler = sorted({int(gun) for gun in nobet_gunleri if 1 <= int(gun) <= gun_sayisi})
-    bayram = [gun for gun in gunler if gun in tatiller and gun in resmi]
-    saat, fm_saat, satirlar = ucret_saatleri(len(gunler), len(bayram), mesai, oran["ucretler"])
+    bayram = [gun for gun in gunler if _bayram_gunu_mu(date(yil, ay, gun), gun in tatiller and gun in resmi)]
+    saat, fm_saat, mesai, satirlar = haftalik_ucret_saatleri(
+        gun_detaylari, gunler, gunluk, oran["ucretler"], resmi)
     return {
         **oran,
         "nobet": len(gunler),

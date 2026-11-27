@@ -167,12 +167,12 @@ def required_work_hours(gun_detaylari, half_days=()):
     return hours, counted
 
 
-def personal_work_hours(gun_detaylari, half_days, preferences, people):
-    """Kişi başına zorunlu mesai: İzin (3) işaretli iş günü mesaiden düşer.
+def personal_daily_work_hours(gun_detaylari, half_days, preferences, people):
+    """Kişi başına günlük zorunlu mesai: {kişi: {gün: saat}}.
 
-    İzinli iş günü 8 saat, izinli arife 5 saat düşer; hafta sonu ve tatil
-    zaten mesaide sayılmadığı için düşmez. Müsait Değil (4) mesaiyi
-    değiştirmez. Dönen değer {kişi: saat}.
+    Hafta içi iş günü 8, iş gününe düşen arife 5 saat; İzin (3) işaretli iş
+    günü 0. Hafta sonu ve tatil günleri sözlükte yer almaz (0 saat). Müsait
+    Değil (4) mesaiyi değiştirmez.
     """
     half = dict(half_days)
     work_hours = {}
@@ -180,22 +180,30 @@ def personal_work_hours(gun_detaylari, half_days, preferences, people):
         if detail["weekend"] or detail["holiday"]:
             continue
         work_hours[column] = ARIFE_MESAI_SAATI if detail["day_num"] in half else 8
-    total = sum(work_hours.values())
     result = {}
     for person in people:
-        leave = 0
-        if preferences is not None and person in preferences.index:
-            for column, hours in work_hours.items():
-                if column not in preferences.columns:
-                    continue
+        daily = {}
+        for column, hours in work_hours.items():
+            code = None
+            if preferences is not None and person in preferences.index and column in preferences.columns:
                 try:
                     code = int(preferences.at[person, column])
                 except (TypeError, ValueError):
-                    continue
-                if code == PREF_LEAVE:
-                    leave += hours
-        result[person] = total - leave
+                    code = None
+            daily[gun_detaylari[column]["day_num"]] = 0 if code == PREF_LEAVE else hours
+        result[person] = daily
     return result
+
+
+def personal_work_hours(gun_detaylari, half_days, preferences, people):
+    """Kişi başına zorunlu mesai: İzin (3) işaretli iş günü mesaiden düşer.
+
+    İzinli iş günü 8 saat, izinli arife 5 saat düşer; hafta sonu ve tatil
+    zaten mesaide sayılmadığı için düşmez. Müsait Değil (4) mesaiyi
+    değiştirmez. Dönen değer {kişi: saat}.
+    """
+    daily = personal_daily_work_hours(gun_detaylari, half_days, preferences, people)
+    return {person: sum(daily[person].values()) for person in people}
 
 
 def official_holidays_summary(yil, ay):
