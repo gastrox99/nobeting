@@ -42,6 +42,36 @@ def _forget_boxes(prefix, *extra):
         state.pop(key, None)
 
 
+# limits_by_period içinde aya bağlı olmayan "eski aylar için varsayılan" kaydın anahtarı.
+_ESKI_AYLAR = "0000-00"
+
+
+def limits_for_period(ss, period):
+    """Kişi başı sınırlar (``limits_text``) aya özeldir; ``limits_by_period``da saklanır.
+
+    Ay değişince çıkılan ayın sınırı kendi anahtarında kalır, girilen ayın kayıtlı
+    sınırı yüklenir. Kaydı olmayan ay: ileri gidilen yeni aya o anki sınırlar
+    kopyalanır; geriye gidilen eski aya ise uygulama ilk kez bu özellikle açıldığı
+    andaki (eski tek) sınırlar gelir, böylece bu ay için yazılan sınır önceki
+    aya yansımaz. Her çalışmada çağrılır; sınır yazılınca ayın kaydı da güncellenir.
+    """
+    by_period = ss.get("limits_by_period")
+    if not isinstance(by_period, dict):
+        by_period = ss["limits_by_period"] = {}
+    by_period.setdefault(_ESKI_AYLAR, ss.get("limits_text", ""))
+    previous = ss.get("limits_period")
+    if previous is not None and previous != period:
+        by_period[previous] = ss.get("limits_text", "")
+        if period in by_period:
+            ss["limits_text"] = by_period[period]
+        elif period < previous:
+            ss["limits_text"] = by_period[_ESKI_AYLAR]
+    elif previous is None and period in by_period:
+        ss["limits_text"] = by_period[period]
+    ss["limits_period"] = period
+    by_period[period] = ss.get("limits_text", "")
+
+
 def _team_names(text):
     return [part.strip() for part in (text or "").split(",") if part.strip()]
 
