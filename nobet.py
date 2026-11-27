@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+import sys
+import time
+_betik_basi = time.monotonic()
 import streamlit as st
 import pandas as pd
 import calendar
@@ -216,6 +219,10 @@ _db_state = _db_init_state(SCHEMA_VERSION)
 # Bu çalışmadaki okumalar tek bağlantıyı paylaşır; sonda (ya da birkaç sn boşta kalınca) kapanır.
 begin_run_connection()
 _acilis_basi = time.monotonic()
+# Ölçüm başlamadan önceki hazırlık (içe aktarma + modül yenileme) ve bu süreçte ilk çalışma mı (soğuk başlangıç).
+_hazirlik_sn = _acilis_basi - _betik_basi
+_ilk_calisma = not getattr(sys, "_nobet_calisti", False)
+sys._nobet_calisti = True
 
 
 def _prepare_db():
@@ -261,7 +268,7 @@ if _share_token:
     if _olcum and _olculen < 2:
         st.session_state.paylasim_olculen = _olculen + 1
         print(
-            f"[nobet] Paylaşım açılış ölçümü: sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
+            f"[nobet] Paylaşım açılış ölçümü: hazırlık {_hazirlik_sn:.1f} sn{' (süreçte ilk)' if _ilk_calisma else ''}, sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
             f"({_olcum['uses']} okuma), bağlantı açma {_olcum['connect_ms']} ms; okumalar (ms): "
             + ", ".join(f"{_ad} {_ms}" for _ad, _ms in _olcum["reads"]),
             flush=True,
@@ -2254,7 +2261,7 @@ _olcum = end_run_connection()
 if _olcum and not st.session_state.get("acilis_olculdu"):
     st.session_state.acilis_olculdu = True
     print(
-        f"[nobet] Açılış ölçümü: tablo {_tablo_sn:.1f} sn, sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
+        f"[nobet] Açılış ölçümü: hazırlık {_hazirlik_sn:.1f} sn{' (süreçte ilk)' if _ilk_calisma else ''}, tablo {_tablo_sn:.1f} sn, sayfa {_olcum['page_seconds']:.1f} sn, veritabanı {_olcum['db_seconds']:.1f} sn "
         f"({_olcum['uses']} okuma), bağlantı açma {_olcum['connect_ms']} ms; okumalar (ms): "
         + ", ".join(f"{_ad} {_ms}" for _ad, _ms in _olcum["reads"]),
         flush=True,
