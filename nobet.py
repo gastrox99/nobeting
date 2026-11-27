@@ -96,7 +96,7 @@ for _attempt in range(2):
             schedule_totals,
             unavailable_day_counts,
             is_blocked_preference,
-            personal_work_hours,
+            personal_daily_work_hours,
             previous_period,
             special_shift_counts,
             build_gun_detaylari,
@@ -1604,8 +1604,8 @@ except Exception:
     _dark_theme = False
 ui = ui_colors(_dark_theme)
 
-# Kişisel zorunlu mesai: İzin işaretli iş günleri düşülür (Müsait Değil düşmez).
-mesai_saatleri = personal_work_hours(
+# Kişisel zorunlu mesai (gün gün): İzin işaretli iş günleri düşülür (Müsait Değil düşmez).
+gunluk_mesai = personal_daily_work_hours(
     gun_detaylari, official_half_days(yil, ay), st.session_state.pref_df, isimler
 )
 
@@ -1639,7 +1639,7 @@ if _db_ready:
 # ═══════════════════════════════════════════════════════
 with tab_cal:
     render_calendar_tab(isimler, sutunlar, gun_detaylari, yil, ay, gun_sayisi, tatil_gunleri,
-                        today_date, ui, person_colors, kişi_sayısı, mesai_saatleri, saat_ucretleri_secili,
+                        today_date, ui, person_colors, kişi_sayısı, gunluk_mesai, saat_ucretleri_secili,
                         resmi_tatil_gunleri)
 
 # Build algorithm inputs from pref_df
@@ -2186,8 +2186,7 @@ _analysis_key = (
     tuple(role_names),
     tuple(sorted((person, tuple(sorted(limits.items())))
                  for person, limits in st.session_state.get("person_limits", {}).items())),
-    zorunlu_saat,
-    tuple(sorted(mesai_saatleri.items())),
+    tuple(sorted((person, tuple(sorted(days.items()))) for person, days in gunluk_mesai.items())),
     tuple(sorted(saat_ucretleri_secili.items())) if isinstance(saat_ucretleri_secili, dict) else saat_ucretleri_secili,
     tuple(sorted(resmi_tatil_gunleri)),
     tuple((column, gun_detaylari[column]["weekend"], gun_detaylari[column]["holiday"]) for column in sutunlar),
@@ -2203,9 +2202,8 @@ if (
         isimler,
         gun_detaylari,
         st.session_state.get("person_limits", {}),
-        zorunlu_saat,
         saat_ucretleri_secili,
-        mesai_saatleri,
+        gunluk_mesai,
         resmi_tatil_gunleri,
     )
     st.session_state.cached_analysis_key = _analysis_key

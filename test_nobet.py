@@ -3,6 +3,7 @@
 test_nobet.py - Nöbet Yönetimi Uygulaması Unit Testleri
 Çalıştırmak için: python -m pytest test_nobet.py -v
 """
+import calendar
 import unittest
 import re
 import json
@@ -17,7 +18,6 @@ from nobet_core import (
     NOBET_UNVANLARI,
     alternate_day_chains,
     katsayi_donemi, katsayi_uyarisi,
-    nobet_ucreti_hesapla,
     saat_ucretleri,
     unvan_saat_ucreti,
     parse_holiday_days,
@@ -79,6 +79,7 @@ from nobet_core import (
     unavailable_day_counts,
     is_blocked_preference,
     personal_work_hours,
+    personal_daily_work_hours,
     missing_shift_coverage,
     explain_missing_day,
     format_missing_day_reason,
@@ -989,7 +990,7 @@ class TestLargeSchedulePerformance(unittest.TestCase):
         started = time.perf_counter()
         stats_load, stats_finance, pair_display = build_schedule_analysis(
             schedule, rows_liste, ["Görev1", "Görev2"], isimler,
-            gun_detaylari, {}, zorunlu_saat=160, nobet_ucreti=1.0,
+            gun_detaylari, {}, nobet_ucreti=1.0,
         )
         elapsed = time.perf_counter() - started
 
@@ -1725,7 +1726,7 @@ class TestCrossMonthBalance(unittest.TestCase):
         cols = list(days)
         schedule = pd.DataFrame(False, index=["Ali", "Ayşe"], columns=cols)
         schedule.at["Ali", "29 Per"] = True
-        load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali", "Ayşe"], days, {}, 0, 0)
+        load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali", "Ayşe"], days, {}, 0)
         self.assertEqual(int(load.at["Ali", "Tatil"]), 1)
         self.assertEqual(int(load.at["Ayşe", "Tatil"]), 0)
 
@@ -2162,7 +2163,7 @@ class TestFridayBalance(unittest.TestCase):
         schedule = pd.DataFrame(False, index=["Ali"], columns=list(days))
         schedule.at["Ali", "2 Cum"] = True
         schedule.at["Ali", "9 Cum"] = True
-        load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali"], days, {}, 0, 1.0)
+        load, _, _ = build_schedule_analysis(schedule, [], [], ["Ali"], days, {}, 1.0)
         self.assertEqual(int(load.at["Ali", "Cuma"]), 1)
         self.assertEqual(int(load.at["Ali", "Hafta sonu"]), 1)
 
@@ -2857,27 +2858,82 @@ class TestUnvanSaatUcreti(unittest.TestCase):
 
     UCRET = {"gunduz": 100.0, "gece": 110.0, "tatil": 125.0, "tatil_gece": 137.5}
 
-    def test_gece_ucreti_fazla_mesai_saatiyle_sinirli(self):
-        # 10 nöbet = 240 saat, 120 saati gece; 168 saat mesai -> 72 saat
-        # fazla mesai. Gece ücreti 120 değil 72 saate ödenir.
-        saat, fm, ucret = nobet_ucreti_hesapla(10, 0, 168, self.UCRET)
-        self.assertEqual((saat, fm), (240, 72))
-        self.assertAlmostEqual(ucret, 72 * 110.0)
-        # Gece saati fazla mesaiden azsa kalan fazla mesai gündüz ücretiyle:
-        # 12 nöbet = 288 saat, 144 gece; 120 saat mesai -> 168 fm.
-        self.assertAlmostEqual(nobet_ucreti_hesapla(12, 0, 120, self.UCRET)[2], 144 * 110.0 + 24 * 100.0)
-        # Fazla mesai yoksa ücret yok; tek sayı verilince her saat aynı ücret.
-        self.assertEqual(nobet_ucreti_hesapla(6, 0, 160, self.UCRET)[2], 0)
-        self.assertEqual(nobet_ucreti_hesapla(10, 1, 168, 100.0)[2], 7200.0)
+    def _haftalik(self, yil, ay, tatil, nobet, izin=(), resmi=None):
+        """UCRET_KURALLARI.md haftalık hesabı: {tür: saat} ve (zorunlu, fazla mesai)."""
+        from nobet_core import haftalik_ucret_saatleri
+        days = build_gun_detaylari(yil, ay, calendar.monthrange(yil, ay)[1], tatil)
+        cols = list(days)
+        prefs = pd.DataFrame(0, index=["Ali"], columns=cols)
+        for _d in izin:
+            prefs.at["Ali", cols[_d - 1]] = 3
+        gunluk = personal_daily_work_hours(days, official_half_days(yil, ay), prefs, ["Ali"])["Ali"]
+        _saat, fm, zorunlu, satirlar = haftalik_ucret_saatleri(
+            days, nobet, gunluk, self.UCRET, frozenset(tatil) if resmi is None else resmi)
+        self.assertEqual(sum(satirlar[_k][0] for _k in satirlar), fm)
+        self.assertEqual(sum(_t for _, _, _t in satirlar.values()),
+                         sum(satirlar[_k][0] * self.UCRET[_k] for _k in satirlar))
+        return {_k: satirlar[_k][0] for _k in satirlar}, (zorunlu, fm)
 
-    def test_bayram_nobeti_bayram_ucretiyle(self):
-        # 8 nöbet, 1'i bayram; 160 saat mesai -> 32 fm. Bayramın 24 saati
-        # (12 gündüz, 12 gece) fm'ye girer; kalan 8 saat gece ücretiyle.
-        self.assertAlmostEqual(nobet_ucreti_hesapla(8, 1, 160, self.UCRET)[2],
-                               12 * 125.0 + 12 * 137.5 + 8 * 110.0)
-        # Bayram saati fazla mesaiyi aşamaz; önce gece saatleri: 7 nöbet,
-        # 2 bayram, 8 fm -> 8 saat bayram gece.
-        self.assertAlmostEqual(nobet_ucreti_hesapla(7, 2, 160, self.UCRET)[2], 8 * 137.5)
+    def test_kurallar_ekim_2026_gercek_liste(self):
+        # UCRET_KURALLARI.md 7.4: hastane listesinden 7 kişi (gündüz, bayram gündüz, gece, bayram gece).
+        ornekler = {
+            "A": ([8, 12, 14, 17, 21, 25, 29, 31], [16], (4, 0, 27, 4), (157, 35)),
+            "B": ([2, 5, 7, 15, 18, 23, 28, 31], [], (0, 0, 15, 12), (165, 27)),
+            "C": ([1, 5, 10, 14, 18, 26, 29], [7, 8, 9], (8, 0, 15, 4), (141, 27)),
+            "D": ([3, 9, 12, 19, 22, 25, 28, 30], [], (0, 0, 15, 12), (165, 27)),
+            "E": ([4, 8, 11, 13, 16, 19, 22, 30], [21, 26, 27, 28], (4, 0, 52, 0), (136, 56)),
+            "F": ([1, 7, 11, 15, 20, 23, 27], [], (0, 0, 3, 0), (165, 3)),
+            "G": ([3, 6, 9, 13, 16, 20, 24, 26], [], (0, 0, 27, 0), (165, 27)),
+        }
+        for kisi, (nobet, izin, beklenen, ozet) in ornekler.items():
+            saat, zf = self._haftalik(2026, 10, [29], nobet, izin)
+            self.assertEqual((saat["gunduz"], saat["tatil"], saat["gece"], saat["tatil_gece"]), beklenen, kisi)
+            self.assertEqual(zf, ozet, kisi)
+
+    def test_bayram_saat_saat_ertesi_sabah_normal(self):
+        # 29 Ekim 08.00 nöbeti: 08-24 bayram (12 gündüz + 4 gece), 30 Ekim 00-08 normal gece.
+        saat, _ = self._haftalik(2026, 10, [29, 30, 31], [29], izin=range(1, 29), resmi=frozenset({29}))
+        self.assertEqual(saat, {"gunduz": 0, "gece": 8, "tatil": 12, "tatil_gece": 4})
+
+    def test_arife_13ten_sonra_bayram(self):
+        # 28 Ekim arife: 08-13 normal gündüz, 13-20 bayram gündüz, 20-08 bayram gece.
+        saat, _ = self._haftalik(2026, 10, [29], [28], izin=range(1, 32))
+        self.assertEqual(saat, {"gunduz": 5, "gece": 0, "tatil": 7, "tatil_gece": 12})
+
+    def test_genel_tatil_bayram_degil(self):
+        # 1 Mayıs, 1 Ocak, 15 Temmuz genel tatil: %25 yok, saatler normal.
+        for yil, ay, gun in [(2026, 5, 1), (2026, 1, 1), (2026, 7, 15)]:
+            saat, (zorunlu, _) = self._haftalik(yil, ay, [gun], [gun], izin=range(1, 32))
+            self.assertEqual(saat, {"gunduz": 12, "gece": 12, "tatil": 0, "tatil_gece": 0}, (ay, gun))
+            self.assertEqual(zorunlu, 0)
+
+    def test_genel_tatil_dini_bayrama_denk_gelirse_bayram(self):
+        from datetime import date as _date
+        with patch.dict("nobet_ucret.TR_RELIGIOUS_HOLIDAYS", {2026: [(_date(2026, 5, 1), 3, "Deneme Bayramı")]}):
+            saat, _ = self._haftalik(2026, 5, [1], [1], izin=range(1, 32))
+        # 1 Mayıs 08-24 bayram; 2 Mayıs bu listede tatil değil, 00-08 normal gece.
+        self.assertEqual(saat, {"gunduz": 0, "gece": 8, "tatil": 12, "tatil_gece": 4})
+
+    def test_ay_sonu_nobeti_ertesi_gun_takvimine_gore(self):
+        # 31 Aralık nöbetinin 1 Ocak 00-08'i normal gece (genel tatil); saatler Aralık'a yazılır.
+        saat, _ = self._haftalik(2026, 12, [], [31], izin=range(1, 32))
+        self.assertEqual(saat, {"gunduz": 12, "gece": 12, "tatil": 0, "tatil_gece": 0})
+        # 29 Ağustos nöbetinin 30 Ağustos 00-08'i bayram gecesi.
+        saat, _ = self._haftalik(2026, 8, [30], [29], izin=range(1, 32))
+        self.assertEqual(saat, {"gunduz": 12, "gece": 4, "tatil": 0, "tatil_gece": 8})
+
+    def test_haftalik_fazla_once_geceye_acik_ayni_aydan_duser(self):
+        # Kasım 2026: 2-8 haftasında 4 nöbet (96 - 40 = 56 fazla, 48 gece) -> 48 gece + 8 gündüz;
+        # 9-15 haftasında 1 nöbet (24 - 40 = 16 açık) -> önce geceden düşülür. Diğer haftalar izinli.
+        izin = [d for d in range(1, 31) if not 2 <= d <= 15]
+        saat, (zorunlu, fm) = self._haftalik(2026, 11, [], [2, 4, 6, 8, 10], izin=izin)
+        self.assertEqual((zorunlu, fm), (80, 40))
+        self.assertEqual(saat, {"gunduz": 8, "gece": 32, "tatil": 0, "tatil_gece": 0})
+
+    def test_fazla_mesai_yoksa_ucret_yok(self):
+        saat, (_, fm) = self._haftalik(2026, 11, [], [2, 9, 16, 23])
+        self.assertEqual(fm, 0)
+        self.assertEqual(sum(saat.values()), 0)
 
     def test_elle_gunduz_ucretinden_turetilir(self):
         self.assertEqual(saat_ucretleri(200.0, 0.25, 0.10),
@@ -2890,18 +2946,10 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         schedule.at["Ali", "29 Per"] = True
         schedule.at["Ali", "30 Cum"] = True
         _, finance, _ = build_schedule_analysis(
-            schedule, [], [], ["Ali"], days, {}, 0, self.UCRET, None, frozenset({29}))
-        # 48 saat fm; 29 Ekim bayram ücretiyle, 30 Ekim normal ücretle.
+            schedule, [], [], ["Ali"], days, {}, self.UCRET, {"Ali": {}}, frozenset({29}))
+        # 48 saat fm; 29 Ekim 08-24 bayram ücretiyle, 30 Ekim (elle tatil) normal ücretle.
         self.assertAlmostEqual(float(finance["Ücret (TL)"].iloc[0]),
-                               12 * 125.0 + 12 * 137.5 + 12 * 100.0 + 12 * 110.0)
-
-    def test_ucret_dokumu_toplami_hesapla_ile_ayni(self):
-        from nobet_core import ucret_saatleri, UCRET_TURLERI
-        for args in [(10, 0, 168), (12, 0, 120), (8, 1, 160), (7, 2, 160), (6, 0, 160), (15, 3, 100)]:
-            saat, fm, satirlar = ucret_saatleri(*args, self.UCRET)
-            self.assertEqual((saat, fm), nobet_ucreti_hesapla(*args, self.UCRET)[:2])
-            self.assertEqual(sum(_t for _, _, _t in satirlar.values()), nobet_ucreti_hesapla(*args, self.UCRET)[2])
-            self.assertEqual(sum(satirlar[_k][0] for _k in UCRET_TURLERI), fm)
+                               12 * 125.0 + 4 * 137.5 + 20 * 110.0 + 12 * 100.0)
 
     def test_ayarlardaki_saat_ucretleri_ana_sayfa_ile_ayni(self):
         from nobet_core import ayarlardaki_saat_ucretleri
@@ -2937,10 +2985,10 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         prefs.at["Ali", cols[0]] = 3
         half = official_half_days(2026, 10)
         zorunlu, _ = required_work_hours(days, half)
-        mesai = personal_work_hours(days, half, prefs, ["Ali"])
+        gunluk = personal_daily_work_hours(days, half, prefs, ["Ali"])
         ucretler = ayarlardaki_saat_ucretleri(settings, 2026, 10)["ucretler"]
         _, finance, _ = build_schedule_analysis(
-            schedule, [], [], ["Ali"], days, {}, zorunlu, ucretler, mesai, frozenset({29}))
+            schedule, [], [], ["Ali"], days, {}, ucretler, gunluk, frozenset({29}))
         dokum = kisi_ucret_dokumu(nobet, 2026, 10, settings, prefs, "Ali")
         self.assertEqual(dokum["nobet"], 11)
         self.assertEqual(dokum["bayram_nobet"], 1)
@@ -3894,9 +3942,9 @@ class TestIzinVeMusaitDegil(unittest.TestCase):
         schedule.loc["Ali", self.cols[0:20:2]] = True
         schedule.loc["Ayşe", self.cols[1:21:2]] = True
         self.prefs.at["Ali", self._col(1)] = 3
-        mesai = personal_work_hours(self.days, self.half, self.prefs, ["Ali", "Ayşe"])
+        gunluk = personal_daily_work_hours(self.days, self.half, self.prefs, ["Ali", "Ayşe"])
         _, finance, _ = build_schedule_analysis(
-            schedule, [], [], ["Ali", "Ayşe"], self.days, {}, self.full, 10, mesai
+            schedule, [], [], ["Ali", "Ayşe"], self.days, {}, 10, gunluk
         )
         finance = pd.DataFrame(finance).set_index("İsim") if not isinstance(finance, pd.DataFrame) else finance
         self.assertEqual(int(finance.loc["Ali", "Zorunlu mesai"]), self.full - 8)

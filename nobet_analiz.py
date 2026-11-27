@@ -146,7 +146,9 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                 f"{_day} {TR_AY_ADLARI[ay]} {_name}" for _day, _name in arife_gunleri
             ) + f" yarım gün ({ARIFE_MESAI_SAATI} saat)"
         st.caption(_mesai_text + ". İzin işaretli iş günleri kişinin mesaisinden düşer; "
-                   "Müsait Değil düşmez.")
+                   "Müsait Değil düşmez. Fazla mesai haftalık (Pzt–Paz) hesaplanır: haftayı aşan saatler "
+                   "önce geceye yazılır, eksik haftalar aynı aydan düşülür; bayram saat saat sayılır "
+                   "(arife 13.00'ten, bayram 24.00'e kadar).")
         st.dataframe(
             df_stats_finance.style.format({"Ücret (TL)": lambda value: f"{tr_sayi(value)} ₺"}),
             width="stretch"

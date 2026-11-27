@@ -23,6 +23,10 @@ gözlemlerinden uyarlanmıştır (kaynak: github.com/multica-ai/andrej-karpathy-
   bu yorum değiştirilmez.
 - Algoritma (`nobet_core.py`, `nobet_iyilestir.py`) ve veri kaydetme (`db.py`)
   en hassas yerlerdir; buradaki değişiklikler en küçük hâliyle yapılır.
+- Ücret, fazla mesai, gece ve bayram saatleri `UCRET_KURALLARI.md`'ye göre hesaplanır
+  (haftalık Pzt–Paz, bayram saat saat, genel tatillerde %25 yok). Bu kurallar kullanıcı
+  onaylıdır; ücretle ilgili her değişiklikten önce o dosya okunur, dosyada olmayan kural
+  eklenmez, çelişki varsa kullanıcıya sorulur.
 
 ## 1. Kodlamadan önce düşün
 

@@ -22,15 +22,15 @@ from nobet_gunler import (  # noqa: F401  (eski içe aktarmalar çalışsın diy
     PREF_LEAVE, PREF_UNAVAILABLE, BLOCKED_PREFS, MAX_PREF_CODE, TR_GUN_KISA, TR_AY_ADLARI, TR_FIXED_HOLIDAYS, TR_RELIGIOUS_HOLIDAYS,
     TR_FIXED_HALF_DAYS, period_key, parse_holiday_days, build_gun_detaylari,
     religious_holidays_known, official_holidays, official_half_days, required_work_hours,
-    personal_work_hours, official_holidays_summary, default_holiday_text,
+    personal_work_hours, personal_daily_work_hours, official_holidays_summary, default_holiday_text,
     holiday_text_for_period, prune_default_holidays, holidays_to_text, previous_period,
     _column_day,
 )
 from nobet_ucret import (  # noqa: F401
     NOBET_UNVANLARI, ESKI_UNVAN_ADLARI, ELLE_UNVAN, MEMUR_AYLIK_KATSAYI, DAMGA_VERGISI,
-    GECE_ARTIRIMI, GECE_FARKI, RISKLI_BIRIM_ARTIRIMI, TATIL_ARTIRIMI, NOBET_GUNDUZ_SAAT,
-    NOBET_GECE_SAAT, UCRET_TURLERI, NOBET_UCRET_TABLOSU, UCRET_TURU_ADI, katsayi_donemi,
-    donem_adi, katsayi_uyarisi, unvan_saat_ucreti, saat_ucretleri, nobet_ucreti_hesapla, ucret_saatleri,
+    GECE_ARTIRIMI, GECE_FARKI, RISKLI_BIRIM_ARTIRIMI, TATIL_ARTIRIMI, NOBET_SURESI,
+    UCRET_TURLERI, NOBET_UCRET_TABLOSU, UCRET_TURU_ADI, katsayi_donemi,
+    donem_adi, katsayi_uyarisi, unvan_saat_ucreti, saat_ucretleri, haftalik_ucret_saatleri,
     ayarlardaki_saat_ucretleri, kisi_ucret_dokumu, _unvan, _DONEM_ADI,
 )
 from nobet_algoritma import (  # noqa: F401
@@ -1852,20 +1852,23 @@ def build_schedule_analysis(
     isimler,
     gun_detaylari,
     person_limits,
-    zorunlu_saat,
     nobet_ucreti,
-    mesai_saatleri=None,
+    gunluk_mesai=None,
     resmi_tatil_gunleri=None,
 ):
     """Çizelge görünümünde kullanılan saf analiz tablolarını üretir.
 
-    ``mesai_saatleri``: (isteğe bağlı) {kişi: zorunlu mesai}; izinli günler
-    düşülmüş kişisel mesai. Verilmezse herkes için ``zorunlu_saat``.
-    ``nobet_ucreti``: tek saat ücreti ya da ``nobet_ucreti_hesapla``
+    ``gunluk_mesai``: (isteğe bağlı) {kişi: {gün: zorunlu saat}}; izinli günler
+    düşülmüş kişisel mesai (``personal_daily_work_hours``). Verilmezse izinsiz
+    zorunlu mesai. ``nobet_ucreti``: tek saat ücreti ya da ``UCRET_TURLERI``
     sözlüğü. ``resmi_tatil_gunleri``: %25 artırımlı resmi/dini bayram günleri (gün
     numaraları); elle eklenen tatiller artırım almaz. Verilmezse tüm tatiller.
+    Ücret haftalık hesaplanır (``haftalik_ucret_saatleri``, UCRET_KURALLARI.md).
     """
-    mesai_saatleri = mesai_saatleri or {}
+    if gunluk_mesai is None:
+        _ilk = next(iter(gun_detaylari.values()))["full_date"].split()[0].split(".")
+        gunluk_mesai = personal_daily_work_hours(
+            gun_detaylari, official_half_days(int(_ilk[2]), int(_ilk[1])), None, isimler)
     all_role_counts = {role: {isim: 0 for isim in isimler} for role in role_names}
     for row in rows_liste:
         for role in role_names:
@@ -1883,22 +1886,17 @@ def build_schedule_analysis(
     special_totals = schedule[special_columns].sum(axis=1) if special_columns else pd.Series(0, index=isimler)
     holiday_columns = [column for column in schedule.columns if gun_detaylari[column]["holiday"]]
     holiday_totals = schedule[holiday_columns].sum(axis=1) if holiday_columns else pd.Series(0, index=isimler)
-    pay_holiday_columns = [
-        column for column in holiday_columns
-        if resmi_tatil_gunleri is None or gun_detaylari[column]["day_num"] in resmi_tatil_gunleri
-    ]
-    pay_holiday_totals = (
-        schedule[pay_holiday_columns].sum(axis=1) if pay_holiday_columns else pd.Series(0, index=isimler)
-    )
 
     stats_load = []
     stats_finance = []
     for isim in isimler:
         toplam = int(totals.get(isim, 0))
-        mesai = mesai_saatleri.get(isim, zorunlu_saat)
-        saat, fm_saat, ucret = nobet_ucreti_hesapla(
-            toplam, int(pay_holiday_totals.get(isim, 0)), mesai, nobet_ucreti
+        nobet_gunleri = [gun_detaylari[column]["day_num"] for column in schedule.columns if schedule.at[isim, column]] \
+            if isim in schedule.index else []
+        saat, fm_saat, mesai, satirlar = haftalik_ucret_saatleri(
+            gun_detaylari, nobet_gunleri, gunluk_mesai.get(isim, {}), nobet_ucreti, resmi_tatil_gunleri
         )
+        ucret = sum(tutar for _, _, tutar in satirlar.values())
         limits = person_limits.get(isim, {})
         min_limit = limits.get("min", 0)
         max_limit = limits.get("max", 999)

@@ -60,7 +60,7 @@ def test_ayni_tohumla_cikti_degismez():
         "liste": "01abf28450d8bce9",
         "puan": "a60d1ab6bf882340",
         "roller": "8fcf820f7c0f0b5e",
-        "ucret": "1241e91069f60ded",
+        "ucret": "d352171e4a2096c4",  # haftalık ücret (UCRET_KURALLARI.md), Kasım 2026
     }
     assert _senaryo(6, 2026, 2, [3], 2, 1, 7) == {
         "liste": "be006c4fdbd6ff2a",
@@ -77,5 +77,5 @@ def test_ayni_tohumla_cikti_degismez():
         "liste": "e53b37f7202d5934",
         "puan": "410f47d7434b430c",
         "roller": "d6a8cbfd83987b6d",
-        "ucret": "1c537265b18d2d3a",
+        "ucret": "545b8350588623bd",  # haftalık ücret (UCRET_KURALLARI.md), Kasım 2026
     }
