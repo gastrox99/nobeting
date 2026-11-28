@@ -1638,7 +1638,8 @@ def restore_owner_data(backup, owner="", skipped_out=None):
 
     Yedekteki aylar mevcut kayıtların üzerine yazılır, yedekte olmayan aylara
     dokunulmaz. Kilitli geçmiş aylar (``month_is_locked``) yazılmaz; ``skipped_out``
-    listesine (yıl, ay) olarak eklenir. Hepsi tek işlemde yazılır: bir hata olursa
+    listesine (yıl, ay) olarak eklenir. Ayarlardaki açık aylar listesi yedekten
+    alınmaz (kilit durumu değişmesin). Hepsi tek işlemde yazılır: bir hata olursa
     hiçbir şey değişmez. Hata olursa yukarı iletilir.
     """
     conn = None
@@ -1683,13 +1684,17 @@ def restore_owner_data(backup, owner="", skipped_out=None):
                             VALUES %s
                         ''', rows, page_size=len(rows))
                 if backup.get("settings") is not None:
+                    # Açık aylar (kilit durumu) yedeğin zamanına dönmez; bugünkü hâli kalır.
+                    settings = {key: value for key, value in backup["settings"].items() if key != "open_months"}
+                    if _open:
+                        settings["open_months"] = _open
                     cur.execute('''
                         INSERT INTO app_settings (key, value, updated_at)
                         VALUES (%s, %s, CURRENT_TIMESTAMP)
                         ON CONFLICT (key) DO UPDATE
                             SET value = EXCLUDED.value,
                                 updated_at = CURRENT_TIMESTAMP
-                    ''', (settings_key(owner), json.dumps(backup["settings"], ensure_ascii=False)))
+                    ''', (settings_key(owner), json.dumps(settings, ensure_ascii=False)))
         return True
     finally:
         if conn is not None:

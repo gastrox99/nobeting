@@ -99,3 +99,20 @@ def test_geri_yukleme_kilitli_aya_yazmaz_ve_atlanani_bildirir(owner, monkeypatch
     backup["settings"] = None
     assert db.restore_owner_data(backup, owner=owner, skipped_out=skipped)
     assert skipped == [] and _assigned(owner, 2026, 9) == ["Ali"]
+
+
+@needs_db
+def test_geri_yukleme_acik_aylar_listesini_degistirmez(owner, monkeypatch):
+    from nobet_core import backup_to_bytes, build_backup, parse_backup
+    # Yedek, Eylül'ün açık olduğu bir anda alındı.
+    monkeypatch.setattr(db, "_today", lambda: date(2026, 11, 20))
+    assert db.save_app_settings({"team": "Ali", "open_months": ["2026-09"]}, owner=owner, expected_version=db.FORCE)
+    assert _save(owner, 2026, 9) is True
+    backup, errors = parse_backup(backup_to_bytes(build_backup(*db.export_owner_data(owner=owner))))
+    assert errors == []
+    # Sonra Eylül kilitlendi, Ekim açıldı: geri yükleme bu kilit durumunu bozmamalı.
+    assert db.save_app_settings({"team": "Ali", "open_months": ["2026-10"]}, owner=owner, expected_version=db.FORCE)
+    assert db.restore_owner_data(backup, owner=owner, skipped_out=[])
+    assert db.load_app_settings(owner=owner)["open_months"] == ["2026-10"]
+    # Ayarların geri kalanı yedekten gelir.
+    assert db.load_app_settings(owner=owner)["team"] == "Ali"
