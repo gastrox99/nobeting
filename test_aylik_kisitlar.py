@@ -207,3 +207,19 @@ def test_birlesen_aylik_kayitlar_oturuma_alinir():
     assert ss["limits_by_period"] == merged["limits_by_period"]
     assert ss["limits_by_period"] is not merged["limits_by_period"]  # ortak nesne olmasın
     assert ss["fixed_roles_by_period"] == {"2026-11": {"Ali": "AYB"}}  # birleşmede yoksa dokunulmaz
+
+
+def test_birlesmede_bakilan_ayin_ust_duzey_kopyasi_da_esitlenir():
+    # Öbür cihaz bu sekmenin baktığı ayı değiştirdiyse, sonraki çalışma eski kopyayı
+    # ayın kaydına yazıp o değişikliği silmemeli.
+    from nobet_core import merge_app_settings
+    from nobet_ekip import adopt_period_records
+    base = {"limits": "A0", "limits_by_period": {"0000-00": "A0", "M": "A0", "N": "A0"}}
+    benim = {"limits": "A0", "limits_by_period": {"0000-00": "A0", "M": "A0", "N": "A1"}}   # N'yi değiştirdim, M'ye bakıyorum
+    onun = {"limits": "B", "limits_by_period": {"0000-00": "A0", "M": "B", "N": "A0"}}       # M'yi değiştirdi
+    birlesik, adopt = merge_app_settings(base, benim, onun)
+    ss = {"limits_text": "A0", "limits_period": "M", "limits_by_period": dict(benim["limits_by_period"])}
+    adopt_period_records(ss, birlesik)
+    constraints_for_period(ss, "M")
+    assert ss["limits_by_period"] == {"0000-00": "A0", "M": "B", "N": "A1"}
+    assert ss["limits_text"] == "B"

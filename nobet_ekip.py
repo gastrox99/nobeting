@@ -94,9 +94,13 @@ def adopt_period_records(ss, merged):
 
     Alınmazsa bu oturumun sonraki kaydı öbür cihazın aylarını silerdi.
     """
-    for _state_key, by_key, _empty in AYLIK_AYARLAR:
+    for state_key, by_key, _empty in AYLIK_AYARLAR:
         if by_key in merged:
             ss[by_key] = copy.deepcopy(merged[by_key])
+            # Bakılan ayın üst düzey kopyası da eşitlenir; yoksa sonraki çalışma eski kopyayı
+            # ayın kaydına yazıp öbür cihazın yazdığını silerdi.
+            if ss.get("limits_period") in merged[by_key]:
+                ss[state_key] = _kopya(ss[by_key][ss["limits_period"]])
 
 
 def _sinir_metninde_adlari_degistir(text, renames):
