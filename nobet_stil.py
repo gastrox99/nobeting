@@ -358,15 +358,14 @@ GLOBAL_CSS = """
     [data-testid="stSidebar"],
     [data-testid="stTabs"] [role="tablist"],
     [data-testid="stPopover"],
-    .st-key-month-bar,
     .st-key-ayarlar-panel,
     [data-testid="stTabs"] ~ *,
     .st-key-bottom-actions {
         display: none !important;
     }
-    [data-testid="stElementContainer"]:not(:has(.st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
-    [data-testid="stExpander"]:not(:has(.st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
-    [data-testid="stDivider"]:not(:has(.st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)) {
+    [data-testid="stElementContainer"]:not(:has(.st-key-month-bar, .st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-month-bar *, .st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
+    [data-testid="stExpander"]:not(:has(.st-key-month-bar, .st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-month-bar *, .st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)),
+    [data-testid="stDivider"]:not(:has(.st-key-month-bar, .st-key-schedule-grid, .st-key-preference-grid, .st-key-cal-head, .st-key-cal-grid)):not(:is(.st-key-month-bar *, .st-key-schedule-grid *, .st-key-preference-grid *, .st-key-cal-head *, .st-key-cal-grid *)) {
         display: none !important;
     }
     [role="tabpanel"] {
@@ -386,7 +385,10 @@ GLOBAL_CSS = """
     .st-key-cal-grid [data-testid="stElementContainer"] button {
         display: none !important;
     }
-    .st-key-cal-head { break-before: page; }
+    .st-key-month-bar button, .st-key-kayit-notu { display: none !important; }
+    [data-testid="stMainBlockContainer"] { padding-top: 0 !important; }
+    [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] { gap: 0 !important; }
+    .st-key-cal-head { break-before: auto; }
     .st-key-cal-grid { break-inside: avoid; }
 }
 
@@ -401,8 +403,8 @@ def contrast_css(dark_theme):
     Açık temada gri açıklama yazıları 3,7:1 idi: bir ton koyulaştırılır.
     """
     if dark_theme:
-        return '<style>[data-testid="stBaseButton-primary"] { color: #042f2e !important; }</style>'
-    return '<style>[data-testid="stCaptionContainer"] { color: #5c5f67; }</style>'
+        return '<style>[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] { color: #042f2e !important; }</style>'
+    return '<style>[data-testid="stCaptionContainer"] { color: #5c5f67; opacity: 1; }</style>'
 
 
 def ui_colors(_dark_theme):

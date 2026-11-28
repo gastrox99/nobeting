@@ -48,3 +48,26 @@ def test_kisi_rozeti_okunur_ve_sinir_disi_isaretli():
     # Renk körlüğünde kırmızı/yeşil ayrılmıyor: sınır dışı rozet ⚠ ile de belli olur.
     assert "{' ⚠' if out_of_limits else ''}" in source
     assert "opacity:.85" not in source
+
+
+def test_gri_yazi_streamlitin_soluklastirmasiyla_tekrar_solmaz():
+    # Streamlit açıklamaya opacity:0.6 verir; renk koyulaştırılsa da bu kapatılmazsa 2,6:1'e düşer.
+    assert "opacity: 1" in contrast_css(False)
+
+
+def test_talebi_gonder_dugmesi_koyu_temada_okunur():
+    # Form gönder düğmesi ayrı bir seçici kullanır; ana düğmeyle aynı koyu yazı rengini almalı.
+    assert "stBaseButton-primaryFormSubmit" in contrast_css(True)
+
+
+def test_yazdirmada_ay_adi_gorunur_ve_takvim_ilk_sayfada():
+    stil = (ROOT / "nobet_stil.py").read_text(encoding="utf-8")
+    assert ".st-key-cal-head { break-before: page; }" not in stil  # 1. sayfa boş kalıyordu
+    assert ".st-key-month-bar," not in stil.split("@media print")[1].split("display: none")[0]
+
+
+def test_analiz_uygun_sutunu_renksiz_ayirt_edilir():
+    from nobet_core import build_schedule_analysis  # noqa: F401  ("Uygun" bu tablodan gelir)
+    source = (ROOT / "nobet_core.py").read_text(encoding="utf-8")
+    assert '"Uygun": "✓"' in source and "else \"⚠\"" in source
+    assert '"🟢" if min_limit' not in source
