@@ -1938,7 +1938,7 @@ def build_schedule_analysis(
             "Tatil": int(holiday_totals.get(isim, 0)),
             **{role: all_role_counts[role].get(isim, 0) for role in role_names},
             "Limit": limit_text,
-            "Uygun": "🟢" if min_limit <= toplam <= max_limit and special_count <= sp_cap else "🔴",
+            "Uygun": "✓" if min_limit <= toplam <= max_limit and special_count <= sp_cap else "⚠",
         })
         stats_finance.append({
             "İsim": isim,
