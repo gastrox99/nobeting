@@ -2843,18 +2843,19 @@ class TestUnvanSaatUcreti(unittest.TestCase):
 
     def test_bilinmeyen_donem_son_katsayiyi_kullanir(self):
         self.assertEqual(katsayi_donemi(2026, 7), ((2026, 2), True))
-        self.assertEqual(katsayi_donemi(2027, 1), ((2026, 2), False))
+        # Uzak bir yıl: gerçek katsayı eklenince bu test kırılmasın.
+        self.assertEqual(katsayi_donemi(2035, 1), ((2026, 2), False))
         self.assertEqual(katsayi_donemi(2025, 12), ((2026, 1), False))
         self.assertIsNone(unvan_saat_ucreti("Profesör", 2026, 10))
-        # Tablo yalnız kendi döneminde; 2027'de formül (son katsayı) kullanılır.
-        self.assertFalse(unvan_saat_ucreti("Tabip", 2027, 3)["tam"])
+        # Tablo yalnız kendi döneminde; katsayısı olmayan dönemde tam=False.
+        self.assertFalse(unvan_saat_ucreti("Tabip", 2035, 3)["tam"])
 
     def test_katsayi_uyarisi_yalniz_eksik_donemde(self):
         self.assertIsNone(katsayi_uyarisi(2026, 10))
         self.assertIsNone(katsayi_uyarisi(2026, 3))
-        uyari = katsayi_uyarisi(2027, 1)
-        self.assertIn("henüz eklenmedi", uyari)
-        self.assertIn("Temmuz-Aralık 2026", uyari)
+        uyari = katsayi_uyarisi(2035, 1)
+        self.assertIn("henüz açıklanmadı", uyari)
+        self.assertIn("hesaplanmadı", uyari)
 
     UCRET = {"gunduz": 100.0, "gece": 110.0, "tatil": 125.0, "tatil_gece": 137.5}
 
@@ -2970,6 +2971,19 @@ class TestUnvanSaatUcreti(unittest.TestCase):
         # Ücret hiç girilmemişse gösterilmez.
         self.assertIsNone(ayarlardaki_saat_ucretleri({}, 2026, 10))
         self.assertIsNone(ayarlardaki_saat_ucretleri({"hourly_rate": 1.0}, 2026, 10))
+
+    def test_katsayisi_olmayan_donemde_ucret_hesaplanmaz(self):
+        # UCRET_KURALLARI.md: dönemin katsayısı yoksa hesap durur (tahmin edilmez).
+        from nobet_core import ayarlardaki_saat_ucretleri, kisi_ucret_dokumu
+        ayar = {"title": "Tabip"}
+        self.assertIsNone(ayarlardaki_saat_ucretleri(ayar, 2035, 3))
+        self.assertIsNone(kisi_ucret_dokumu([1, 2], 2035, 3, ayar))
+        # Kullanıcı gündüz ücretini kendisi girdiyse ona saygı gösterilir.
+        elle = ayarlardaki_saat_ucretleri(
+            {"title": "Tabip", "hourly_rate": 200.0, "hourly_rate_source": "Tabip|2026-2|0|g"}, 2035, 3)
+        self.assertTrue(elle["elle"])
+        # Katsayısı olan ay etkilenmez.
+        self.assertIsNotNone(ayarlardaki_saat_ucretleri(ayar, 2026, 10))
 
     def test_kisi_ucret_dokumu_analiz_ucret_ozeti_ile_ayni(self):
         from nobet_core import kisi_ucret_dokumu, ayarlardaki_saat_ucretleri

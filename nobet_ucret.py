@@ -110,8 +110,8 @@ def katsayi_uyarisi(yil, ay):
     key, tam = katsayi_donemi(yil, ay)
     if tam:
         return None
-    return (f"Bu ayın memur katsayısı henüz eklenmedi; ücretler {donem_adi(key)} katsayısıyla hesaplandı "
-            "ve gerçek tutardan farklı olabilir.")
+    return ("Bu ayın memur katsayısı henüz açıklanmadı; ücret hesaplanmadı (tahmin edilmez). "
+            "Katsayı eklenince tutarlar görünür; isterseniz saat ücretini kendiniz girebilirsiniz.")
 
 
 def unvan_saat_ucreti(unvan, yil, ay, riskli=False):
@@ -278,6 +278,8 @@ def ayarlardaki_saat_ucretleri(settings, yil, ay):
         saat_ucretleri(elle_ucret, TATIL_ARTIRIMI, GECE_FARKI) if elle
         else {tur: info[tur] for tur in UCRET_TURLERI}
     )
+    if not info["tam"] and not elle:
+        return None  # Katsayı yoksa hesap durur (UCRET_KURALLARI.md).
     return {"ucretler": ucretler, "unvan": unvan, "riskli": riskli,
             "donem": info["donem"], "tam": info["tam"], "elle": elle}
 

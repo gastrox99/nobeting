@@ -323,3 +323,28 @@ def test_cakisma_uyarisinda_son_kaydi_yapan_cihaz():
     assert "Son kaydı yapan: iPhone · Safari · oturum 111111 20:58" in text
     assert "bu cihaz" in text
     assert conflict_writer_text(None, None, "x") == ""
+
+
+def test_katsayisi_olmayan_ayda_ucret_gizlenir():
+    """Katsayı açıklanmamış dönemde tahmini ücret gösterilmez (UCRET_KURALLARI.md)."""
+    from streamlit.testing.v1 import AppTest
+    fakes = dict(
+        init_db=lambda: True, get_last_error=lambda: None, is_database_configured=lambda: False, SCHEMA_VERSION="test",
+        load_app_settings=lambda **k: None, save_app_settings=lambda *a, **k: True,
+        load_schedule=lambda *a, **k: None, save_schedule=lambda *a, **k: True,
+        load_auto_saved_assignments=lambda *a, **k: ({}, {}), list_backup_snapshots=lambda **k: [],
+        get_share_link=lambda *a: None, ping_db=lambda: True,
+        get_schedule_version=lambda *a, **k: None, get_settings_version=lambda *a, **k: None,
+    )
+    sonuclar = {}
+    with patch.dict("os.environ", {"DATABASE_URL": ""}), patch.multiple(db, **fakes):
+        for yil, ay in ((2026, 10), (2035, 3)):
+            at = AppTest.from_file(str(Path(__file__).with_name("nobet.py")), default_timeout=120)
+            at.session_state["isimler_text"] = "Ali, Ayşe, Can"
+            at.session_state["storage_init"] = {}
+            at.session_state["yil_val"], at.session_state["ay_val"] = yil, ay
+            at.session_state["unvan_val"] = "Tabip"
+            at.run()
+            assert [e.value for e in at.exception] == []
+            sonuclar[yil] = bool(at.session_state["ucret_gizli"])
+    assert sonuclar == {2026: False, 2035: True}
