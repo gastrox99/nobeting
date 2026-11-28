@@ -890,6 +890,11 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
             saat_ucretleri_secili = saat_ucretleri(nobet_ucreti, tatil_artirimi, gece_artirimi)
         else:
             saat_ucretleri_secili = nobet_ucreti
+        # Katsayısı açıklanmamış dönemde tablodaki tahmini tutar gösterilmez
+        # (UCRET_KURALLARI.md); saat ücretini kullanıcı kendisi girerse gösterilir.
+        st.session_state.ucret_gizli = bool(
+            _rate_info and not _rate_info["tam"] and abs(nobet_ucreti - _rate_info["gunduz"]) <= 0.005
+        )
         if settings_expanded and _rate_info:
             _rate_note = (
                 f"Gündüz {tr_sayi(_rate_info['gunduz'])} · gece (20-08) {tr_sayi(_rate_info['gece'])} · "
@@ -897,7 +902,7 @@ with (_settings_panel.container(key="ayarlar-icerik") if settings_expanded else 
                 f"({donem_adi(_rate_info['donem'])}, damga vergisi düşülmüş)."
             )
             if not _rate_info["tam"]:
-                _rate_note += " Bu dönemin katsayısı henüz eklenmedi, son bilinen kullanıldı."
+                _rate_note += " Bu dönemin katsayısı henüz açıklanmadı; ücret elle girilmedikçe hesaplanmaz."
             if abs(nobet_ucreti - _rate_info["gunduz"]) > 0.005:
                 _rate_note += " Ücret elle değiştirildi."
             st.caption(_rate_note)
@@ -2219,6 +2224,8 @@ if (
     st.session_state.cached_analysis_key = _analysis_key
 
 df_stats_load, df_stats_finance, pair_display = st.session_state.cached_analysis_tables
+if st.session_state.get("ucret_gizli"):
+    df_stats_finance = df_stats_finance.assign(**{"Ücret (TL)": "—"})
 
 # --- GÖRÜNÜM ---
 st.divider()

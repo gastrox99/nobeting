@@ -150,7 +150,7 @@ def render_analysis_tab(isimler, role_names, prev_ctx, history_special, history_
                    "önce geceye yazılır, eksik haftalar aynı aydan düşülür; bayram saat saat sayılır "
                    "(arife 13.00'ten, bayram 24.00'e kadar).")
         st.dataframe(
-            df_stats_finance.style.format({"Ücret (TL)": lambda value: f"{tr_sayi(value)} ₺"}),
+            df_stats_finance.style.format({"Ücret (TL)": lambda value: value if isinstance(value, str) else f"{tr_sayi(value)} ₺"}),
             width="stretch"
         )
 

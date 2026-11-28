@@ -359,7 +359,7 @@ def _render_pay(_owner, _year, _month, _person, _rows, _roles):
             _basis = _pay["unvan"] + (", riskli birim (%50)" if _pay["riskli"] else "")
             _basis += f", {donem_adi(_pay['donem'])} katsayısı"
             if not _pay["tam"]:
-                _basis += " (bu dönemin katsayısı henüz eklenmedi, son bilinen kullanıldı)"
+                _basis += " (bu dönemin katsayısı henüz açıklanmadı)"
             if _pay["elle"]:
                 _basis += "; gündüz ücreti liste sahibince elle girildi"
         else:
