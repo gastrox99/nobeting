@@ -134,3 +134,92 @@ def test_uygulamada_yasak_cift_ay_oku_ile_aya_ozel_kalir():
         assert at.session_state["forbidden_pairs"] == {("Ali", "Can")}
     finally:
         _stop(patches)
+
+
+def test_ekip_tablosunda_yazilan_sinir_ayin_kaydina_ayni_calismada_girer():
+    # Sinir değişince ayın aylık kaydı bir çalışma geriden kaydediliyordu:
+    # sekme hemen kapanırsa son düzenleme kayboluyordu.
+    from test_bozuk_kayit import _app, _stop
+    saved = []
+    at, patches = _app(lambda *a, **k: (None, None, None, None, None), lambda *a, **k: True,
+                       save_app_settings=lambda settings, **k: saved.append(settings) or True, team="Ali, Ayşe")
+    at.session_state["settings_expanded"] = True
+    try:
+        at.run()
+        at.number_input(key="w_ekip_max_0").set_value(3)
+        at.run()
+        assert [e.value for e in at.exception] == []
+        assert saved[-1]["limits"] == saved[-1]["limits_by_period"]["2026-10"] != ""
+    finally:
+        _stop(patches)
+
+
+def test_ayarlar_sonradan_yuklenince_acik_ayin_siniri_baska_ayinkiyle_ezilmez():
+    # Veritabanı açılışta yoksa sonradan yüklenen ayarlarda (en son bakılan ay Aralık)
+    # Kasım'ın kayıtlı sınırı korunmalı.
+    ss = {"isimler_text": "Ali, Can", "year": 2026, "month": 11}
+    constraints_for_period(ss, "2026-11")
+    kayit = {"team": "Ali, Can", "limits": "Ali:0-3",
+             "limits_by_period": {"0000-00": "", "2026-11": "Ali:0-5", "2026-12": "Ali:0-3"}}
+    apply_app_settings(ss, kayit)
+    constraints_for_period(ss, "2026-11")
+    assert ss["limits_text"] == "Ali:0-5"
+    assert ss["limits_by_period"]["2026-11"] == "Ali:0-5"
+
+
+def _iki_cihaz_kaydi():
+    base = {"team": "Ali, Can", "limits": "Ali:0-5", "year": 2026, "month": 11,
+            "limits_by_period": {"0000-00": "Ali:0-5", "2026-11": "Ali:0-5"}}
+    return base
+
+
+def test_baska_aya_bakmak_diger_cihazdaki_duzenlemeyle_cakismaz():
+    from nobet_core import merge_app_settings
+    base = _iki_cihaz_kaydi()
+    # Telefon yalnız Aralık'a baktı (yeni ay kaydı + o ayın metni üst düzeyde).
+    telefon = dict(base, month=12, limits_by_period={**base["limits_by_period"], "2026-12": "Ali:0-5"})
+    # Bilgisayar Kasım'ın sınırını değiştirdi.
+    bilgisayar = dict(base, limits="Ali:0-3", limits_by_period={**base["limits_by_period"], "2026-11": "Ali:0-3"})
+    sonuc = merge_app_settings(base, bilgisayar, telefon)
+    assert sonuc is not None
+    birlesik, adopt = sonuc
+    assert adopt == {}
+    assert birlesik["limits"] == "Ali:0-3"
+    assert birlesik["limits_by_period"] == {"0000-00": "Ali:0-5", "2026-11": "Ali:0-3", "2026-12": "Ali:0-5"}
+
+
+def test_ayni_ay_iki_cihazda_farkli_degisirse_cakisma_kalir():
+    from nobet_core import merge_app_settings
+    base = _iki_cihaz_kaydi()
+    telefon = dict(base, limits="Ali:0-2", limits_by_period={**base["limits_by_period"], "2026-11": "Ali:0-2"})
+    bilgisayar = dict(base, limits="Ali:0-3", limits_by_period={**base["limits_by_period"], "2026-11": "Ali:0-3"})
+    assert merge_app_settings(base, bilgisayar, telefon) is None
+    # Aynı değeri yazdılarsa çakışma değil.
+    assert merge_app_settings(base, bilgisayar, dict(bilgisayar)) is not None
+
+
+def test_birlesen_aylik_kayitlar_oturuma_alinir():
+    # Öbür cihazın baktığı/yazdığı aylar oturuma alınmazsa sonraki kayıt onları silerdi.
+    from nobet_ekip import adopt_period_records
+    ss = {"limits_by_period": {"2026-11": "Ali:0-3"}, "fixed_roles_by_period": {"2026-11": {"Ali": "AYB"}}}
+    merged = {"limits_by_period": {"2026-11": "Ali:0-3", "2026-12": "Ali:0-5"}, "team": "Ali"}
+    adopt_period_records(ss, merged)
+    assert ss["limits_by_period"] == merged["limits_by_period"]
+    assert ss["limits_by_period"] is not merged["limits_by_period"]  # ortak nesne olmasın
+    assert ss["fixed_roles_by_period"] == {"2026-11": {"Ali": "AYB"}}  # birleşmede yoksa dokunulmaz
+
+
+def test_birlesmede_bakilan_ayin_ust_duzey_kopyasi_da_esitlenir():
+    # Öbür cihaz bu sekmenin baktığı ayı değiştirdiyse, sonraki çalışma eski kopyayı
+    # ayın kaydına yazıp o değişikliği silmemeli.
+    from nobet_core import merge_app_settings
+    from nobet_ekip import adopt_period_records
+    base = {"limits": "A0", "limits_by_period": {"0000-00": "A0", "M": "A0", "N": "A0"}}
+    benim = {"limits": "A0", "limits_by_period": {"0000-00": "A0", "M": "A0", "N": "A1"}}   # N'yi değiştirdim, M'ye bakıyorum
+    onun = {"limits": "B", "limits_by_period": {"0000-00": "A0", "M": "B", "N": "A0"}}       # M'yi değiştirdi
+    birlesik, adopt = merge_app_settings(base, benim, onun)
+    ss = {"limits_text": "A0", "limits_period": "M", "limits_by_period": dict(benim["limits_by_period"])}
+    adopt_period_records(ss, birlesik)
+    constraints_for_period(ss, "M")
+    assert ss["limits_by_period"] == {"0000-00": "A0", "M": "B", "N": "A1"}
+    assert ss["limits_text"] == "B"

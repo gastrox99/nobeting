@@ -200,7 +200,7 @@ from nobet_onkontrol import (
     ay_sonu_cakismalari, dinlenme_uyarilari, ilk_nobet_gunleri, paylasim_kontrolleri, render_day_availability,
     render_precheck,
 )
-from nobet_ekip import ekip_kalan_ozeti, constraints_for_period, rename_in_other_periods, render_team_table, render_pair_matrix, render_fixed_roles
+from nobet_ekip import adopt_period_records, ekip_kalan_ozeti, constraints_for_period, rename_in_other_periods, render_team_table, render_pair_matrix, render_fixed_roles
 from nobet_talepler import (
     finish_approved_requests, pending_count, render_pending_badge, render_request_status, render_team_requests,
 )
@@ -1008,6 +1008,9 @@ elif _revert_notice:
         "Veritabanı bağlantısını kontrol edin ya da sayfayı yenileyip tekrar deneyin."
     )
 
+# Ekip tablosu kısıtları yukarıdaki çağrıdan sonra değiştirmiş olabilir: ayın aylık kaydı
+# kayıttan önce son hâline getirilir (yoksa son düzenleme bir çalışma geriden kaydedilir).
+constraints_for_period(st.session_state, st.session_state.limits_period)
 # Ekip ve ayarlar değiştiyse veritabanına yaz (sayfa yenilenince geri gelir).
 _current_settings = collect_app_settings(st.session_state)
 _offline = st.session_state.get("loaded_without_db")
@@ -1055,6 +1058,8 @@ if (
                     expected_version=_their_version, version_out=_settings_version,
                     writer=_writer,
                 )
+                if _settings_saved:
+                    adopt_period_records(st.session_state, _current_settings)
         except SaveConflict:
             _settings_saved = False
         except Exception as _merge_error:
