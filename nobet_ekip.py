@@ -7,6 +7,7 @@ Hepsi ayarlarda saklanan metinleri (``isimler_text``, ``limits_text``,
 kullanmaya devam eder.
 """
 import calendar
+import copy
 from datetime import date
 
 import streamlit as st
@@ -86,6 +87,16 @@ def constraints_for_period(ss, period):
             ss[state_key] = _kopya(by_period[period])
         by_period[period] = _kopya(ss.get(state_key) or empty)
     ss["limits_period"] = period
+
+
+def adopt_period_records(ss, merged):
+    """Ayar birleştirmesinden gelen aylık kayıtları (öbür cihazın baktığı aylar dahil) oturuma alır.
+
+    Alınmazsa bu oturumun sonraki kaydı öbür cihazın aylarını silerdi.
+    """
+    for _state_key, by_key, _empty in AYLIK_AYARLAR:
+        if by_key in merged:
+            ss[by_key] = copy.deepcopy(merged[by_key])
 
 
 def _sinir_metninde_adlari_degistir(text, renames):

@@ -1564,6 +1564,9 @@ def apply_app_settings(session_state, settings):
             value = check(settings[name])
             if value is not None:
                 session_state[state_key] = value
+    # Aya özel kısıtlarda "son işlenen ay" unutulur: açık ayın kaydı yeniden okunur,
+    # başka ayın metni onun üzerine yazılmaz (nobet_ekip.constraints_for_period).
+    session_state.pop("limits_period", None)
 
 
 def collect_app_settings(session_state):
@@ -1643,6 +1646,31 @@ def conflict_writer_text(writer, saved_at, own_tag):
 # Son bakılan ay her sekmenin kendisine aittir; başka sekmenin ayı bu sekmeye alınmaz.
 SETTINGS_VIEW_KEYS = ("year", "month")
 
+# Aya özel kısıtlar: üst düzey anahtar -> aylık kayıt anahtarı. Üst düzey anahtar o an
+# bakılan ayın kopyasıdır; iki cihaz farklı aylara bakınca kendiliğinden ayrışır.
+PERIODIC_SETTINGS = {
+    "limits": "limits_by_period",
+    "forbidden_pairs": "forbidden_by_period",
+    "together_pairs": "together_by_period",
+    "fixed_roles": "fixed_roles_by_period",
+}
+
+
+def _merge_period_records(base, mine, theirs):
+    """Aylık kayıtları ay ay üç yönlü birleştirir; aynı ayı iki taraf farklı değiştirdiyse None."""
+    if not all(isinstance(side, dict) for side in (base, mine, theirs)):
+        return None
+    merged = {}
+    for period in set(base) | set(mine) | set(theirs):
+        mine_changed = mine.get(period) != base.get(period)
+        theirs_changed = theirs.get(period) != base.get(period)
+        if mine_changed and theirs_changed and mine.get(period) != theirs.get(period):
+            return None
+        source = mine if mine_changed else theirs
+        if period in source:
+            merged[period] = source[period]
+    return merged
+
 
 def merge_app_settings(base, mine, theirs):
     """Ayar kaydı çakışınca iki oturumun değişikliklerini alan alan birleştirir.
@@ -1658,9 +1686,18 @@ def merge_app_settings(base, mine, theirs):
     keys = set(base) | set(mine) | set(theirs)
     mine_changed = {key for key in keys if mine.get(key) != base.get(key)}
     theirs_changed = {key for key in keys if theirs.get(key) != base.get(key)}
+    # Aylık kayıtları iki taraf da değiştirdiyse ay ay birleştirilir; ay çakışmıyorsa
+    # kayıt ve onun üst düzey kopyası çakışma sayılmaz (kopya bu oturumun ayıdır).
+    period_merged = {}
+    for top, by_key in PERIODIC_SETTINGS.items():
+        if by_key in mine_changed & theirs_changed and mine.get(by_key) != theirs.get(by_key):
+            records = _merge_period_records(base.get(by_key), mine.get(by_key), theirs.get(by_key))
+            if records is not None:
+                period_merged[by_key] = records
+    resolved = set(period_merged) | {top for top, by_key in PERIODIC_SETTINGS.items() if by_key in period_merged}
     if any(
         mine.get(key) != theirs.get(key)
-        for key in (mine_changed & theirs_changed) - set(SETTINGS_VIEW_KEYS)
+        for key in (mine_changed & theirs_changed) - set(SETTINGS_VIEW_KEYS) - resolved
     ):
         return None
     merged = {}
@@ -1668,6 +1705,7 @@ def merge_app_settings(base, mine, theirs):
         source = mine if key in mine_changed or key in SETTINGS_VIEW_KEYS else theirs
         if key in source:
             merged[key] = source[key]
+    merged.update(period_merged)
     adopt = {
         key: merged[key] for key in theirs_changed - mine_changed - set(SETTINGS_VIEW_KEYS)
         if key in merged
