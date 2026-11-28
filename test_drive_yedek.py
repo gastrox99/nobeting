@@ -39,3 +39,14 @@ def test_send_reddi_hata_verir(monkeypatch):
     monkeypatch.setattr(dy.urllib.request, "urlopen", lambda *a, **k: R())
     with pytest.raises(RuntimeError):
         dy.send("http://x", {"a": 1})
+
+
+def test_gizli_degerler_girilmemisse_acik_hata_verir(monkeypatch, capsys):
+    # GitHub'a üç gizli değer girilmediğinde eskiden yanıltıcı bir veritabanı hatası çıkıyordu.
+    for ad in ("DATABASE_URL", "DRIVE_YEDEK_URL", "DRIVE_YEDEK_ANAHTAR"):
+        monkeypatch.setenv(ad, "")
+    assert dy.main() == 1
+    hata = capsys.readouterr().err
+    for ad in ("DATABASE_URL", "DRIVE_YEDEK_URL", "DRIVE_YEDEK_ANAHTAR"):
+        assert ad in hata
+    assert "DRIVE_YEDEK.md" in hata

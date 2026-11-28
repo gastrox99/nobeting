@@ -62,6 +62,12 @@ def send(url, payload):
 
 
 def main():
+    eksik = [ad for ad in ("DATABASE_URL", "DRIVE_YEDEK_URL", "DRIVE_YEDEK_ANAHTAR") if not os.environ.get(ad)]
+    if eksik:
+        print(f"GitHub gizli değerleri girilmemiş: {', '.join(eksik)}. "
+              "Kurulum adımları DRIVE_YEDEK.md dosyasında (Settings > Secrets and variables > Actions).",
+              file=sys.stderr)
+        return 1
     import psycopg2
     conn = psycopg2.connect(os.environ["DATABASE_URL"])
     try:
